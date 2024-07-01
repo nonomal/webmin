@@ -3,6 +3,8 @@
 require './xterm-lib.pl';
 &ReadParse();
 
+$ENV{'HTTP_WEBMIN_PATH'} && &error($text{'index_eproxy'});
+
 # Check for needed modules
 my @modnames = ("Digest::SHA", "Digest::MD5", "IO::Pty",
                 "IO::Select", "Time::HiRes",
@@ -166,12 +168,20 @@ EOF
 print "<div data-label=\"$text{'index_connecting'}\" id=\"terminal\"></div>\n";
 
 # Get a free port that can be used for the socket
-my $port = &allocate_miniserv_websocket();
+my $port = &allocate_miniserv_websocket($module_name);
 
 # Check permissions for user to run as
 my $user = $access{'user'};
 if ($user eq "*") {
 	$user = $remote_user;
+	}
+elsif ($user eq "root" && $remote_user ne $user && !$in{'user'} &&
+       $access{'sudoenforce'} ne '0') {
+	# If possible, start with a sudo-capable user
+	my @uinfo = getpwnam($remote_user);
+	if (@uinfo && $uinfo[7]) {
+		$user = $remote_user;
+		}
 	}
 $user = $config{'user'} if ($user eq 'root' && $config{'user'});
 
@@ -192,23 +202,13 @@ my $shellserver_cmd = "$module_config_directory/shellserver.pl";
 if (!-r $shellserver_cmd) {
 	&create_wrapper($shellserver_cmd, $module_name, "shellserver.pl");
 	}
-my $tmpdir = &tempname_dir();
 $ENV{'SESSION_ID'} = $main::session_id;
 &system_logged($shellserver_cmd." ".quotemeta($port)." ".quotemeta($user).
 	       ($dir ? " ".quotemeta($dir) : "").
-	       " >$tmpdir/ws-$port.out 2>&1 </dev/null");
+	       " >$module_var_directory/websocket-connection-$port.out 2>&1 </dev/null");
 
 # Open the terminal
-my $ws_proto = lc($ENV{'HTTPS'}) eq 'on' ? 'wss' : 'ws';
-my $http_host_conf = &trim($config{'host'});
-if ($http_host_conf) {
-		if ($http_host_conf !~ /^wss?:\/\//) {
-			$http_host_conf = "$ws_proto://$http_host_conf";
-			}
-		$http_host_conf =~ s/[\/]+$//g;
-		}
-my $http_host = $http_host_conf || "$ws_proto://$ENV{'HTTP_HOST'}";
-my $url = "$http_host/$module_name/ws-$port";
+my $url = &get_miniserv_websocket_url($port, $config{'host'}, $module_name);
 my $canvasAddon = $termlinks->{'js'}[3];
 my $webGLAddon = $termlinks->{'js'}[4];
 my $term_script = <<EOF;

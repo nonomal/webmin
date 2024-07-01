@@ -49,14 +49,13 @@ if (&compare_version_numbers($postfix_version, 2) <= 0) {
 &option_freefield("smtp_data_done_timeout", 15);
 &option_freefield("smtp_quit_timeout", 15);
 
-&option_yesno("smtp_use_tls");
 &option_freefield("smtp_sasl_security_options", 60);
 
 # TLS enforcement options
 if (&compare_version_numbers($postfix_version, 2.3) >= 0) {
 	$level = &get_current_value("smtp_tls_security_level");
 	print &ui_table_row($text{'opts_smtp_tls_security_level'},
-		&ui_select("smtp_tls_security_level", $level, 
+		&ui_select("smtp_tls_security_level_def", $level, 
 			   [ [ "", $text{'default'} ],
 			     [ "none", $text{'sasl_level_none'} ],
 			     [ "may", $text{'sasl_level_may'} ],

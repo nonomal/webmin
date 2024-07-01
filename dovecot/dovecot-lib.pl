@@ -4,7 +4,10 @@ BEGIN { push(@INC, ".."); };
 use WebminCore;
 &init_config();
 
-@supported_auths = ( "anonymous", "plain", "digest-md5", "cram-md5", "apop" );
+@supported_auths = ( "anonymous", "plain", "digest-md5", "cram-md5", "apop",
+		     "scram-sha-1", "scram-sha-256", "ntlm", "gss-spnego",
+		     "gssapi", "rpa", "otp", "skey", "external",
+		     "oauthbearer", "xoauth2" );
 @mail_envs = ( undef, "maildir:~/Maildir", "mbox:~/mail/:INBOX=/var/mail/%u",
 	       "maildir:~/Maildir:mbox:~/mail/" );
 
@@ -386,6 +389,17 @@ foreach my $m (@{$section->{'members'}}) {
 	$m->{'sectionname'} = $section->{'name'};
 	$m->{'sectionvalue'} = $section->{'value'};
 	}
+}
+
+# delete_section(&conf, &section)
+# Remove a section and all it's members from the config file
+sub delete_section
+{
+my ($conf, $section) = @_;
+my $lref = &read_file_lines($section->{'file'});
+my $len = $section->{'eline'} - $section->{'line'} + 1;
+splice(@$lref, $section->{'line'}, $len);
+&renumber($conf, $section->{'line'}, $section->{'file'}, -$len);
 }
 
 # renumber(&conf, line, file, offset)

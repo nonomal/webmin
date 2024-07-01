@@ -45,6 +45,17 @@ $templates_dir = "$module_config_directory/templates";
 
 @monitor_statuses = ( 'up', 'down', 'un', 'webmin', 'timed', 'isdown' );
 
+$mysql_variant = "mysql";
+if (&foreign_check("mysql")) {
+	# Fix MySQL / MariaDB
+	&foreign_require("mysql");
+	if ($mysql::mysql_version =~ /mariadb/i) {
+		$mysql_variant = "mariadb";
+		}
+	}
+if ($mysql_variant eq "mariadb") {
+	$text{'type_mysql'} =~ s/MySQL/MariaDB/g;
+	}
 
 # list_services()
 # Returns a list of all services this module knows how to get status on.
@@ -57,7 +68,7 @@ if (!-d $services_dir) {
 	# setup initial services
 	mkdir($module_config_directory, 0700);
 	mkdir($services_dir, 0700);
-	system("cp services/* $services_dir");
+	system("cp $module_root_directory/services/* $services_dir");
 	}
 map { $mod{$_}++ } &list_modules();
 opendir(DIR, $services_dir);
@@ -65,6 +76,10 @@ while($f = readdir(DIR)) {
 	next if ($f !~ /^(.*)\.serv$/);
 	my $serv = &get_service($1);
 	next if (!$serv || !$serv->{'type'} || !$serv->{'id'});
+	if ($serv->{'default'} && $serv->{'id'} eq 'mysql' &&
+	    $mysql_variant eq "mariadb") {
+		$serv->{'desc'} =~ s/MySQL/MariaDB/g;
+		}
 	if ($serv->{'depends'}) {
 		my $d;
 		map { $d++ if (!$mod{$_}) } split(/\s+/, $serv->{'depends'});
@@ -371,19 +386,17 @@ else {
 	}
 }
 
-# nice_remotes(&monitor, [max])
+# nice_remotes(&monitor)
 sub nice_remotes
 {
-my ($s, $max) = @_;
-$max ||= 3;
+my ($s) = @_;
 my @remotes = map { $_ eq "*" ? $text{'index_local'}
 			         : &html_escape($_) }
 		     split(/\s+/, $s->{'remote'});
 foreach my $g (split(/\s+/, $s->{'groups'})) {
 	push(@remotes, &text('index_group', $g));
 	}
-return @remotes > $max ? join(", ", @remotes[0..$max]).", ..."
-		       : join(", ", @remotes);
+return join("<br>", @remotes);
 }
 
 sub group_desc

@@ -13,6 +13,8 @@ our ($timezones_file, $currentzone_link, $currentzone_file, $timezones_dir,
      $sysclock_file);
 our ($get_hardware_time_error);
 our $cron_cmd = "$module_config_directory/sync.pl";
+our $cronyd_name = $gconfig{'os_type'} eq 'debian-linux' ? 'chrony' : 'chronyd';
+our $rawtime;
 if ($config{'zone_style'}) {
 	do "$config{'zone_style'}-lib.pl";
 	}
@@ -48,13 +50,13 @@ if (&has_command("ntpdate")) {
 elsif (&has_command("sntp")) {
 	$out = &backquote_logged("sntp -s $servs 2>&1");
 	}
-elsif (&foreign_require('init') && &init::action_status('chronyd') > 0 && &has_command("chronyc")) {
-	my $chronyd_running = &init::status_action('chronyd');
-	$out = &backquote_logged("systemctl restart chronyd 2>&1");
+elsif (&foreign_require('init') && &init::action_status($cronyd_name) > 0 && &has_command("chronyc")) {
+	my $chronyd_running = &init::status_action($cronyd_name);
+	$out = &backquote_logged("systemctl restart $cronyd_name 2>&1");
 	$out .= &backquote_logged("chronyc makestep 2>&1");
 	sleep ($chronyd_running ? 5 : 15);
 	if (!$chronyd_running) {
-		&backquote_logged("systemctl stop chronyd 2>&1");
+		&backquote_logged("systemctl stop $cronyd_name 2>&1");
 		}
 	}
 elsif (&foreign_require('init') && &init::action_status('systemd-timesyncd') > 0) {
@@ -76,7 +78,6 @@ if ($? && $config{'ntp_only'}) {
 elsif ($?) {
 	# error using ntp. use timeservice
 	my ($err, $serv);
-	my $rawtime;
 	foreach $serv (@servs) {
 		$err = undef;
 		my $fh = "SOCK";

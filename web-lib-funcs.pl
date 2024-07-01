@@ -1712,7 +1712,7 @@ for(my $i=0; my @stack_ = caller($i); $i++) {
 	push(@stack, \@stack_);
 	}
 my $err_caller;
-my $err_last_eval  = $main::error_last_eval;
+my $err_last_eval = $gconfig{'error_stack'} ? $main::error_last_eval : "";
 $err_last_eval =~ s/\n$// if ($err_last_eval);
 $err_caller = "$stack[0]->[1] (line $stack[0]->[2])"
 	if ($stack[0]->[1] && $stack[0]->[2]);
@@ -1721,14 +1721,17 @@ if ($err_caller) {
 	my $err_caller_msg_esc  =
         &quote_escape(($err_last_eval ? "$err_last_eval : $err_caller" : $err_caller), '"');
 	my $err_caller_msg;
-	if ($err_last_eval) {
+	if ($err_last_eval && defined(&ui_details)) {
 		$err_caller_msg = &ui_details({
 			'title' => $text{'main_error_details'},
 			'content' => $err_caller_msg_esc,
 			'class' =>'error'}, 1);
 		}
-	else {
+	elsif (defined(&ui_help)) {
 		$err_caller_msg = &ui_help($err_caller_msg_esc);
+		}
+	else {
+		$err_caller_msg = $err_caller_msg_esc;
 		}
 	my $err_caller_ =
 		$main::webmin_script_type =~ /^(cmd|cron)$/ ?
@@ -2095,10 +2098,10 @@ formatted like dd/mmm/yyyy hh:mm:ss. Parameters are :
 
 =item seconds - Unix time is seconds to convert.
 
-=item date-only-or-opts - If set to 1, exclude the time from the returned string.
+=item date-only-or-opts - If set to 1 exclude the time from the returned string.
 
-In case this param is a hash reference use it for options in a new DateTime::Locale
-code or preserve the original, old logic
+In case this param is a hash reference use it for options in a new
+DateTime::Locale code or preserve the original, old logic
 
 =item fmt - Optional, one of dd/mon/yyyy, dd/mm/yyyy, mm/dd/yyyy or yyyy/mm/dd
 
@@ -2113,27 +2116,31 @@ if (!$@ && $] > 5.011) {
 	my $opts = ref($only) ? $only : {};
 	my $locale_default = &get_default_system_locale();
 	my $locale_auto = &parse_accepted_language();
-	my $locale_name = $opts->{'locale'} || $gconfig{'locale_'.$base_remote_user} ||
+	my $locale_name = $opts->{'locale'} ||
+	   $gconfig{'locale_'.$base_remote_user} ||
 	   $gconfig{'locale_'.$remote_user} || $locale_auto ||
 	   $gconfig{'locale'} || &get_default_system_locale();
 	my $tz = $opts->{'tz'};
 	if (!$tz) {
 		eval {
-			$tz =
-			  DateTime::TimeZone->new(name => strftime("%z", localtime()))->name(); # +0200
+			$tz = DateTime::TimeZone->new(
+			  name => strftime("%z", localtime()))->name(); # +0200
 			};
 		if ($@) {
 			eval {
-				$tz = DateTime::TimeZone->new(name => 'local')->name();  # Asia/Nicosia
+				$tz = DateTime::TimeZone->new(
+				  name => 'local')->name();  # Asia/Nicosia
 				};
 			if ($@) {
-				$tz = DateTime::TimeZone->new(name => 'UTC')->name();    # UTC
+				$tz = DateTime::TimeZone->new(
+				  name => 'UTC')->name();    # UTC
 				}
 			}
 		}
 	# Pre-process time locale
 	my $locale_military_status = sub {
-		return ($locale_military_name && $locale_military_name =~ /[a-z]/i) ? 2 :
+		return ($locale_military_name &&
+			$locale_military_name =~ /[a-z]/i) ? 2 :
 		       ($locale_military_name == 1) ? 1 : 0;
 		};
 	# Allow locales with military time (in 24h format)
@@ -2149,15 +2156,18 @@ if (!$@ && $] > 5.011) {
 	my $locale = DateTime::Locale->load($locale_name_loaded);
 	# Create a new locale out of base locale
 	if (&$locale_military_status() == 1) {
-		my %locale_data                       = $locale->locale_data;
-		$locale_data{'code'}                  = $locale_name_initial;
+		my %locale_data = $locale->locale_data;
+		$locale_data{'code'} = $locale_name_initial;
+
 		# Force 24h time
-		$locale_data{'glibc_date_1_format'}   = '%a %b %e %H:%M:%S %Z %Y';
+		$locale_data{'glibc_date_1_format'} = '%a %b %e %H:%M:%S %Z %Y';
 		$locale_data{'glibc_datetime_format'} = '%a %d %b %Y %T %Z';
-		$locale_data{'glibc_time_format'}     = '%T';
+		$locale_data{'glibc_time_format'} = '%T';
 		DateTime::Locale->register_from_data(%locale_data);
+
 		# Load newly cloned locale in 24h time format
-		$locale_military_name = $locale_name_loaded = $locale_name_initial;
+		$locale_military_name = $locale_name_loaded =
+			$locale_name_initial;
 		$locale = DateTime::Locale->load($locale_name_loaded);
 		}
 	my $locale_format_full_tz = $locale->glibc_date_1_format;    # Sat 20 Nov 2286 17:46:39 UTC
@@ -2173,7 +2183,7 @@ if (!$@ && $] > 5.011) {
 		}
 
 	# Return fully detailed object
-	if (%{$opts}) {
+	if (ref($only)) {
 		# Can we get ago time
 		my $ago;
 		my $ago_secs = time() - $secs;
@@ -2191,18 +2201,31 @@ if (!$@ && $] > 5.011) {
 				"pretty" => $ago_obj->pretty
 			};
 		}
-		# my $xxxx = $locale->full_date_format;
 		my $data = {
 			# Wed Feb 8 05:09:39 PM UTC 2023
-			'full-tz-utc' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs)->strftime($locale_format_full_tz),
+			'full-tz-utc' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs)->strftime($locale_format_full_tz),
 			# Wed Feb 8 07:10:01 PM EET 2023 
-			'full-tz' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_full_tz),
+			'full-tz' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_full_tz),
 			# Wed 08 Feb 2023 07:11:26 PM EET
-			'full' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_full),
+			'full' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_full),
 			# 02/08/2023
-			'short' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_short),
+			'short' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_short),
 			# 07:12:07 PM
-			'time' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_time),
+			'time' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_time),
 			'ago' => $ago,
 			'tz' => $tz,
 			'delimiter' => $locale_format_delimiter,
@@ -2213,10 +2236,16 @@ if (!$@ && $] > 5.011) {
 		$data->{'timeshort'} = $data->{'time'};
 		$data->{'timeshort'} =~ s/(\d+):(\d+):(\d+)(.*?)/$1:$2$4/;
 
-		# %c alternative with full week and month and no seconds in time (complete)
-		# Wednesday, February 8, 2023, 8:18 PM or 星期三, 2023年2月8日 20:18 or miércoles, 8 febrero 2023, 20:28
-		$data->{'monthfull'} = DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime("%B");
-		foreach (split(/\s+/, DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime("%A, %c"))) {
+		# %c alternative with full week and month and no seconds
+		# in time (complete)
+		# Wednesday, February 8, 2023, 8:18 PM or 星期三,
+		# 2023年2月8日 20:18 or miércoles, 8 febrero 2023, 20:28
+		$data->{'monthfull'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%B");
+		foreach (split(/\s+/, DateTime->from_epoch(
+				locale => $locale_name_loaded, epoch => $secs,
+				time_zone => $tz)->strftime("%A, %c"))) {
 			if ($data->{'monthfull'} =~ /^$_/) {
 				$data->{'complete'} .= "$data->{'monthfull'} "
 				}
@@ -2224,9 +2253,24 @@ if (!$@ && $] > 5.011) {
 				$data->{'complete'} .= "$_ "
 				}
 			};
-		$data->{'year'} = DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime("%Y");
+		$data->{'year'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%Y");
+		$data->{'day'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%d");
+		$data->{'week'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%a");
+		$data->{'weekfull'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%A");
+		$data->{'month'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%b");
 		$data->{'complete'} =~ s/(\d+):(\d+):(\d+)(.*?)/$1:$2$4/;
-		($data->{'complete_short'} = $data->{'complete'}) =~ s/(.*?)([\s\,]*\Q$data->{'year'}\E.*)/$1/;
+		($data->{'complete_short'} = $data->{'complete'}) =~
+			s/(.*?)([\s\,]*\Q$data->{'year'}\E.*)/$1/;
 
 		if ($opts->{'get'}) {
 			return $data->{$opts->{'get'}};
@@ -5816,17 +5860,23 @@ else {
 =head2 text(message, [substitute]+)
 
 Returns a translated message from %text, but with $1, $2, etc.. replaced with
-the substitute parameters. This makes it easy to use strings with placeholders
-that get replaced with programmatically generated text. For example :
+the substitute parameters. If called without parameters, returns a hash of
+values and keys which were already replaced.
+This makes it easy to use strings with placeholders that get replaced with
+programmatically generated text.
 
- print &text('index_hello', $remote_user),"<p>\n";
+For example:
+ print &text('index_hello', $remote_user),"\n";
 
 =cut
 sub text
 {
+state %text_replaced;
+return %text_replaced if (!defined($_[0]));
 my $t = &get_module_variable('%text', 1);
 my $rv = exists($t->{$_[0]}) ? $t->{$_[0]} : $text{$_[0]};
 $rv =~ s/\$(\d+)/$1 < @_ ? $_[$1] : '$'.$1/ge;
+$text_replaced{$rv} = $_[0] if ($rv);
 return $rv;
 }
 
@@ -7462,7 +7512,7 @@ while(1) {
 	my $got = read(OUT, $line, 1);
 	last if (!$got);
 	$out .= $line;
-	$linecount++;
+	$linecount += scalar(() = $out =~ /\n/g);
 	if ($_[3] && $linecount >= $_[3]) {
 		# Got enough lines
 		last;
@@ -7958,6 +8008,100 @@ return ref($s) && $s->{'host'} && $s->{'port'} ?
 		"$s->{'host'}:$s->{'port'}.$$" :
        $s eq "" || ref($s) && $s->{'id'} == 0 ? "" :
        ref($s) ? "" : "$s.$$";
+}
+
+=head2 verify_session_id(session-id, [sessiondb], [miniserv])
+
+Returns the username (or an array with user, last login, and IP address) for the
+given session (or session hash) ID, or undefined if session ID is invalid.
+
+Args:
+
+    $sid: The session ID to verify
+
+    $sessiondb: A reference to the session database hash (optional)
+
+    $miniserv: A reference to the miniserv configuration hash (optional)
+
+Returns:
+
+    In list context: A list containing the user, last activity time, and IP
+	address associated with the session ID.
+
+    In scalar context: The user associated with the session ID.
+
+    If the session ID is not found, returns an empty list in list context
+	or undef in scalar context.
+
+Usage:
+
+    Retrieve the username associated with the session ID or undef if
+    session is invalid.
+    
+        my $user = verify_session_id($main::session_id);
+        Example of return:
+          root
+  
+    Retrieve array containing the user, last login, and IP address
+    for given session hash ID or undef if session is invalid.
+  
+        my (@user) = verify_session_id('BSRxr6wpF25lqeRinQ/sv0');
+        Example of return:
+          [
+            'root',
+            '1719401071',
+            '10.211.55.2'
+          ]
+
+    Retrieve the username associated with the session ID, using given
+    session DB or undef if session is invalid.
+
+        my %sessiondb;
+        dbmopen(%sessiondb, "$var_directory/sessiondb", 0400);
+        my $user = verify_session_id($main::session_id, \%sessiondb);
+        dbmclose(%sessiondb);
+        Example of return:
+          someuser1
+
+=cut
+sub verify_session_id
+{
+my ($sid, $sessiondb, $miniserv) = @_;
+my $hashsessionidfunc = \&miniserv::hash_session_id;
+my %miniserv;
+if ($miniserv) {
+	# Use provided miniserv configuration
+	%miniserv = %{$miniserv};
+	}
+else {
+	# Load miniserv configuration if not provided
+	&get_miniserv_config(\%miniserv);
+	}
+my %sessiondb_;
+if ($sessiondb) {
+	# Use provided session database
+	%sessiondb_ = %{$sessiondb};
+	}
+elsif (&foreign_available('acl')) {
+	# Use session database using ACL module API
+	&foreign_require("acl");
+	&acl::open_session_db(\%miniserv);
+	$hashsessionidfunc = \&acl::hash_session_id;
+	%sessiondb_ = %acl::sessiondb;
+	}
+else {
+	return wantarray ? ( ) : undef;
+	}
+# Verify given session (hash) ID against the session database
+foreach my $k (grep { $sessiondb_{$_} } keys %sessiondb_) {
+	if ($k eq $sid ||
+	    (defined($hashsessionidfunc) && $k eq $hashsessionidfunc->($sid))) {
+		my ($user, $last, $ip) = split(/\s+/, $sessiondb_{$k});
+		return wantarray ? ($user, $last, $ip) : $user;
+		}
+	}
+# Return an empty list or undef if session ID is not found
+return wantarray ? ( ) : undef;
 }
 
 =head2 remote_foreign_require(server, module, file)
@@ -11977,6 +12121,24 @@ else {
 return 1;
 }
 
+=head2 clear_http_cache(url)
+
+If a URL is in the cache, remove it
+
+=cut
+sub clear_http_cache
+{
+my $cfile = $url;
+$cfile =~ s/\//_/g;
+return 0 if (!$cfile);
+$cfile = "$main::http_cache_directory/$cfile";
+if (-r $cfile) {
+	&unlink_file($cfile);
+	return 1;
+	}
+return 0;
+}
+
 =head2 check_in_http_cache(url)
 
 If some URL is in the cache and valid, return the filename for it. Mainly
@@ -12372,6 +12534,7 @@ a function return to a given module call
 sub list_combined_webmin_menu
 {
 my ($data, $in, $mod) = @_;
+my @rv;
 foreach my $m (&get_available_module_infos()) {
 	my $dir = &module_root_directory($m->{'dir'});
 	my $mfile = "$dir/webmin_menu.pl";
@@ -13492,6 +13655,149 @@ return undef if ($< != 0);
 my $dir = $var_directory."/locks/".$$;
 &make_dir($dir, 0700, 1) if (!-d $dir);
 return $dir;
+}
+
+# allocate_miniserv_websocket([module])
+# Allocate a new websocket and
+# stores it miniserv.conf file
+sub allocate_miniserv_websocket
+{
+my ($module) = @_;
+$module ||= $module_name;
+# Find ports already in use
+&lock_file(&get_miniserv_config_file());
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+my %inuse;
+foreach my $k (keys %miniserv) {
+    if ($k =~ /^websockets_/ && $miniserv{$k} =~ /port=(\d+)/) {
+        $inuse{$1} = 1;
+        }
+    }
+
+# Pick a port and configure Webmin to proxy it
+my $port = $miniserv{'websocket_base_port'} || 555;
+while(1) {
+    if (!$inuse{$port}) {
+        &open_socket("127.0.0.1", $port, my $fh, \$err);
+        last if ($err);
+        close($fh);
+        }
+    $port++;
+    }
+my $wspath = "/$module/ws-".$port;
+my $now = time();
+$miniserv{'websockets_'.$wspath} = "host=127.0.0.1 port=$port wspath=/ user=$remote_user time=$now";
+&put_miniserv_config(\%miniserv);
+&unlock_file(&get_miniserv_config_file());
+&reload_miniserv();
+return $port;
+}
+
+# get_miniserv_websocket_url(port, [host], [module])
+# Returns the URL for a websocket
+sub get_miniserv_websocket_url
+{
+my ($port, $host, $module) = @_;
+$module ||= $module_name;
+my $ws_proto = lc($ENV{'HTTPS'}) eq 'on' ? 'wss' : 'ws';
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+my $http_host_conf = &trim($miniserv{'websocket_host'} || $host);
+# Pass as defined
+if ($http_host_conf) {
+	if ($http_host_conf !~ /^wss?:\/\//) {
+		$http_host_conf = "$ws_proto://$http_host_conf";
+		}
+	$http_host_conf =~ s/[\/]+$//g;
+	}
+# Try to rely on the proxy
+if (!defined($http_host_conf)) {
+	my $forwarded_host = $ENV{'HTTP_X_FORWARDED_HOST'};
+	if ($forwarded_host) {
+		$http_host_conf = "$ws_proto://$forwarded_host".
+			&get_webprefix();
+		$http_host_conf =~ s/\/$//;
+		}
+	}
+my $http_host = $http_host_conf || "$ws_proto://$ENV{'HTTP_HOST'}";
+return "$http_host/$module/ws-$port";
+}
+
+# remove_miniserv_websocket(port, [module])
+# Remove old websocket from miniserv.conf
+sub remove_miniserv_websocket
+{
+my ($port, $module) = @_;
+$module ||= $module_name;
+my %miniserv;
+if ($port) {
+    &lock_file(&get_miniserv_config_file());
+    &get_miniserv_config(\%miniserv);
+    my $wspath = "/$module/ws-".$port;
+    if ($miniserv{'websockets_'.$wspath}) {
+        delete($miniserv{'websockets_'.$wspath});
+        &put_miniserv_config(\%miniserv);
+        &reload_miniserv();
+        }
+    &unlock_file(&get_miniserv_config_file());
+    }
+}
+
+# cleanup_miniserv_websockets([&skip-ports], [module])
+# Called by scheduled status collection to remove any
+# websockets in miniserv.conf that are no longer used
+sub cleanup_miniserv_websockets
+{
+my ($skip, $module) = @_;
+$skip ||= [ ];
+$module ||= $module_name;
+&lock_file(&get_miniserv_config_file());
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+my $now = time();
+my @clean;
+foreach my $k (keys %miniserv) {
+    $k =~ /^websockets_\/$module\/ws-(\d+)$/ || next;
+    my $port = $1;
+    next if (&indexof($port, @$skip) >= 0);
+    my $when = 0;
+    if ($miniserv{$k} =~ /time=(\d+)/) {
+        $when = $1;
+        }
+    if ($now - $when > 60) {
+        # Has been open for a while, check if the port is still in use?
+        my $err;
+        &open_socket("127.0.0.1", $port, my $fh, \$err);
+        if ($err) {
+            # Closed now, can clean up
+            push(@clean, $k);
+            }
+        else {
+            # Still active
+            close($fh);
+            }
+        }
+    }
+if (@clean) {
+    foreach my $k (@clean) {
+        delete($miniserv{$k});
+        }
+    &put_miniserv_config(\%miniserv);
+    &reload_miniserv();
+    }
+&unlock_file(&get_miniserv_config_file());
+}
+
+# get_miniserv_websockets_modules()
+# Returns a list of modules and themes that use websockets
+sub get_miniserv_websockets_modules
+{
+my @rv;
+foreach my $i (&get_all_module_infos(), &list_themes()) {
+	push(@rv, $i->{'dir'}) if ($i->{'websockets'});
+	}
+return @rv;
 }
 
 $done_web_lib_funcs = 1;

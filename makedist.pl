@@ -60,7 +60,7 @@ $vers || usage();
 	  "webmin-search-lib.pl", "WebminCore.pm",
 	  "record-login.pl", "record-logout.pl", "record-failed.pl",
 	  "robots.txt", "unauthenticated", "bin", "html-editor-lib.pl",
-	  "switch_theme.cgi",
+	  "switch_theme.cgi", "os_eol.json",
 	 );
 if ($min) {
 	# Only those required by others
@@ -84,8 +84,16 @@ else {
 		@mlist = @mlist_excluded;
 		}
 	}
-@dirlist = ( "vendor_perl" );
 
+# Build EOL data
+if (-r "./webmin/os-eol-lib.pl") {
+	print "Building OS EOL data\n";
+	my $err = system("./os-eol-make.pl");
+	exit(1) if ($err);
+	}
+
+# Prepare dist files
+@dirlist = ( "vendor_perl" );
 $dir = "webmin$product_suff-$vers";
 if (!$release || !-d "$tardir/$dir") {
 	# Copy files into the directory for tarring up, unless this is a minor
