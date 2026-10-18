@@ -31,7 +31,7 @@ show_count=Afficher le nombre de messages dans la boîte de réception?,1,1-Oui,
 sort_mode=Trier les boîtes aux lettres par,1,2-Taille,1-Nom d'utilisateur,0-Commander dans le fichier de mot de passe
 show_mail=Afficher uniquement les utilisateurs qui ont du courrier?,1,1-Oui,0-Non
 size_mode=Inclure tous les dossiers dans la taille?,1,1-Oui,0-Non (premier dossier uniquement)
-ignore_users=Ignorer ces noms d'utilisateur (ne pas afficher),15,Liste des utilisateurs ignorés
+ignore_users=Ignorer ces noms d'utilisateur (ne pas afficher),15,userIgnoreList
 ignore_users_enabled=Ignorer l'état de la liste,1,1-Activé,0-Désactivé
 
 line0.5=Options de dossier,11
@@ -48,7 +48,7 @@ spam_report=Signaler le spam en utilisant,1,sa_learn-sa&#45;learn --spam,spamass
 
 line3.5=À partir des options d'adresse,11
 from_addr=De: adresse à utiliser lors de l'envoi manuel d'un e-mail,3,À partir du nom d'utilisateur de la boîte aux lettres
-webmin_from=De: adresse à utiliser lorsque Webmin envoie un e-mail,3,Défaut (webmin@<i>yourhost</i>)
+webmin_from=De: adresse à utiliser lorsque Webmin envoie un e-mail,3,Défaut (webmin-noreply@<i>yourhost</i>)
 from_virtualmin=Obtenir de: adresse de Virtualmin?,1,1-Oui,0-Non
 from_dom=Domaine à utiliser dans De: adresse,3,Nom d'hôte du système
 no_orig_ip=Inclure l'adresse IP du navigateur dans l'en-tête X-Originating-IP?,1,0-Oui,1-Non

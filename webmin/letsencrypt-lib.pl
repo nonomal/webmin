@@ -18,6 +18,26 @@ $letsencrypt_chain_urls = [
 	"https://letsencrypt.org/certs/lets-encrypt-e1.pem",
 	];
 
+# letsencrypt_is_ip_cert_identifier(identifier)
+# Returns 1 if some certificate identifier is an IPv4 or IPv6 address
+sub letsencrypt_is_ip_cert_identifier
+{
+my ($id) = @_;
+return 1 if (&check_ipaddress($id));
+return $id !~ /\// && $id =~ /:/ && &check_ip6address($id);
+}
+
+# letsencrypt_doms_have_ips(&domains)
+# Returns 1 if any certificate identifier is an IP address
+sub letsencrypt_doms_have_ips
+{
+my ($doms) = @_;
+foreach my $d (@$doms) {
+	return 1 if (&letsencrypt_is_ip_cert_identifier($d));
+	}
+return 0;
+}
+
 # check_letsencrypt()
 # Returns undef if all dependencies are installed, or an error message
 sub check_letsencrypt
@@ -46,6 +66,61 @@ if ($ver < 2.5) {
 return undef;
 }
 
+# can_bind_tcp_port(port)
+# Returns 1 if a TCP port appears to be free for binding, or 0 if it is in use
+sub can_bind_tcp_port
+{
+my ($port) = @_;
+my $proto = getprotobyname('tcp');
+return 1 if (!$proto);
+my @tests = (
+	[ PF_INET(), sub { pack_sockaddr_in($port, INADDR_ANY) } ],
+	);
+push(@tests, [ PF_INET6(), sub { pack_sockaddr_in6($port, in6addr_any()) },
+	       sub { setsockopt($_[0], 41, 26, pack("l", 1)) } ])
+	if (defined(&PF_INET6) && defined(&pack_sockaddr_in6) &&
+	    defined(&in6addr_any));
+foreach my $t (@tests) {
+	my ($family, $pack_func, $setup_func) = @$t;
+	my $sock;
+	next if (!socket($sock, $family, SOCK_STREAM, $proto));
+	&$setup_func($sock) if ($setup_func);
+	setsockopt($sock, SOL_SOCKET, SO_REUSEADDR, pack("l", 1));
+	my $ok = bind($sock, &$pack_func());
+	my $inuse = !$ok && $!{'EADDRINUSE'};
+	close($sock);
+	return 0 if ($inuse);
+	}
+return 1;
+}
+
+# is_webmin_listening_on_port(port)
+# Returns 1 if Miniserv is configured to listen on a TCP port
+sub is_webmin_listening_on_port
+{
+my ($port) = @_;
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+return 1 if ($miniserv{'port'} && $miniserv{'port'} == $port);
+foreach my $s (split(/\s+/, $miniserv{'sockets'} || '')) {
+	return 1 if ($s =~ /^\Q$port\E$/ ||
+		     $s =~ /^\*:\Q$port\E$/ ||
+		     $s =~ /^\S+:\Q$port\E$/);
+	}
+return 0;
+}
+
+# get_letsencrypt_certbot_port_error()
+# Returns an error if Certbot standalone mode cannot listen on port 80
+sub get_letsencrypt_certbot_port_error
+{
+return undef if (&can_bind_tcp_port(80));
+if (&is_webmin_listening_on_port(80)) {
+	return $text{'letsencrypt_ecertbotwebmin'};
+	}
+return $text{'letsencrypt_ecertbotport'};
+}
+
 # get_letsencrypt_install_message(return-link, return-title)
 # Returns a link or form to install Let's Encrypt
 sub get_letsencrypt_install_message
@@ -56,22 +131,43 @@ return &software::missing_install_link(
 	"certbot", $text{'letsencrypt_certbot'}, $rlink, $rmsg);
 }
 
-# request_letsencrypt_cert(domain|&domains, webroot, [email], [keysize],
+# get_letsencrypt_output_pem_path(output)
+# Returns the first certbot PEM path from command output, or undef
+sub get_letsencrypt_output_pem_path
+{
+my ($out) = @_;
+if ($out =~ /((?:\/usr\/local)?\/etc\/letsencrypt\/(?:live|archive)\/[a-zA-Z0-9\.\_\-:\/\*]+\.pem)/ ||
+    $out =~ /((?:\/usr\/local)?\/etc\/letsencrypt\/(?:live|archive)\/[a-zA-Z0-9\.\_\-:\/\r\n\* ]*?\.pem)/) {
+	my $full = $1;
+	$full =~ s/\s//g;
+	return $full;
+	}
+return undef;
+}
+
+# request_letsencrypt_cert(domain|&domains|&ips, webroot, [email], [keysize],
 # 			   [request-mode], [use-staging], [account-email],
-# 			   [reuse-key], [server-url, server-key, server-hmac])
+# 			   [key-type], [reuse-key],
+# 			   [directory-url, server-key, server-hmac],
+# 			   [allow-subset])
 # Attempt to request a cert using a generated key with the Let's Encrypt client
 # command, and write it to the given path. Returns a status flag, and either
 # an error message or the paths to cert, key and chain files.
 sub request_letsencrypt_cert
 {
 my ($dom, $webroot, $email, $size, $mode, $staging, $account_email,
-    $key_type, $reuse_key, $server, $server_key, $server_hmac) = @_;
+    $key_type, $reuse_key, $directory_url, $server_key, $server_hmac,
+    $subset) = @_;
 my @doms = ref($dom) ? @$dom : ($dom);
-$email ||= "root\@$doms[0]";
-$mode ||= "web";
 @doms = &unique(@doms);
+my @ips = grep { &letsencrypt_is_ip_cert_identifier($_) } @doms;
+@doms = grep { !&letsencrypt_is_ip_cert_identifier($_) } @doms;
+$email ||= (@doms ? "root\@$doms[0]" : "root\@".&get_system_hostname());
+$mode ||= "web";
 $reuse_key = $config{'letsencrypt_reuse'} if (!defined($reuse_key));
 my ($challenge, $wellknown, $challenge_new, $wellknown_new, $wildcard);
+my $cmd_ver = $letsencrypt_cmd ? &get_certbot_major_version($letsencrypt_cmd)
+			       : undef;
 
 # Wildcard mode?
 foreach my $d (@doms) {
@@ -80,9 +176,21 @@ foreach my $d (@doms) {
 		}
 	}
 
-if ($server && !$letsencrypt_cmd) {
-	return (0, "A non-standard server can only be used when the native ".
-		   "Let's Encrypt client is installed");
+if (($server_key || $server_hmac) && !$letsencrypt_cmd) {
+	return (0, $text{'letsencrypt_eeabnative'});
+	}
+
+# Check if IP addresses are supported
+if (@ips) {
+	$mode eq "dns" && return (0, "DNS-based validation cannot be used ".
+				     "for IP addresses");
+	$letsencrypt_cmd || return (0, "The certbot command is required for ".
+				       "IP address certificates");
+	my $ip_min_certbot = $mode eq "web" ? "5.4" : "5.3";
+	&compare_version_numbers($cmd_ver, $ip_min_certbot) >= 0 ||
+		return (0, "Certbot version $ip_min_certbot or later is ".
+			   "required for IP address certificates".
+			   ($mode eq "web" ? " in webroot mode" : ""));
 	}
 
 if ($mode eq "web") {
@@ -140,7 +248,8 @@ elsif ($mode eq "dns") {
 		}
 	}
 elsif ($mode eq "certbot") {
-	# XXX what to cehck?
+	# Nothing to check here, since verification is done by the standalone
+	# certbot server
 	}
 else {
 	return (0, "Unknown mode $mode");
@@ -174,17 +283,28 @@ if ($letsencrypt_cmd) {
 	&print_tempfile(TEMP, "text = True\n");
 	&close_tempfile(TEMP);
 	my $dir = $letsencrypt_cmd;
-	my $cmd_ver = &get_certbot_major_version($letsencrypt_cmd);
 	my $old_flags = "";
 	my $new_flags = "";
 	my $reuse_flags = "";
 	my $server_flags = "";
+	my $subset_flags = "";
 	$key_type ||= $config{'letsencrypt_algo'} || 'rsa';
-	if (&compare_version_numbers($cmd_ver, 1.11) < 0) {
+	$size ||= 4096;
+	my $certname = @doms ? $doms[0] : $ips[0];
+	if (&compare_version_numbers($cmd_ver, '<', 1.11)) {
 		$old_flags = " --manual-public-ip-logging-ok";
 		}
-	if (&compare_version_numbers($cmd_ver, 2.0) >= 0) {
+	if (&compare_version_numbers($cmd_ver, '>=', 2.0)) {
 		$new_flags = " --key-type ".quotemeta($key_type);
+		my ($old_key_type, $old_size) =
+			&get_certbot_key_params($certname);
+		if ($reuse_key && $old_key_type &&
+		    ($old_key_type ne $key_type ||
+		     ($key_type eq 'rsa' && $old_size &&
+		      $old_size != $size))) {
+			# Replace a changed key once, then continue reusing it
+			$new_flags .= " --new-key";
+			}
 		}
 	if ($reuse_key) {
 		$reuse_flags = " --reuse-key";
@@ -192,9 +312,15 @@ if ($letsencrypt_cmd) {
 	else {
 		$reuse_flags = " --no-reuse-key";
 		}
-	$reuse_flags = "" if ($reuse_key && $reuse_key == -1);
-	if ($server) {
-		$server_flags = " --server ".quotemeta($server);
+	if ($subset) {
+		$subset_flags = " --allow-subset-of-names";
+		}
+	if (($reuse_key && $reuse_key == -1) ||
+	    &compare_version_numbers($cmd_ver, '<', '1.13.0')) {
+		$reuse_flags = ""
+		}
+	if ($directory_url) {
+		$server_flags = " --server ".quotemeta($directory_url);
 		if ($server_key) {
 			$server_flags .= " --eab-kid ".quotemeta($server_key);
 			}
@@ -204,16 +330,17 @@ if ($letsencrypt_cmd) {
 			}
 		}
 	$dir =~ s/\/[^\/]+$//;
-	$size ||= 2048;
 	my $out;
 	my $common_flags = " --duplicate".
 			   " --force-renewal".
 			   " --non-interactive".
 			   " --agree-tos".
 			   " --config ".quotemeta($temp)."".
-			   " --rsa-key-size ".quotemeta($size).
-			   " --cert-name ".quotemeta($doms[0]).
-			   ($staging ? " --test-cert" : "");
+			   ($key_type eq 'rsa' ?
+			    " --rsa-key-size ".quotemeta($size) : "").
+			   " --cert-name ".quotemeta($certname).
+			   " --no-autorenew".
+			   (!$directory_url && $staging ? " --test-cert" : "");
 	if ($mode eq "web") {
 		# Webserver based validation
 		&clean_environment();
@@ -221,12 +348,15 @@ if ($letsencrypt_cmd) {
 			"cd $dir && (echo A | $letsencrypt_cmd certonly".
 			" -a webroot ".
 			join("", map { " -d ".quotemeta($_) } @doms).
+			join("", map { " --ip-address ".quotemeta($_) } @ips).
 			" --webroot-path ".quotemeta($webroot).
+			(@ips ? " --preferred-profile shortlived" : "").
 			$common_flags.
 			$reuse_flags.
 			$old_flags.
 			$server_flags.
 			$new_flags.
+			$subset_flags.
 			" 2>&1)");
 		&reset_environment();
 		}
@@ -245,21 +375,30 @@ if ($letsencrypt_cmd) {
 			$old_flags.
 			$server_flags.
 			$new_flags.
+			$subset_flags.
 			" 2>&1)");
 		&reset_environment();
 		}
 	elsif ($mode eq "certbot") {
 		# Use certbot's own webserver
+		my $err = &get_letsencrypt_certbot_port_error();
+		if ($err) {
+			@rv = (0, $err);
+			goto FAILED;
+			}
 		&clean_environment();
 		$out = &backquote_logged(
 			"cd $dir && (echo A | $letsencrypt_cmd certonly".
 			" --standalone".
 			join("", map { " -d ".quotemeta($_) } @doms).
+			join("", map { " --ip-address ".quotemeta($_) } @ips).
+			(@ips ? " --preferred-profile shortlived" : "").
 			$common_flags.
 			$reuse_flags.
 			$old_flags.
 			$server_flags.
 			$new_flags.
+			$subset_flags.
 			" 2>&1)");
 		&reset_environment();
 		}
@@ -272,15 +411,16 @@ if ($letsencrypt_cmd) {
 		goto FAILED;
 		}
 	my ($full, $cert, $key, $chain);
-	if ($out =~ /((?:\/usr\/local)?\/etc\/letsencrypt\/(?:live|archive)\/[a-zA-Z0-9\.\_\-\/\r\n\* ]*\.pem)/) {
+	if ($full = &get_letsencrypt_output_pem_path($out)) {
 		# Output contained the full path
-		$full = $1;
-		$full =~ s/\s//g;
 		}
 	else {
 		# Try searching common paths
-		my @fulls = (glob("/etc/letsencrypt/live/$doms[0]-*/cert.pem"),
-			     glob("/usr/local/etc/letsencrypt/live/$doms[0]-*/cert.pem"));
+		my @fulls = grep { -r $_ } (
+			     "/etc/letsencrypt/live/$certname/cert.pem",
+			     glob("/etc/letsencrypt/live/$certname-*/cert.pem"),
+			     "/usr/local/etc/letsencrypt/live/$certname/cert.pem",
+			     glob("/usr/local/etc/letsencrypt/live/$certname-*/cert.pem"));
 		if (@fulls) {
 			my %stats = map { $_, [ stat($_) ] } @fulls;
 			@fulls = sort { $stats{$a}->[9] <=> $stats{$b}->[9] }
@@ -311,13 +451,14 @@ if ($letsencrypt_cmd) {
 	$chain = undef if (!-r $chain);
 	&set_ownership_permissions(undef, undef, 0600, $cert);
 	&set_ownership_permissions(undef, undef, 0600, $key);
-	&set_ownership_permissions(undef, undef, 0600, $chain);
+	&set_ownership_permissions(undef, undef, 0600, $chain) if ($chain);
 
 	if ($account_email) {
 		# Attempt to update the contact email on file with let's encrypt
 		&system_logged(
 		    "$letsencrypt_cmd register --update-registration".
 		    " --email ".quotemeta($account_email).
+		    $server_flags.
 		    " >/dev/null 2>&1 </dev/null");
 		}
 
@@ -365,6 +506,11 @@ else {
 
 	# Request the cert and key
 	my $cert = &transname();
+	my $directory_flags = $directory_url
+		? "--directory-url ".quotemeta($directory_url)." --disable-check "
+		: $staging
+		  ? "--ca https://acme-staging-v02.api.letsencrypt.org "
+		  : "--disable-check ";
 	&clean_environment();
 	my $out = &backquote_logged(
 		"$python $module_root_directory/acme_tiny.py ".
@@ -373,8 +519,7 @@ else {
 		($mode eq "web" ? "--acme-dir ".quotemeta($challenge)." "
 				: "--dns-hook $dns_hook ".
 				  "--cleanup-hook $cleanup_hook ").
-		($staging ? "--ca https://acme-staging-v02.api.letsencrypt.org "
-			  : "--disable-check ").
+		$directory_flags.
 		"--quiet ".
 		"2>&1 >".quotemeta($cert));
 	&reset_environment();
@@ -419,25 +564,32 @@ else {
 		&close_tempfile($fh2);
 		}
 	else {
-		# Download the fixed list chained cert files
-		foreach my $url (@$letsencrypt_chain_urls) {
-			my $cout;
-			my ($host, $port, $page, $ssl) = &parse_http_url($url);
-			my $err;
-			&http_download($host, $port, $page, \$cout, \$err,
-				       undef, $ssl);
-			if ($err) {
-				@rv = (0, &text('letsencrypt_echain', $err));
-				goto FAILED;
+		if (!$directory_url) {
+			# Download the fixed list chained cert files for
+			# Let's Encrypt when the ACME response doesn't
+			# include the chain.
+			foreach my $url (@$letsencrypt_chain_urls) {
+				my $cout;
+				my ($host, $port, $page, $ssl) =
+					&parse_http_url($url);
+				my $err;
+				&http_download($host, $port, $page, \$cout,
+					       \$err, undef, $ssl);
+				if ($err) {
+					@rv = (0, &text('letsencrypt_echain',
+							$err));
+					goto FAILED;
+					}
+				if ($cout !~ /\S/ && !-r $chain) {
+					@rv = (0, &text('letsencrypt_echain2',
+							$url));
+					goto FAILED;
+					}
+				my $fh = "CHAIN";
+				&open_tempfile($fh, ">>$chain");
+				&print_tempfile($fh, $cout);
+				&close_tempfile($fh);
 				}
-			if ($cout !~ /\S/ && !-r $chain) {
-				@rv = (0, &text('letsencrypt_echain2', $url));
-				goto FAILED;
-				}
-			my $fh = "CHAIN";
-			&open_tempfile($fh, ">>$chain");
-			&print_tempfile($fh, $cout);
-			&close_tempfile($fh);
 			}
 		}
 
@@ -447,13 +599,18 @@ else {
 	my $chainfinal = "$module_config_directory/$doms[0].ca";
 	&copy_source_dest($cert, $certfinal, 1);
 	&copy_source_dest($key, $keyfinal, 1);
-	&copy_source_dest($chain, $chainfinal, 1);
 	&set_ownership_permissions(undef, undef, 0600, $certfinal);
 	&set_ownership_permissions(undef, undef, 0600, $keyfinal);
-	&set_ownership_permissions(undef, undef, 0600, $chainfinal);
+	if ($chain) {
+		&copy_source_dest($chain, $chainfinal, 1);
+		&set_ownership_permissions(undef, undef, 0600, $chainfinal);
+		}
+	else {
+		$chainfinal = undef;
+		}
 	&unlink_file($cert);
 	&unlink_file($key);
-	&unlink_file($chain);
+	&unlink_file($chain) if ($chain);
 
 	@rv = (1, $certfinal, $keyfinal, $chainfinal);
 	}
@@ -485,6 +642,7 @@ my ($wellknown_new, $challenge_new) = @_;
 sub get_bind_zone_for_domain
 {
 my ($d) = @_;
+return undef if (!&foreign_installed("bind8"));
 &foreign_require("bind8");
 my $bd = $d;
 while ($bd =~ /\./) {
@@ -524,6 +682,23 @@ if ($out && $out =~ /\s*(\d+\.\d+)\s*/) {
 	return $1;
 	}
 return undef;
+}
+
+# get_certbot_key_params(certname)
+# Returns the key type and RSA size saved for an existing Certbot lineage
+sub get_certbot_key_params
+{
+my ($certname) = @_;
+foreach my $base ("/etc/letsencrypt", "/usr/local/etc/letsencrypt") {
+	my $conf = &read_file_contents("$base/renewal/$certname.conf");
+	next if (!defined($conf));
+	my ($key_type) = $conf =~ /^\s*key_type\s*=\s*(\S+)/mi;
+	my ($key_size) = $conf =~ /^\s*rsa_key_size\s*=\s*(\d+)/mi;
+	$key_type = lc($key_type) if ($key_type);
+	$key_type ||= 'rsa' if ($key_size);
+	return ($key_type, $key_size);
+	}
+return ();
 }
 
 # cleanup_letsencrypt_files(domain)

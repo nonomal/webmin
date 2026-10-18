@@ -27,7 +27,7 @@ index_enable=Slå på valgte jobber
 index_esearch=Ingen jobber stemte med søket ditt etter $1.
 index_toomany2=Det er for mange jobber å vise. Bruk søkeskjemaet ovenfor til å begrense listen.
 index_search=Finn Cron jobber som stemmer med
-index_ok=Søk
+ui_searchok=Søk
 index_searchres=Cron jobber som stemmer med $1 ..
 index_reset=Tilbakestill søk.
 index_econfigcheck=Cron jobber kan ikke vedlikeholdes på systemet ditt, da modulkonfigurasjonen ikke er gyldig : $1
@@ -127,7 +127,7 @@ acl_delete=Kan slette Cron jobber?
 acl_move=Kan flytte Cron jobber?
 acl_kill=Kan avslutte Cron jobber?
 acl_hourly=Begrens jobber til "at most hourly"?
-acl_hourlydef=Som  satt i modulkonfig.
+acl_hourlydef=Som satt i modulkonfig.
 
 log_modify=Endret cron jobb for $1
 log_modify_l=Endret cron jobb "$2" for $1

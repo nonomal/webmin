@@ -306,7 +306,7 @@
                 <form name="chmod" id="chmodForm">
                     <div class="form-group">
                         <label for="t_total">$text{'permissions'}:&nbsp; </label>
-                        <input id="perms" type="text" name="t_total" value="0644" size="4" onKeyUp="octalchange()" class="form-group-item">
+                        <input id="perms" type="text" oninput="if(this.value.length>4)this.value=this.value.slice(0,4)" name="t_total" value="0644" size="4" onKeyUp="octalchange()" class="form-group-item">
                         <input type="text" name="sym_total" value="" size="12" readonly="true" class="form-group-item">
                     </div>
                     <table class="table">
@@ -381,16 +381,19 @@
       <div class="modal-body">
         <form id="downFromUrlForm" action="http_download.cgi" method="post">
           <div class="form-group">
-            <label>$text{'dialog_file_url'}</label>
-            <input name="link" type="url" class="form-control" data-placement="top" data-content="$text{'provide_url'}" data-trigger="manual">
+            <label style="display: block;">$text{'dialog_file_url'} <sup class="text-danger">&nbsp;*</sup>
+                <input name="link" type="url" class="form-control" data-placement="top" data-content="$text{'provide_url'}" data-trigger="manual" autocomplete="url" style="font-weight: normal;">
+            </label>
           </div>
           <div class="form-group">
-            <label>$text{'dialog_user_name'}</label>
-            <input name="username" type="text" class="form-control">
+            <label style="display: block;">$text{'dialog_user_name'}
+                <input name="username" type="text" class="form-control" autocomplete="off" style="font-weight: normal;">
+            </label>
           </div>
           <div class="form-group">
-            <label>$text{'dialog_user_pass'}</label>
-            <input name="password" type="password" class="form-control">
+            <label style="display: block;">$text{'dialog_user_pass'}
+                <input name="password" type="password" class="form-control" autocomplete="new-password" style="font-weight: normal;">
+            </label>
           </div>
           <input type='hidden' name='path' value='$quote_escaped_path'>
         </form>

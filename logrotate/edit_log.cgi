@@ -20,7 +20,24 @@ else {
 	$lconf = $log->{'members'};
 	}
 
-print &ui_form_start("save_log.cgi", "post");
+# Explain which side of the vendor/local overlay is displayed and where a
+# copy-on-write edit will be saved before presenting the form.
+if ($in{'global'} && &is_vendor_main_config(&get_main_config_file())) {
+	print &ui_alert_box(&text('global_vendor',
+		"<tt>".&html_escape($config{'logrotate_conf'})."</tt>"),
+		'info');
+	}
+elsif ($log && &is_vendor_config_file($log->{'file'})) {
+	print &ui_alert_box(&text('edit_vendor',
+		"<tt>".&html_escape(&get_local_override_file(
+			$log->{'file'}))."</tt>"), 'info');
+	}
+elsif ($log && (my $vendor = &get_vendor_config_file($log->{'file'}))) {
+	print &ui_alert_box(&text('edit_override',
+		"<tt>".&html_escape($vendor)."</tt>"), 'info');
+	}
+
+print &ui_form_start("save_log.cgi", "post", undef, "id='edit_log_form'");
 print &ui_hidden("new", $in{'new'}),"\n";
 print &ui_hidden("idx", $in{'idx'}),"\n";
 print &ui_hidden("global", $in{'global'}),"\n";
@@ -176,16 +193,16 @@ elsif ($in{'new'}) {
 	print &ui_form_end([ [ 'create', $text{'create'} ] ], "100%");
 	}
 else {
-	print &ui_form_end([ [ 'save', $text{'save'} ],
-			     [ 'now', $text{'edit_now'} ],
-			     [ 'delete', $text{'delete'} ] ], "100%");
-
-	print &ui_form_start("edit_log.cgi",
-	    undef, undef, undef, 'ui_form ui_table_end_submit_right');
-	print &ui_hidden("clone", $in{'idx'});
-	print &ui_hidden("new", 1);
-	print &ui_submit($text{'edit_clone'});
-	print &ui_form_end();
+	print &ui_form_end_side_by_side(
+		"edit_log_form",
+		[ [ 'save', $text{'save'} ],
+		  [ 'now', $text{'edit_now'} ],
+		  [ 'delete', $text{'delete'} ] ],
+		[ &ui_form_start("edit_log.cgi").
+		  &ui_hidden("clone", $in{'idx'}).
+		  &ui_hidden("new", 1).
+		  &ui_submit($text{'edit_clone'}).
+		  &ui_form_end(undef, undef, 1) ]);
 	}
 
 &ui_print_footer("", $text{'index_return'});

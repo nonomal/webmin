@@ -13,7 +13,7 @@ index_find=Find users where username
 index_equals=equals
 index_contains=contains
 index_eperl=The Perl module $1 needed for the selected SMTP authentication mode is not installed or is missing a dependent module. <a href='$2'>Click here</a> to install it now.
-index_file=このファイルのメールを読む:
+index_file=このファイルのメールを読む
 index_nousers=No users were found!
 index_nousersmail=No users with email were found.
 
@@ -40,7 +40,7 @@ mail_compose=新規メールを作成
 mail_open=Open
 mail_return=ユーザ E メール
 mail_pos=Messages $1 to $2 of $3 in $4
-mail_none=このユーザは$1にはメッセージがありません 
+mail_none=このユーザは$1にはメッセージがありません
 mail_ecannot=このユーザーのメールは読めません
 mail_all=すべて選択
 mail_invert=選択の反転
@@ -90,7 +90,7 @@ mail_reset=Clear
 mail_logout=Change POP3 login
 mail_logout2=Change IMAP login
 mail_sig=Edit Signature
-mail_jump=Jump to page :
+mail_jump=Jump to page
 mail_of=of
 mail_replyto=Reply to
 mail_folder=Folder

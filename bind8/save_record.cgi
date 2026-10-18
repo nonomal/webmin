@@ -7,7 +7,7 @@ no warnings 'redefine';
 no warnings 'uninitialized';
 our (%access, %text, %in, %config);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 our $ipv6revzone;
 &ReadParse();
 &error_setup($text{'edit_err'});
@@ -153,7 +153,7 @@ if ($in{'type'} eq "PTR" && $reverse) {
 	}
 else {
 	# some other kind of record
-	$in{'name'} eq "" || $in{'name'} eq "@" || &valnamewild($in{'name'}) ||
+	$in{'name'} eq "" || $in{'name'} eq "@" || &valnamewild($in{'name'}, $in{'type'}) ||
 		&error(&text('edit_ename', $in{'name'}));
 	if ($in{'type'} eq "A") {
 		&check_ipaddress($vals) ||
@@ -211,6 +211,13 @@ else {
 		}
 	elsif ($in{'type'} eq "CNAME") {
 		&valname($vals) || $vals eq '@' ||
+			&error(&text('edit_ecname', $vals));
+		if ($vals =~ /\.\Q$in{'origin'}\E$/) {
+			$vals .= ".";
+			}
+		}
+	elsif ($in{'type'} eq "ALIAS") {
+		&valname($vals) ||
 			&error(&text('edit_ecname', $vals));
 		if ($vals =~ /\.\Q$in{'origin'}\E$/) {
 			$vals .= ".";
@@ -387,9 +394,14 @@ else {
 		my $dmarc = $r ? &parse_dmarc(@{$r->{'values'}}) : { };
 		$dmarc->{'p'} = $in{'dmarcp'};
 
-		$in{'dmarcpct'} =~ /^\d+$/ && $in{'dmarcpct'} >= 0 &&
-		  $in{'dmarcpct'} <= 100 || &error($text{'edit_edmarcpct'});
-		$dmarc->{'pct'} = $in{'dmarcpct'};
+		if ($in{'dmarcpct'} ne '') {
+			$in{'dmarcpct'} =~ /^\d+$/ && $in{'dmarcpct'} >= 0 &&
+			  $in{'dmarcpct'} <= 100 || &error($text{'edit_edmarcpct'});
+			$dmarc->{'pct'} = $in{'dmarcpct'};
+			}
+		else {
+			delete($dmarc->{'pct'});
+			}
 
 		if ($in{'dmarcsp'}) {
 			$dmarc->{'sp'} = $in{'dmarcsp'};
@@ -450,11 +462,11 @@ else {
 		# Save DNSSEC parameters
 		$in{'value2'} =~ /^\d+$/ ||
 			&error($text{'edit_ensec3value2'});
-		$in{'value3'} =~ /^[a-zA-Z0-9\+\/]+$/ ||
-			&error($text{'edit_ensec3value2'});
+		$in{'value3_def'} || $in{'value3'} =~ /^[a-zA-Z0-9\+\/]+$/ ||
+			&error($text{'edit_ensec3value3'});
 		$vals = join(" ", "(", $in{'value0'}, $in{'value1'},
-                                       $in{'value2'},
-				       $in{'value3'}, ")");
+			     $in{'value2'},
+			     ($in{'value3_def'} ? '-' : $in{'value3'}), ")");
 		}
 	elsif ($in{'type'} eq 'CAA') {
 		$in{'value2'} =~ /^\S+$/ ||
@@ -481,6 +493,7 @@ else {
 		}
 	else {
 		# For other record types, just save the lines
+		$in{'values'} //= "";
 		$in{'values'} =~ s/\r//g;
 		my @vlines = split(/\n/, $in{'values'});
 		$vals = join(" ",map { $_ =~ /\s|;/ ? "\"$_\"" : $_ } @vlines);
@@ -715,14 +728,14 @@ $r->{'newvalues'} = $vals;
 &redirect("edit_recs.cgi?zone=$in{'zone'}&view=$in{'view'}&".
 	  "type=$in{'redirtype'}&sort=$in{'sort'}");
 
-# valname(name)
+# valname(name, [type])
 sub valname
 {
-return valdnsname($_[0], 0, $in{'origin'});
+return valdnsname($_[0], 0, $in{'origin'}, $_[1]);
 }
 
-# valnamewild(name)
+# valnamewild(name, [type])
 sub valnamewild
 {
-return valdnsname($_[0], 1, $in{'origin'});
+return valdnsname($_[0], 1, $in{'origin'}, $_[1]);
 }

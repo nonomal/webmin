@@ -46,7 +46,7 @@ $in{'gid'} =~ s/\r|\n//g;
 $in{'uid'} =~ s/\r|\n//g;
 $in{'uid'} = int($in{'uid'});
 $in{'othersh'} =~ s/\r|\n//g;
-$in{'sshkey'} =~ s/\r|\n//g;
+$in{'sshkey'} =~ s/\r//g;
 
 # Validate username
 $user{'user'} = $in{'user'};
@@ -121,7 +121,7 @@ if (!$in{'uid_def'} || $in{'old'} ne '') {
 			}
 		}
 	}
-elsif ( $in{'uid_def'} eq '1' ) {
+elsif ($in{'uid_def'} == 1) {
 	# Can assign UID here
 	$in{'uid'} = int($config{'base_uid'} > $access{'lowuid'} ?
 			 $config{'base_uid'} : $access{'lowuid'});
@@ -133,15 +133,15 @@ elsif ( $in{'uid_def'} eq '1' ) {
 		&error($text{'usave_ealluid'});
 		}
 	}
-
-elsif ( $in{'uid_def'} eq '2' ) {
+elsif ($in{'uid_def'} == 2) {
 	# Can calculate UID here
-        if ( $config{'uid_calc'} ) {
-            $in{'uid'} = &mkuid($in{'user'});
-        } else {
-            $in{'uid'} = &berkeley_cksum($in{'user'});
-        }
-        &error("Unable to calculate UID, invalid user name specified") if ( $in{'uid'} lt 0 );
+        if ($config{'uid_calc'}) {
+		$in{'uid'} = &mkuid($in{'user'});
+		}
+	else {
+		$in{'uid'} = &berkeley_cksum($in{'user'});
+		}
+        &error($text{'usave_euidcalc'}) if ($in{'uid'} < 0);
 	while($used{$in{'uid'}}) {
 		$in{'uid'}++;
 		}
@@ -149,6 +149,10 @@ elsif ( $in{'uid_def'} eq '2' ) {
 		# Out of UIDs!
 		&error($text{'usave_ealluid'});
 		}
+	}
+else {
+	# Invalid value!
+	&error($text{'usave_euid_def'});
 	}
 
 $in{'real'} =~ /^[^:]*$/ || &error(&text('usave_ereal', $in{'real'}));
@@ -232,10 +236,19 @@ else {
 	}
 $real_home ||= $user{'home'};
 if (!$access{'autohome'}) {
+	# Manual home directories must still be absolute and ACL-permitted.
 	$user{'home'} =~ /^\// || &error(&text('usave_ehome', $in{'home'}));
 	if (!&is_under_directory($access{'home'}, $user{'home'})) {
 		&error(&text('usave_ehomepath', $user{'home'}));
 		}
+	}
+
+# Normalize and validate once, before any user/group changes are committed.
+my $sshkey = &normalize_ssh_pubkey($in{'sshkey'});
+if ($sshkey) {
+	# Empty field means "remove the Webmin-managed key"; non-empty must parse.
+	my $sshkeyerr = &validate_ssh_pubkey($sshkey, $user{'user'});
+	&error($sshkeyerr) if ($sshkeyerr);
 	}
 $user{'shell'} = $in{'shell'};
 @sgnames = $config{'secmode'} == 2 ? &split_quoted_string($in{'sgid'})
@@ -470,9 +483,12 @@ if (%ouser) {
 	$in{'chgid'} = !$access{'chgid'} if ($access{'chgid'} != 1);
 	$in{'others'} = !$access{'mothers'} if ($access{'mothers'} != 1);
 
+	# Re-check for user validity
+	&can_edit_user(\%access, \%user) || &error($text{'usave_eeditafter'});
+
 	# Run the pre-change command
 	&set_user_envs(\%user, 'MODIFY_USER',
-		       $in{'passmode'} == 3 ? $in{'pass'} : "", \@sgids);
+		$in{'passmode'} == 3 ? $in{'pass'} : "", \@sgids, $ouser);
 	$merr = &making_changes();
 	&error(&text('usave_emaking', "<tt>$merr</tt>")) if (defined($merr));
 
@@ -531,6 +547,13 @@ if (%ouser) {
 	$user{'plainpass'} = $in{'pass'} if ($in{'passmode'} == 3);
 	&modify_user(\%ouser, \%user);
 
+	# Add, update or remove the SSH public key managed by this module.
+	# Use the real home path, if configured, because that is where files live.
+	my %sshuser = %user;
+	$sshuser{'home'} = $real_home;
+	my $ssherr = &save_user_ssh_pubkey(\%sshuser, \%ouser, $sshkey);
+	&error($ssherr) if ($ssherr);
+
 	# Rename group if needed and if possible
 	if ($user{'user'} ne $ouser{'user'} &&
 	    $user{'gid'} == $ouser{'gid'} &&
@@ -551,6 +574,9 @@ else {
 	$in{'copy_files'} = !$access{'copy'} if ($access{'copy'} != 1 &&
 						 $config{'user_files'} =~ /\S/);
 	$in{'others'} = !$access{'cothers'} if ($access{'cothers'} != 1);
+
+	# Check for user validity
+	&can_edit_user(\%access, \%user) || &error($text{'usave_eeditafter'});
 
 	# Run the pre-change command
 	&set_user_envs(\%user, 'CREATE_USER',
@@ -603,23 +629,13 @@ else {
 		&copy_skel_files($uf, $real_home, $user{'uid'}, $user{'gid'});
 		}
 
-	# Grant access from the given SSH key
-	if ($in{'sshkey'} =~ /\S/ && -d $real_home) {
-		my $sshdir = $real_home."/.ssh";
-		if (!-e $sshdir) {
-			&make_dir($sshdir, 0700);
-			&set_ownership_permissions(
-				$user{'uid'}, $user{'gid'}, 0700, $sshdir);
-			}
-		my $sshfile = $sshdir."/authorized_keys";
-		my $ex = -e $sshfile;
-		&open_tempfile(SSHFILE, ">>$sshfile");
-		&print_tempfile(SSHFILE, $in{'sshkey'},"\n");
-		&close_tempfile(SSHFILE);
-		if (!$ex) {
-			&set_ownership_permissions(
-				$user{'uid'}, $user{'gid'}, 0600, $sshfile);
-			}
+	# Grant access from the given SSH key. For new users an empty field is a
+	# no-op, so no .ssh directory is created unless a key was supplied.
+	if ($sshkey) {
+		my %sshuser = %user;
+		$sshuser{'home'} = $real_home;
+		my $ssherr = &save_user_ssh_pubkey(\%sshuser, undef, $sshkey);
+		&error($ssherr) if ($ssherr);
 		}
 	}
 

@@ -54,11 +54,13 @@ else {
 	}
 }
 
-# open_last_command(handle, user)
+# open_last_command(handle, user, [max])
 sub open_last_command
 {
-local ($fh, $user) = @_;
-open($fh, "last $user |");
+my ($fh, $user, $max) = @_;
+$max = " -n ".quotemeta($max) if ($max);
+my $quser = defined($user) && length($user) ? " ".quotemeta($user) : "";
+open($fh, "last$max$quser |");
 }
 
 # read_last_line(handle)
@@ -86,7 +88,7 @@ while(1) {
 sub execute_dscl_command
 {
 local ($cmd, @args) = @_;
-local $fullcmd = "dscl '$netinfo_domain' ".quotemeta($cmd);
+local $fullcmd = "dscl ".quotemeta($netinfo_domain)." ".quotemeta($cmd);
 foreach my $a (@args) {
 	$fullcmd .= " ".($a eq '' ? "''" : quotemeta($a));
 	}

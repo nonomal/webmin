@@ -195,37 +195,48 @@ if (&supports_temporary_disable()) {
 	}
 
 # Show password field
-$passmode = $pass eq "" && $random_password eq "" ? 0 :
-	    $pass eq $config{'lock_string'} && $random_password eq "" ? 1 :
-	    $random_password ne "" ? 3 :
-	    $pass && $pass ne $config{'lock_string'} &&
-		$random_password eq "" ? 2 : -1;
+$passmode = $random_password ne "" ? 3 :
+	    $pass eq "" ? 0 :
+	    $pass eq $config{'lock_string'} ? 1 :
+	    $pass && $pass ne $config{'lock_string'} ? 2 : -1;
 $pffunc = $config{'passwd_stars'} ? \&ui_password : \&ui_textbox;
-my $modes = [];
+my @modes;
 if ($passmode eq '0' || $config{'empty_mode'}) {
-	push(@{$modes}, [ 0, $config{'empty_mode'} ? $text{'none1'} : $text{'none2'} ]);
+	push(@modes, [ 0, $config{'empty_mode'} ? $text{'none1'} : $text{'none2'} ]);
 	}
-push(@{$modes}, 
-	    [ 1, $text{'nologin'} ],
+push(@modes,[ 1, $text{'nologin'} ],
 	    [ 3, $text{'clear'},
 	      &$pffunc("pass", $config{'random_password'} && $n eq "" ?
-				$random_password : "", 15) ],
+				$random_password : "", 15, undef, undef,
+					'autocomplete="off" autocorrect="off" '.
+						'autocapitalize="none"') ],
 	    $access{'nocrypt'} ?
 		( [ 2, $text{'nochange'},
 		    &ui_hidden("encpass", $pass) ] ) :
 		( [ 2, $text{'encrypted'},
 		    &ui_textbox("encpass", $passmode == 2 ? $pass : "", 60) ] ));
 print &ui_table_row(&hlink($text{'pass'}, "pass"),
-	&ui_radio_table("passmode", $passmode, $modes).
+	&ui_radio_table("passmode", $passmode, \@modes).
 	  ($can_disable ? "&nbsp;&nbsp;".&ui_checkbox("disable", 1,
 				$text{'uedit_disabled'}, $disabled) : "")
 	  );
 
-# Show SSH public key field, for new users
-if ($n eq '') {
-	print &ui_table_row(&hlink($text{'sshkey'}, "sshkey"),
-		&ui_textarea("sshkey", undef, 3, 60), 3);
+# Show SSH public key field. Existing users only display the Webmin-managed
+# key, identified by our marker in authorized_keys; unrelated keys stay hidden.
+my %sshinfo = %uinfo;
+if ($n ne '' && $config{'real_base'} && $config{'home_base'}) {
+	# Match save_user.cgi, which stores files below real_base for automatic
+	# homes while leaving the account home set to the visible home_base path.
+	my $grp = &my_getgrgid($uinfo{'gid'});
+	if (&auto_home_dir($config{'home_base'}, $uinfo{'user'}, $grp) eq
+	    $uinfo{'home'}) {
+		$sshinfo{'home'} = &auto_home_dir($config{'real_base'},
+						  $uinfo{'user'}, $grp);
+		}
 	}
+my $sshkey = $n ne '' ? &get_user_ssh_pubkey(\%sshinfo) : undef;
+print &ui_table_row(&hlink($text{'sshkey'}, "sshkey"),
+	&ui_textarea("sshkey", $sshkey, 4, 60), 3);
 
 print &ui_table_end();
 
@@ -477,7 +488,7 @@ if ($config{'secmode'} == 0) {
 		}
 	@ingroups = map { [ $_, $_ ] } sort { $a cmp $b }
 			grep { $ingroups{$_} } (keys %ingroups);
-	$secfield = &ui_multi_select("sgid", \@ingroups, \@canglist, 5, 1, 0,
+	$secfield = &ui_multi_select_list("sgid", \@ingroups, \@canglist, 5, 1, 0,
 				     $text{'uedit_allg'}, $text{'uedit_ing'});
 	}
 elsif ($config{'secmode'} == 2) {
@@ -554,7 +565,7 @@ if ($n ne "") {
 				}
 			}
 
-		print &ui_table_end(),"<p>\n";
+		print &ui_table_end(),"\n";
 		}
 	}
 else {
@@ -613,7 +624,7 @@ if ($n ne "") {
 		&foreign_require("usermin", "usermin-lib.pl");
 		local %uminiserv;
 		&usermin::get_usermin_miniserv_config(\%uminiserv);
-		if ($uminiserv{'session'}) {
+		if (&usermin::can_create_usermin_login_url(\%uminiserv)) {
 			push(@buts, [ "switch", $text{'uedit_swit'}, undef, 0,
 				"onClick='form.target=\"_blank\"'" ]);
 			}

@@ -113,6 +113,14 @@ push(@rv, $packages{$pos, 'install'} ? "" : false);
 return @rv;
 }
 
+# virtual_package_info(package)
+# Returns an array of package information for a virtual package, usually called
+# if "package_info" returns nothing.
+sub virtual_package_info
+{
+return ( );
+}
+
 # check_files(package)
 # Fills in the %files array with information about the files belonging
 # to some package. Values in %files are  path type user group mode size error
@@ -151,7 +159,8 @@ sub installed_file
 local (%packages, $file, $i, @pkgin);
 local $n = &list_packages();
 for($i=0; $i<$n; $i++) {
-	&open_execute_command(PKGINFO, "$ipkg files $packages{$i,'name'}", 1,1);
+	local $qm = quotemeta($packages{$i,'name'});
+	&open_execute_command(PKGINFO, "$ipkg files $qm", 1,1);
 	while($file = <PKGINFO>) {
 		next if ($file =~ /^Package /);
 		$file =~ s/\r|\n//g;
@@ -186,7 +195,8 @@ else {
 # Installs the package in the given file, with options from %in
 sub install_package
 {
-local $out = &backquote_logged("$ipkg install $_[1] 2>&1");
+local $qm = quotemeta($_[1]);
+local $out = &backquote_logged("$ipkg install $qm 2>&1");
 if ($?) {
 	return "<pre>$out</pre>";
 	}
@@ -197,7 +207,8 @@ return undef;
 # Totally remove some package
 sub delete_package
 {
-local $out = &backquote_logged("$ipkg remove $_[0] 2>&1");
+local $qm = quotemeta($_[0]);
+local $out = &backquote_logged("$ipkg remove $qm 2>&1");
 if ($?) { return "<pre>$out</pre>"; }
 return undef;
 }
@@ -224,8 +235,8 @@ sub update_system_install
 local $update = $_[0] || $in{'update'};
 local (@rv, @newpacks);
 local $cmd = "$ipkg install";
-print "<b>",&text('IPKG_install', "<tt>$cmd</tt>"),"</b><p>\n";
-print "<pre>";
+print &text('IPKG_install', "<tt>$cmd</tt>"),"\n";
+print "<pre data-installer>";
 &additional_log('exec', undef, "$cmd $update");
 local $qm = join(" ", map { quotemeta($_) } split(/\s+/, $update));
 &open_execute_command(CMD, "$cmd $qm", 2);
@@ -242,11 +253,11 @@ while(<CMD>) {
 close(CMD);
 print "</pre>\n";
 if ($?) {
-	print "<b>$text{'IPKG_failed'}</b><p>\n";
+	print "$text{'IPKG_failed'}<p>\n";
 	return ( );
 	}
 else {
-	print "<b>$text{'IPKG_ok'}</b><p>\n";
+	print "$text{'IPKG_ok'}<p>\n";
 	return &unique(@rv);
 	}
 }

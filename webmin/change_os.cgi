@@ -11,6 +11,8 @@ if ($in{'update'}) {
 	%osinfo = &detect_operating_system();
 	$gconfig{'real_os_type'} = $osinfo{'real_os_type'};
 	$gconfig{'real_os_version'} = $osinfo{'real_os_version'};
+	$gconfig{'real_os_version_full'} = $osinfo{'real_os_version_full'} ||
+					 $osinfo{'real_os_version'};
 	$gconfig{'os_type'} = $osinfo{'os_type'};
 	$gconfig{'os_version'} = $osinfo{'os_version'};
 	}
@@ -22,12 +24,26 @@ elsif ($in{'type'} ne $gconfig{'real_os_type'} ||
 	$gconfig{'real_os_type'} = $in{'type'};
 	$in{'version'} || &error($text{'os_eversion'});
 	$gconfig{'real_os_version'} = $in{'version'};
+	# Discard the detected display version when OS settings are overridden
+	$gconfig{'real_os_version_full'} = $in{'version'};
 	($os) = grep { $_->{'realtype'} eq $in{'type'} }
 		     &list_operating_systems();
 	$gconfig{'os_type'} = $in{'itype'};
 	$in{'iversion'} || &error($text{'os_eiversion'});
 	$gconfig{'os_version'} = $in{'iversion'};
 	}
+# EOL data
+if (defined($in{'os_eol_before'}) &&
+    $in{'os_eol_before'} ne $gconfig{'os_eol_before'}) {
+	$in{'os_eol_before'} =~ /^\d+$/ || &error($text{'os_eol_ecountdown'});
+	$gconfig{'os_eol_before'} = $in{'os_eol_before'};
+	# Invalidate EOL cache
+	foreach my $key ('os_eol_db', 'os_eol_expired',
+			 'os_eol_expiring') {
+		delete($gconfig{$key});
+		}
+	}
+# Path
 $gconfig{'path'} = join($path_separator, split(/[\r\n]+/, $in{'path'}));
 $gconfig{'syspath'} = !$in{'syspath'};
 if ($gconfig{'ld_env'}) {

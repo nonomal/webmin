@@ -6,7 +6,6 @@
 %number_to_month_map = reverse(%month_to_number_map);
 $main::default_debug_log_size = 10*1024*1024;
 
-$webmin_feedback_address = "feedback\@webmin.com";
 $default_lang = "en";
 $default_charset = "UTF-8";
 
@@ -33,13 +32,6 @@ if (!$done_web_lib_funcs) {
 # Has to be set after error is defined
 $remote_error_handler ||= \&error;
 $main::remote_error_handler ||= \&error;
-
-# Die handler that stores the error from
-# eval message in a global variable
-$SIG{__DIE__} = sub {
-	# Don't meddle with the natural functioning of eval.
-	$main::error_last_eval = $_[0] if (!$^S);
-};
 
 1;
 

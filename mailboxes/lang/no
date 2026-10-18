@@ -17,7 +17,7 @@ index_find=Finn brukere hvor brukernavnet
 index_equals=er lik
 index_contains=inneholder
 index_eperl=Perl modulen $1 som er nødvendig for den valgte SMTP autentiseringsmodusen er ikke installert eller den mangler an modul den er avhangig av. <a href='$2'>Klikk her</a> for å installere den nå.
-index_file=Les e-post i fil:
+index_file=Les e-post i fil
 index_nousers=Ingen brukere funnet!
 index_nousersmail=Ingen brukere med e-post ble funnet.
 
@@ -409,7 +409,7 @@ razor_report2=Rapporterer de valgte meldingene til Razor ag andre SpamAssassin d
 razor_report3=Avrapporterer de valgte meldingene til Razor og andre SpamAssassin databaser
 razor_done=.. ferdig
 razor_err=.. feilet! Se feilmeldingen ovenfor for å finne mer om årsaken.
-razor_moved=.. ferdig, og  flyttet til mappe $1.
+razor_moved=.. ferdig, og flyttet til mappe $1.
 razor_deleted=.. ferdig, og slettet melding også.
 
 ham_title=Rapporterer som Vennepost

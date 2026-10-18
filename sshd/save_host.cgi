@@ -50,9 +50,28 @@ else {
 		$in{'user'} =~ /^\S+$/ || &error($text{'host_euser'});
 		&save_directive("User", $conf, $in{'user'});
 		}
-
-	&save_directive("KeepAlive", $conf,
-		$in{'keep'} == 2 ? undef : $in{'keep'} ? 'yes' : 'no');
+	my $keep_now = $in{'keep'} == 2 ? undef : $in{'keep'};
+	if ($version_number >= 3.8) {
+		if (!defined($keep_now)) {
+			# Default
+			&save_directive("ServerAliveInterval", $conf, undef);
+			&save_directive("ServerAliveCountMax", $conf, undef);
+			}
+		elsif ($keep_now == 1) {
+			# Enabled
+			&save_directive("ServerAliveInterval", $conf, 60);
+			&save_directive("ServerAliveCountMax", $conf, 3);
+			}
+		else {
+			# Disabled
+			&save_directive("ServerAliveInterval", $conf, 0);
+			&save_directive("ServerAliveCountMax", $conf, undef);
+			}
+		}
+	else {
+		&save_directive("KeepAlive", $conf,
+			$in{'keep'} == 2 ? undef : $in{'keep'} ? 'yes' : 'no');
+		}
 
 	if ($in{'hostname_def'}) {
 		&save_directive("HostName", $conf);
@@ -94,12 +113,14 @@ else {
 
 	
 	if ($version_type ne 'ssh' || $version_number < 3) {
-		if ($in{'clevel_def'}) {
-			&save_directive("CompressionLevel", $conf);
-			}
-		else {
-			&save_directive("CompressionLevel", $conf,
-					$in{'clevel'});
+		if ($version_number < 6) {
+			if ($in{'clevel_def'}) {
+				&save_directive("CompressionLevel", $conf);
+				}
+			else {
+				&save_directive("CompressionLevel", $conf,
+						$in{'clevel'});
+				}
 			}
 
 		if ($in{'attempts_def'}) {
@@ -111,15 +132,20 @@ else {
 			&save_directive("ConnectionAttempts", $conf,
 					$in{'attempts'});
 			}
+		if ($version_number < 7.4) {
+			&save_directive("UsePrivilegedPort", $conf,
+				$in{'priv'} == 2 ? undef :
+					$in{'priv'} ? 'yes' : 'no');
+			}
+		if ($version_number < 6) {
+			&save_directive("FallBackToRsh", $conf,
+				$in{'rsh'} == 2 ? undef :
+					$in{'rsh'} ? 'yes' : 'no');
+			&save_directive("UseRsh", $conf,
+				$in{'usersh'} == 2 ? undef :
+					$in{'usersh'} ? 'yes' : 'no');
+			}
 
-		&save_directive("UsePrivilegedPort", $conf,
-			$in{'priv'} == 2 ? undef : $in{'priv'} ? 'yes' : 'no');
-
-		&save_directive("FallBackToRsh", $conf,
-			$in{'rsh'} == 2 ? undef : $in{'rsh'} ? 'yes' : 'no');
-
-		&save_directive("UseRsh", $conf,
-		    $in{'usersh'} == 2 ? undef : $in{'usersh'} ? 'yes' : 'no');
 		}
 
 	&save_directive("ForwardAgent", $conf,
@@ -136,7 +162,8 @@ else {
 		&save_directive("CheckHostIP", $conf,
 		  $in{'checkip'} == 2 ? undef : $in{'checkip'} ? 'yes' : 'no');
 
-		&save_directive("Protocol", $conf, $in{'prots'} || undef);
+		&save_directive("Protocol", $conf, $in{'prots'} || undef)
+			if ($version_number < 7.4);
 		}
 
 	for($i=0; defined($in{"llport_$i"}); $i++) {

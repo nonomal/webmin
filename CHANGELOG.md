@@ -1,9 +1,533 @@
 ## Changelog
+#### 2.680 (October, 2026)
+* Add an SQLite database browser and editor with schema inspection, table management, row editing and direct SQL execution [forum.virtualmin.com/t/137508](https://forum.virtualmin.com/t/sqlite-database-browser-and-editor/137508/)
+* Add color schemes to the Terminal module
+* Add per-user Terminal preferences for color scheme, font size, screen reader mode and terminal dimensions
+* Add protection against infinite loops resolving recursive symlinks (thanks to Carl Zuzart, Zedden I.T.)
+* Add a Cloudmin virtualization host profile to the nftables module
+* Add drop-down menu, dialog, breadcrumb and page link widgets to the UI library, built on native `details` and `dialog` elements
+* Add confirmation dialogs for buttons and links carrying `data-ui-confirm`, replacing the browser's own prompt
+* Update the Framed Theme with many visual and usability improvements
+* Update File Manager to use the new UI widgets in the standard theme, dropping legacy templates
+* Fix standard theme sortable tables dropping controls from table headings, such as the select-all checkbox in File Manager
+* Fix package installation with DNF running `update` instead of `install` when one of several requested packages is already installed, leaving the others uninstalled
+* Fix two-factor authentication validation to use the Webmin configuration and data directories passed by the caller
+* Fix HTML escaping of module, script and session fields on the Webmin Actions Log details page
+* Fix mailbox attachment option injection
+* Fix archive extraction bypassing Upload and Download directory restrictions
+* Fix path traversal and command injection in parameterized Custom Commands file editors
+* Fix MySQL/MariaDB manual editor ACL bypass
+* Fix MySQL database backups allowing restricted users to write files or save root-run settings outside their access limits
+* Fix the logged in users list in Users and Groups module showing nobody when `who` prints ISO dates under a non-C locale or `sshd pts/N` lines from the logind backend [forum.virtualmin.com/t/138162](https://forum.virtualmin.com/t/138162)
+* Fix missing SSH logins in the Users and Groups module on Ubuntu 26.04 by using systemd-logind when `utmp` is absent
+* Fix mail date parsing of ISO dates like `2026-10-15 02:33` returning the wrong minutes
+* Add optional address-family selection to HTTP downloads and socket connections, preserved across redirects [#1300](https://github.com/virtualmin/virtualmin-gpl/issues/1300)
+* Update the Authentic theme to the latest version with various improvements:
+  - Add support for Terminal module color preferences
+  - Add support for the new Cloudmin navigation, graphical console and live virtual machine controls
+  - Fix spacing and borders in widgets, tables and tab panes
 
-#### 2.106 (February 26, 2024)
-* Development and testing build
+#### 2.670 (September 20, 2026)
+* Add new Hardware Information module for inspecting system, firmware, security, PCI, USB, storage, network, processor, sensor, driver, and kernel module details
+* Add options to send Webmin and Usermin errors to the systemd journal [forum.virtualmin.com/t/136562](https://forum.virtualmin.com/t/miniserv-webserver-log-growing-too-big-should-be-rotated/136562)
+* Add webserver logging controls to Usermin Configuration module
+* Add option to rotate Webmin and Usermin webserver logs using `logrotate` instead of periodically clearing them [#2821](https://github.com/webmin/webmin/pull/2821)
+* Add DNF 4 and 5 package hold management to the Software Package Updates module
+* Add `return` based redirects with 301, 302, 303, 307 and 308 codes to the URL Re-Writing pages in the Nginx Webserver module [forum.virtualmin.com/t/137940](https://forum.virtualmin.com/t/137940)
+* Fix DNF update confirmations by previewing packages and dependencies that will be installed or updated
+* Fix reboot-required detection on DNF systems without a standalone `needs-restarting` command [forum.virtualmin.com/t/137973](https://forum.virtualmin.com/t/137973)
+* Fix Postfix map updates failing when CIDR tables are configured
+* Fix PostgreSQL initialization on EL systems to use SCRAM-SHA-256 authentication by default
+* Fix IPsec host key generation with modern Libreswan [#2132](https://github.com/webmin/webmin/issues/2132)
+* Fix journal since filter showing oldest entries on older systemd [forum.virtualmin.com/t/137876](https://forum.virtualmin.com/t/137876)
+* Fix disk usage and mounted filesystem handling for mount points and devices with spaces, such as ZFS datasets [#2833](https://github.com/webmin/webmin/issues/2833)
+* Fix native ext4 quota detection for filesystems mounted using `LABEL=` or `UUID=` identifiers [forum.virtualmin.com/t/137832](https://forum.virtualmin.com/t/137832)
+* Fix slave zone files staying empty on Debian and Ubuntu secondaries by creating BIND zone files owned by the `bind` user [forum.virtualmin.com/t/137767](https://forum.virtualmin.com/t/137767)
+* Fix Nginx Webserver module lock files not being released, causing saves to hang during long-running operations
+* Fix module name validation to prevent loading files outside installed modules
+* Fix ACL operations bypassing configured allowed paths in File Manager
+* Fix arbitrary file reads in Software Packages module
+* Fix TLS client certificate verification
+* Fix Apache Webserver module to enforce the allowed directory ACL when manually editing `.htaccess` files
+* Fix Custom Commands module to properly quote parameter values passed to commands and to reject parameters with multiple values
+* Fix DNSSEC NSEC3 zone signing in BIND DNS Server module to use zero additional hash iterations, as recommended by RFC 9276
+* Fix System Logs module to create a new log file only after the log entry passes validation
+* Fix file chooser to lift the root directory restriction only when the chroot is at or under the allowed root
+* Fix password changes from the login page using a configured password change command to fail unless the command prompts for the old password
+* Fix File Manager search results to only include files under the allowed directories
+* Update Backup Configuration module's destination selector to use the new select-based UI
+* Update the Authentic theme to the latest version with various improvements:
+  - Add support for HTML signatures in Usermin
+  - Fix light palette layout gaps to be slightly tighter to match dark palette better
+  - Fix data tables and their filter to be restored fully functional on history back navigation
+  - Fix history back navigation after a full page reload
+  - Fix disabled checked checkboxes showing a cross instead of a checkmark
+  - Fix theme authorization to use explicit Webmin module ACLs for privileged actions
+  - Fix Cloudmin shell history file path validation
+  - Fix module name validation in configuration pages
+  - Fix ACL operations bypassing configured allowed paths in File Manager
+  - Fix mail server credentials being exposed in Usermin responses
+  - Drop server-side Perl customizations
+  - Drop the built-in theme updater
+  - Drop dashboard-managed CSF update checks
 
-#### 2.105 (November 09, 2023)
+#### 2.660 (August 20, 2026)
+* Add support for creating `vfsv1` Linux quota files for limits above 4 TiB, while preserving existing quota file formats
+* Add Btrfs subvolume quota management to the Disk Quotas module, with full and simple accounting modes
+* Add support for openSUSE 16 vendor and local Logrotate configuration overlays [#2682](https://github.com/webmin/webmin/issues/2682)
+* Add support for applying multiple patches at once with the `patch` sub-command
+* Add APT package hold management to the Package Updates module
+* Add an option to send scheduled package update email only when new updates are found [forum.virtualmin.com/t/137796](https://forum.virtualmin.com/t/can-we-make-security-updates-email-less-chatty/137796)
+* Add incremental ban time options to the Fail2Ban module
+* Fix Webmin server connections that open but never send a request, preventing them from waiting indefinitely [#2815](https://github.com/webmin/webmin/pull/2815)
+* Fix to ignore failures when adding IPv6 link-local (fe80\:\:) addresses that may already be configured automatically
+* Fixed creation of permissions new log files in the System Logs module (thanks to Kevin Carter)
+* Fix automatic reply message and reply tracking to keep working after a user's home directory changes in Usermin [#126](https://github.com/webmin/usermin/issues/126)
+* Fix custom reply tracking file being reset to the default when editing an automatic reply in Usermin
+* Fix Fail2Ban jail editor to correctly separate actions when one has no parameters [#2718](https://github.com/webmin/webmin/issues/2718)
+* Fix to honor the editable users ACL in the group member chooser in Users and Groups module [#2464](https://github.com/webmin/webmin/issues/2464)
+* Update the Authentic theme to the latest version with various improvements:
+  - Fix change detection and submission for forms using grouped bottom action buttons
+  - Fix login page front side clipping and flip animation for long welcome messages
+  - Fix opening the wrong directory in Terminal for domain owners in File Manager
+  - Fix disallowed entry handling in File Manager [forum.virtualmin.com/t/137654](https://forum.virtualmin.com/t/extra-admin-file-manager-permissions/137654?u=ilia)
+  - Fix inline images not displaying when printing emails in Usermin
+  - Fix various styling issues for ConfigServer Security & Firewall
+  - Fix navigation detection for the new Virtualmin Podman plugin
+  - Fix bottom page action buttons wrapping and alignment
+  - Fix errors for Webmin-only users in File Manager
+
+#### 2.653 (July 26, 2026)
+* Fix to include missing `xmlrpc-lib.pl` file in the package
+* Fix listing partially installed Debian and derivative packages
+* Update the Authentic theme to the latest version with various improvements:
+  - Add improved support for the upcoming Virtualmin Podman plugin
+  - Fix mail compose panel styling and sizing on initial load in Usermin
+
+#### 2.652 (July 16, 2026)
+* Add a global per-user ACL control to block URL downloads from non-public IP addresses in File Manager, Mailboxes, and Upload and Download modules
+* Fix to recognize hex numeric HTML entities to work in various elements
+* Fix `patch` sub-command to reload Webmin instead of restarting, making it possible to run from Terminal module
+* Fix SSL certificate and TCP monitors to report transient connection failures as down, and SSL check timeouts as timed out, rather than uninstalled
+* Fix local file imports to enforce file access ACLs in Users and Groups, LDAP Users, MySQL/MariaDB, and PostgreSQL modules
+* Fix Webmin user switching and session checks to find sessions stored with HMAC session keys
+* Fix Usermin user switching to use one-time login URLs instead of the legacy cookie handoff and service restart flow
+* Fix APT package architecture suffix handling to avoid false package update failure reports
+* Fix missing Maildir folders to be counted as empty in Mailboxes module
+* Fix Postfix version comparisons to handle version strings safely
+* Fix SELinux labeling for Webmin runtime data
+* Fix LVM resizing to grow eligible partition-backed physical volumes into adjacent free disk space and handle unchanged logical volume sizes correctly
+* Update the Authentic theme to the latest version with various improvements:
+  - Fix inconsistent gaps around rounded UI elements
+  - Fix CPU usage values exceeding 100% in the dashboard
+  - Fix File Manager remote downloads to respect download address restrictions
+  - Fix spacing in the login page welcome message
+
+#### 2.651 (June 28, 2026)
+* Fix Certbot-backed certificate requests and renewals to correctly parse PEM paths after issuance
+* Fix live activation of Linux bond interfaces [#2777](https://github.com/webmin/webmin/pull/2777)
+* Update the Authentic theme to the latest version with various improvements and fixes:
+  - Fix search-result all-items delete in File Manager
+  - Fix search-result delete ordering in File Manager
+  - Fix to speed up search-result deletion cleanup in File Manager
+
+#### 2.650 (June 25, 2026)
+* Add new Systemd Services and Units module
+* Add new GRUB 2 Boot Loader module
+* Add new Kea DHCP Server module
+* Add WebSocket proxy support to the Webmin Servers Index module
+* Add basic Alpine Linux support
+* Add IP-based Let's Encrypt certificate support with Certbot 5.3
+* Add editable SSH public keys for newly added Unix users in Users and Groups module
+* Add improvements to custom Webmin temporary directory handling
+* Add quick service and port forwarding controls to the nftables module
+* Add optional pre- and post-scripts for scheduled package updates
+* Add option to control when scheduled package update email is sent
+* Add per-user RPC/API-only access option to the Webmin Users module
+* Add Apache 2.4 MPM process limit directives [#1821](https://github.com/webmin/webmin/issues/1821)
+* Add dhcpcd network backend for Debian and Raspberry Pi OS [#1607](https://github.com/webmin/webmin/issues/1607)
+* Add hardware RAID passthrough devices config in the SMART Status module [#1704](https://github.com/webmin/webmin/issues/1704)
+* Update Xterm.js to fix Control-C handling on iPadOS/Safari terminals
+* Update Webmin systemd service unit to run without forking
+* Fix IPv6 CIDR access control matching [#1570](https://github.com/webmin/webmin/issues/1570)
+* Fix Bootup and Shutdown module to show only services and not all units on systemd systems
+* Fix Let's Encrypt renewal scheduling to count from the last successful request
+* Fix NetworkManager detection on Debian and IPv6 DNS nameserver saving
+* Fix Dovecot configuration file handling when saving extra configs
+* Fix mailbox listing to skip unusable Maildir entries and remove stale deleted or moved entries
+* Fix Postfix module labels to identify virtual alias maps instead of virtual mailbox domains #1541
+* Fix Apache module to hide disabled default virtual hosts from the active server list
+* Fix Netplan DNS saving to preserve YAML structure
+* Fix BIND DNS handling of underscores, trailing dots, and mass record length checks
+* Fix MariaDB user creation when using auth plugin syntax
+* Fix PHP-FPM monitor on EL systems when using `/etc/php.ini` as the config file
+* Fix RPC-only accounts to block browser/module access before module ACL checks
+* Fix reflected XSS in Webmin status messages
+* Fix path validation in File Manager, package delete helpers, and Apache virtual host files
+* Fix authentication state handling for SSL certificate logins and proxied keep-alive requests
+* Update session handling to improve security, which will require users to re-authenticate after upgrading
+* Update the Authentic theme to the latest version with various improvements and fixes:
+  - Add zooming to stats history graphs by holding shift and scrolling in the dashboard
+  - Add support for saving live stats history for up to 24 hours without performance impact
+  - Add better support for the new Nginx, nftables, and upcoming systemd, Kea-DHCP, and GRUB 2 Webmin modules
+  - Add ability to always show available dashboard panels in theme configuration
+  - Add support for live stats and terminal WebSocket connections through Webmin Servers Index proxy links
+  - Fix proxying when Webmin is accessed with a webprefix using Webmin Servers Index module
+  - Fix theme UI helpers to escape generated markup more safely
+  - Fix iOS terminal viewport sizing
+  - Fix editor save handling, clean-state indication and dirty reload guard
+  - Fix popover positioning, z-index and border color for help bubbles
+  - Fix the active product switch border in the navigation menu for the dark palette
+  - Fix to validate password reset return URLs
+
+#### 2.641 (May 10, 2026)
+* Fixed a bug when editing monitors in the System and Server Status module
+* Fix Fail2Ban default jail options
+* Added support for trusted proxy IP addresses
+
+#### 2.640 (May 4, 2026)
+* Add new nftables module with profiles, saved tables, and chains/sets management
+* Add new Nginx module with look and feel matching the Apache module
+* Add option to hide sensitive values (like passwords or tokens) from Webmin's request logs
+* Add custom ACME server support for Webmin SSL renewal
+* Add support for the latest MariaDB on Ubuntu 26.04
+* Add multi-statement SQL query support when executing inline in MySQL/MariaDB module
+* Add support for ext4 hidden inode quota mode
+* Add used space and usage percentage reporting for ZFS in the dashboard
+* Add mass enable and disable buttons for status monitors in the System and Server Status module
+* Update tiny ACME client to the latest version
+* Update DHCP default config for openSUSE 16 [#2678](https://github.com/webmin/webmin/issues/2678)
+* Fix to prevent bypassing two-factor authentication in RPC requests
+* Fix session cookies to use safer defaults
+* Fix handling of connections coming through a reverse proxy
+* Fix unsafe mailbox attachment handling in Mailbox module
+* Fix unsafe decoding of Outlook `winmail.dat` attachments
+* Fix Certbot standalone port conflicts
+* Fix to correctly preserve full quoted action parameters in the Fail2Ban jail editor [#2647](https://github.com/webmin/webmin/issues/2647)
+* Fix Fail2Ban default jail options to preserve required timing defaults when saving
+* Fix ZFS to fall back to `df` when disk space cannot be computed from `zpool`
+* Fix to allow toggling process priority and I/O controls on or off
+* Fix issue where disabled email notifications were still being processed
+* Update Authentic theme to the latest version with various improvements and fixes:
+  - Upgrade stats history graphs from laggy SVG to a blazing-fast canvas renderer
+  - Add option to control corner roundness for the menu, content area and right-side slider
+  - Change the content area to use rounded corners and a margin by default
+  - Fix message of the day display in login page correctly [webmin#2555](https://github.com/webmin/webmin/issues/2685)
+  - Fix tooltip visibility in dark palette
+  - Fix session login button spinner
+  - Fix various button styling issues (active state, tiny buttons, airy buttons, stack position)
+
+#### 2.630 (March 24, 2026)
+* Add improvements to user input validation across all modules
+* Update Authentic theme to the latest version with various improvements and fixes:
+  - Add a new airy button style to the light palette to match the dark one  
+  - Fix to optimize stats server to reduce WebSocket memory usage  
+  - Fix the real-time follow indicator when viewing the journal  
+  - Fix regex-based match highlighting when viewing the journal  
+  - Fix mail compose panel sizing in HTML mode on low-DPR screens  
+  - Fix display of the 2FA QR code in the dark palette
+
+#### 2.621 (January 25, 2026)
+* Fix to prevent NAT from dropping idle RPC sessions during long transfers
+* Fix to improve the message when socket authentication is used in the MySQL/MariaDB module
+* Fix to make upload tracking work correctly in all situations and on all systems
+* Fix to correctly display the PHP version in the PHP Configuration module when managing packages
+* Update Xterm.js to the latest version with lots of improvements and fixes
+* Update Authentic theme to the latest version with various improvements and fixes:
+  * Fix the support for the cloned Terminal module
+  * Fix error handling for file uploads when the user is out of quota or the system is out of disk space in the File Manager module
+  * Fix to stop loading full file into memory for upload check to prevent memory leak on large uploads in the File Manager module
+  * Fix to permanently save the state of the navigation menu and right-side slider when toggled
+
+
+#### 2.620 (January 9, 2026)
+* Add ability to use correct driver depending on the database in MySQL/MariaDB module
+* Add improvements to BIND DNS module for better key management
+* Add support for Ubuntu 26.04 development preview
+* Add a config option to increase the RPC timeout
+* Add support for EC SSL certificate and key in the ProFTPd module
+* Add support for using `gpart` in FreeBSD disk management module
+* Add support for Ed25519 public key in User and Groups module
+* Fix RPC session timeout during large file transfers
+* Fix selection and configuration of TLS certificate and key in the ProFTPd module
+* Update Authentic theme to the latest version with various improvements and fixes:
+  * Add support for multiple scrollable tabs in the File Manager
+  * Fix displaying of the right-side toolbar in File Manager when using Safari
+  * Fix to print menu separator when no virtual servers are added yet in Virtualmin
+  * Fix bugs in white palette
+  * Fix exported file name in data tables
+
+#### 2.610 (November 23, 2025)
+* Fix to drop dependency on `IO::Pty` Perl module
+* Fix `virtual-server` module server-side search to work correctly
+* Update the Authentic theme to the latest version with various improvements and fixes:
+  - Add a range slider to adjust content page margins more precisely
+  - Add an option to enable rounded corners for content page
+  - Add more customization options for pie charts
+  - Fix to increase clickable area for checkboxes in File Manager
+  - Fix to correct rotation of pin and unpin button for right side slider
+  - Fix color of selected items in the multiselect dropdown
+  - Fix to improve the visibility of disabled checkboxes
+  - Fix to send saved params in the post body when saving theme configuration
+    [More details...](https://github.com/webmin/authentic-theme/releases/tag/26.20)
+
+#### 2.600 (November 9, 2025)
+* Add an options to enable the slow query log in the MySQL/MariaDB module [#2560](https://github.com/webmin/webmin/issues/2560)
+* Add ability to install multiple PHP extensions at once in the PHP Configuration module
+* Add ability to show package URL in the Software Packages module [#1141](https://github.com/virtualmin/virtualmin-gpl/issues/1141)
+* Add support to show Debian package install time in the Software Packages module
+* Add support to show detailed Webmin server stats using new `webmin stats` CLI command [forum.virtualmin.com/t/135556](https://forum.virtualmin.com/t/is-this-memory-used-a-bit-high/135556/6?u=ilia)
+* Add a major Authentic theme UI update with lots of visual and structural improvements for a smoother and more modern experience
+[More details...](https://forum.virtualmin.com/t/authentic-theme-version-26-00-release-overview/135755?u=ilia)
+* Fix EOL library fatal error for OS in development [#2121](https://github.com/webmin/webmin/issues/2121)
+* Fix correctly saving jails with parameters containing quotes in the Fail2Ban module [#2572](https://github.com/webmin/webmin/issues/2572)
+* Fix file is always renamed as the effective user in the Upload and Download module [#1054](https://github.com/webmin/webmin/issues/1054)
+
+#### 2.520 (October 4, 2025)
+* Fix to make sure the mail URL uses a well-known host name [security]
+* Fix support for other Raspberry Pi sensors [#2545](https://github.com/webmin/webmin/issues/2545)
+* Fix the printing of the bottom button row in the form column table
+* Fix to recommend Perl `Sys::Syslog` module [#2557](https://github.com/webmin/webmin/issues/2557)
+* Fix to avoid using short hostname in HTTPS redirects when an FQDN is available
+* Fix to use _/proc_ sampler instead of `vmstat` for the same output with much lower overhead
+* Fix to query specific fields in FreeBSD memory stats collection, cutting CPU use by 80%
+* Fix to kill Webmin subprocesses during RC stop on FreeBSD and other systems
+* Fix to correctly fetch command version in `PPTP VPN Client` module [#2567](https://github.com/webmin/webmin/issues/2567)
+* Add a complete overhaul of `var_dump` subroutine, which is now fully portable
+* Update the Authentic theme to the latest version with various fixes:
+  - Fix the text color when reading email in the Read User Mail module [webmin#2555](https://github.com/webmin/webmin/issues/2555)
+  - Fix to ensure the selected color palette is correctly stored when changed manually [webmin#2552](https://github.com/webmin/webmin/issues/2552)
+  - Fix a bug when the Webmin version label was missing when copying to clipboard system information from the dashboard
+  - Fix DNS query spike from network stats collection on FreeBSD [webmin#2556](https://github.com/webmin/webmin/issues/2556)
+  - Fix to display the appropriate icon for proxy mode on new Bunny DNS
+  - Fix spinner color in toast messages for dark palette
+  - Fix other bugs and add various small improvements
+
+#### 2.510 (September 16, 2025)
+* Fix to ensure DNSSEC re-signing period is less than 30 days in the BIND DNS module
+* Fix to treat 201 as a valid response code in the internal download function
+* Update the Authentic theme to the latest version with various improvements and fixes:
+  - Add optimizations to dashboard graphs with dynamic trimming to prevent page lagging
+  - Add improvements to how the system cache for the dashboard is updated
+  - Add support to correctly reload the page in proxy mode
+  - Add an option to choose if default page should always load when switching navigation
+  - Fix to ensure the color palette is preserved for the user [webmin#2537](https://github.com/webmin/webmin/issues/2537)
+  - Fix algorithm for calculating rows per page in data table pagination
+  - Fix the alert info box text color for dark mode
+  - Fix critical lags and appearance of Custom Commands module 
+
+#### 2.501 (September 10, 2025)
+* Add support for Raspberry Pi sensors #2539 #2517
+* Add Squid 7 support
+* Update the Authentic theme to the latest version with the following fixes:
+  - Fix broken editor in "Bootup and Shutdown" module
+
+#### 2.500 (September 4, 2025)
+* Add support for the Webmin webserver to work in both HTTP and HTTPS modes at the same time
+* Add distinct warning to the login page if the connection is not secure
+* Add support for timeouts in temporary rules in "FirewallD" module
+* Add support for the new Dovecot version 2.4
+* Add support for MariaDB version 12 #2522
+* Add support for IMAP through a local command for Usermin
+* Add latest SSLeay support for redirects to SSL work
+* Add improvements to "Bootup and Shutdown" module for _systemd_ systems
+* Add field for secondary server key in "BIND DNS Server" module
+* Add reversible encryption helpers API
+* Add API to display relative dates
+* Add API to mask sensitive text, like displayed passwords, unless hovered over
+* Add status monitor for PHP FPM #2499
+* Add support for DNF5 format in the "Software Packages" module
+* Add support for redirecting to the enforced domain when the `musthost_redirect` directive is set
+* Add option to customize the SMTP login for scheduled background monitoring in the "System and Server Status" module
+* Change to show relative dates in "Webmin Users: Current Login Sessions" and "Webmin Actions Log: Search Results" pages
+* Change "Last Logins" on the dashboard to show usernames, relative dates, and all users from the past 3 days
+* Change to always enable HSTS by default
+* Fix MySQL/MariaDB to remove obsolete `set-variable` options that break modern config files #2497
+* Fix download link in table rows in "MySQL/MariaDB Database Server" module
+* Fix module not to fail on old MySQL 5.5
+* Update the Authentic theme to the latest version with various improvements and fixes:
+  - Add support to automatically set the color palette based on OS or browser preferences
+  - Add improvements to tooltips in dark palette
+  - Change the default shortcut key for toggling the light/dark palette
+  - Change the default shortcut key for toggling right slider
+  - Change wording to use "shortcut" instead of "hotkey"
+  - Change the default maximum column width
+  - Fix navigation menu load in proxy mode #2502
+  - Fix navigation menu to always stay in sync with the product switch
+  - Fix sporadic issue where the navigation menu disappeared and the content page was shifted
+  - Fix info alert text color and button color in the dark palette
+  - Fix styling of checkboxes and radios for backup and restore pages in Virtualmin
+  - Fix styling for extra backup destinations in Virtualmin
+  - Fix advanced schedule display in the cron chooser in Virtualmin
+    [More details...](https://github.com/webmin/authentic-theme/releases/tag/25.00)
+
+#### 2.402 (June 16, 2025)
+* Update the Authentic theme to the latest version with various fixes and improvements
+* Fix support for EL10-based systems
+
+#### 2.401 (June 2, 2025)
+* Add forgotten password recovery support for Virtualmin mailbox users
+* Add forgotten password recovery support in Usermin
+* Fix account lock status check in MySQL/MariaDB module that was blocking new database user creation #2484
+* Fix to prevent safe users from sending emails
+* Fix to always show password recovery link if enabled
+
+#### 2.400 (May 25, 2025)
+* Add built-in support for forgotten password recovery
+* Add support for SSL certificates and DNS over TLS in the BIND module
+* Add support to configure listen for any type of address in Dovecot module
+* Add ability to manage available PHP packages directly from PHP Configuration module
+* Add ability to configure and show proper branding logo on the login page
+* Add display of the PHP binary and its version in the PHP Configuration module
+* Add improvements to MySQL/MariaDB module when editing users and privileges
+* Add support for AxoSyslog in System Logs NG module
+* Add TOML as editable format in the File Manager module
+* Add support for template variables in help pages
+* Add support for enabling gender-neutral translations if supported by the language
+* Improve security of single-use login links
+* Fix to check if local version of `mysqldump` supports `--set-gtid-purged` flag
+* Fix to respect option to copy new key and certificate to Webmin in the SSL Encryption module
+* Fix to use new API for auxiliary remote QR code generation
+* Fix to show human-readable timestamps for kernel log in the System Logs module
+* Fix to respect reverse order flag in the System Logs module
+* Fix to prefer JSON::XS over JSON::PP if available for better performance
+* Fix bugs with IPv6 interface creation on systems using Network Manager
+* Fix to address the security issue in the System Documentation module
+* Fix to use fast PRC mode by default in the Webmin Servers Index module
+* Fix Fail2Ban version detection
+* Fix to follow German translation rules that most people already accept
+* Fix to correctly read EOL cache data
+
+#### 2.303 (March 14, 2025)
+* Fix permissions error when attempting to open a temp file for writing
+* Fix Network Configuration module to use `ip` command instead of `ifconfig` on Debian systems
+* Fix to correctly save IPv6 nameservers in Network Configuration module
+* Fix to run `man` as `nobody` to prevent section param misuse in System Documentation module
+* Add support for Sendmail hash files ending with `.cdb`
+* Update German translations
+
+#### 2.302 (March 3, 2025)
+* Add ability to preserve allow/deny IPs in Webmin Configuration module #2427
+* Add enhancements to module config saving to ensure reliability under all conditions
+* Fix to improve wording when applying network in Network Configuration module
+* Fix regression in MySQL/MariaDB database user permission assignment
+* Fix to clean up old code
+* Update German translations
+
+#### 2.301 (February 16, 2025)
+* Fix to check correctly if ProFTPD is installed #2410
+* Fix to properly escape HTML in date fields
+* Fix the line height of plain-text email body
+
+#### 2.300 (February 14, 2025)
+* Add multiple improvements to SSH Server module to support contemporary systems
+* Add support to configure SSH socket activation in SSH Server module in contemporary systems #2356
+* Add support for managing PHP extensions in PHP Configuration module
+* Add API to edit _systemd_ units in Bootup and Shutdown module
+* Add rich-rule and direct-rule API to FirewallD module
+* Add support for collecting bandwidth stats on systems with Journald in Bandwidth Monitoring module
+* Add support for displaying translations aggregated and separate statistics using language manager script
+* Add support for allowing a given IP temporarily or permanently in FirewallD module
+* Add support for listing `deb822-style` repos on Debian and derivatives in Software Package Updates module
+* Add support for openEuler Linux LTS and Innovation versions  
+* Add support for setting up repos on SUSE distros using repo setup script
+* Add a status monitor to check if a reboot is required in System and Server Status module
+* Add support for displaying CPU and disk data in the latest macOS versions
+* Add UI option to control if SSL client certificate provided by proxies can be trusted
+* Add ACL option to set the allowed user based on the directory being accessed in File Manager module
+* Add ability to resolve compatibility-level conditionals in Postfix module
+* Add ability to use zoom window in/out using standard hotkeys in Terminal module
+* Add service restart button in MySQL/MariaDB module
+* Add DBI and DBD modules to the recommended list
+* Fix to check first if delete, rename, paste, and save are allowed for safe user in File Manager
+* Fix to stop trusting remote client IP address for Webmin logging unless it's allowed
+* Fix to correctly set exit code on success when using force mode in Webmin `set-config` CLI command
+* Fix to include zone name in deleted records log message in BIND DNS module
+* Fix to ensure _systemd_ custom units are created in the correct directory in Bootup and Shutdown module
+* Fix to create correct RC script on FreeBSD systems when Webmin is installed using the setup script
+* Fix to improve how permissions are displayed in MySQL/MariaDB module
+* Fix to show current hashed password if there is one in MySQL/MariaDB module
+* Fix to place editable options at the top of the list in MySQL/MariaDB module #2319
+* Fix to correctly quote usernames in `xfs_quota` command in Disk Quotas module
+* Fix file locking in global generic file locking function
+* Fix to clean up temporary Webmin PID-based lock directories
+* Fix to bring back support for limits in last command in Users and Groups module
+* Fix Postfix module incorrectly saving config files for some pages
+* Fix to support multi-line mappings in Postfix module for virtual maps
+* Fix to turn off autorenew for all Webmin-generated Let's Encrypt SSL certificates as renewals are handled internally
+* Fix to prefer JSON::XS over JSON::PP if both are installed
+* Fix to just lock the DNS zone file instead of the whole domain to prevent potential deadlocks
+* Fix SPF record joining to avoid space separation in BIND DNS module
+* Fix updating serial number in BIND DNS module
+* Fix error message for salt field in BIND DNS module
+* Fix for slave zones can now be called secondary in BIND DNS module #2257
+* Fix not to save passwords in the password fields in Users and Groups module
+* Fix not binding to an IP, add a `Listen` directive for a custom port if needed in Apache module #2341
+* Fix Usermin manual installation using setup script
+* Fix to enhance display support for Fetchmail module
+* Fix WebSocket connections for _sudo_-capable users
+* Rename Google Authenticator to just TOTP Authenticator
+* Improve sorting for date-based columns in data tables  
+* Drop `lynx` package from the recommended list
+* Drop `Authen::OATH` module and all its dependencies in favor of a simpler implementation for TOTP authentication
+* Updated Chinese translations
+* Update German translations
+
+#### 2.202 (August 12, 2024)
+* Add support for importing schemas to the LDAP Server module
+* Add support for displaying disk and network I/Os in FreeBSD on the dashboard
+* Fix to automatically set the WebSocket URL webprefix correctly
+* Fix to name downloaded backup file nicely in Backup Configuration Files module [#2239](https://github.com/webmin/webmin/issues/2239)
+* Fix to optimize getting table index stats for large tables in MySQL/MariaDB module [pull#2234](https://github.com/webmin/webmin/pull/2234)
+* Fix duplication of _systemd_ actions and init scripts [#2227](https://github.com/webmin/webmin/issues/2227)
+* Fix BIND service name for Debian 12 and Ubuntu 24.04
+* Update the Authentic theme to the latest version with various fixes and improvements
+
+#### 2.201 (July 24, 2024)
+* Fix real-time monitoring not updating graphs in the dashboard [#2222](https://github.com/webmin/webmin/issues/2222)
+* Fix Terminal module to work correctly with _sudo_-capable users [#2223](https://github.com/webmin/webmin/issues/2223)
+
+#### 2.200 (July 21, 2024)
+* Add support for blocking a given IP temporarily or permanently in the FirewallD module
+* Add support for parsing iCalendar event files in the Mailbox module
+* Add support for tailing logs in real time in System Logs module
+* Add ability to preserve original file ACLs when writing files [webmin/authentic-theme#1511](https://github.com/webmin/authentic-theme/discussions/1511#discussioncomment-9913902)
+* Add a `patch` sub-command to the `webmin` command for easy application of patches
+* Add a config option to display hostname and comment in the DHCP Server module [#2221](https://github.com/webmin/webmin/issues/2221)
+* Add support for ED25519 and ED448 algorithms in BIND DNS module for DNSSEC
+* Add support for larger ranger of authentication methods in Dovecot module
+* Add improved support for displaying last logins in the Users and Groups module
+* Fix to prevent duplicate `also-notify` and `allow-transfer` IPs in the BIND DNS module
+* Fix issues with Terminal module to correct text display problems in editor mode
+* Fix to store Terminal module logs in the `/var/webmin` directory
+* Fix to display the Spam folder nicely in the Mailbox module
+* Fix how modules are loaded in ProFTPd module
+* Fix support for the Chrony service on Debian systems in the System Time module
+* Fix to use static routes to set the default gateway in Network Configuration module
+* Fix to correctly invalidate EOL cache on re-checks [#2139](https://github.com/webmin/webmin/issues/2139)
+* Fix to change default monitor name based on database used MariaDB vs MySQL [#2139](https://github.com/virtualmin/virtualmin-gpl/issues/798)
+* Fix to disable manual upgrades for systems installed from the repository
+* Fix to preserve Webmin service state during package upgrades [#2133](https://github.com/webmin/webmin/issues/2133)
+* Change to enforce _sudo_-capable logins as themselves in the Terminal module [docs/modules/terminal](https://webmin.com/docs/modules/terminal/#about)
+* Rename "System Logs" module to "System Logs RS" and "System Logs Viewer" to "System Logs" for clarity
+
+#### 2.111 (April 16, 2024)
+* Fix EOL detection for unreleased Linux distributions
+
+#### 2.110 (April 15, 2024)
+* Add an API to check if the system is running or approaching its end of life (EOL)
+* Add support for `systemd-timesyncd` and `chronyd` to the System Time module
+* Add Ubuntu 24.04 support
+* Add Squid 6 support
+* Add latest Devuan Linux support
+* Add an option to request Let's Encrypt certificates using `certbot` in standalone mode [forum.virtualmin.com/t/123696](http://forum.virtualmin.com/t/webmin-ssl-certificate-with-lets-encrypt-directly-obtain-certificate-without-requiring-apache-or-nginx/123696/)
+* Add IMAP and SMTP monitors in the System and Server Status module
+* Fix TLS connection to SMTP servers not working in some cases
+* Fix ProFTPd module to use actual UI library
+* Fix to using the `qrencode` command to generate QR codes locally instead of the remote Google Chart API
+* Fix a number of various other issues
+
+#### 2.105 (November 9, 2023)
 * Fix param to read only headers [sourceforge.net/usermin-bugs#501](https://sourceforge.net/p/webadmin/usermin-bugs/501/)
 * Fix not to set `reuse` flag on initial Let's Encrypt request
 * Fix to correctly escape mail file names upon deletion
@@ -18,7 +542,7 @@
 * Fix the absent init script for legacy systems after the initial installation
 * Update the Authentic theme to the latest version with various fixes and improvements
 
-#### 2.103 (October 08, 2023)
+#### 2.103 (October 8, 2023)
 * Add support for hostname detection using `hostnamectl` command
 * Add support for other ACME services
 * Add ability to hide dotfiles in File Manager [#1578](https://github.com/webmin/authentic-theme/issues/1578)
@@ -67,13 +591,13 @@
 * Fix clearing packages caches before checking for updates in status collection #1863
 * Update the Authentic theme to the latest version
 
-#### 2.020 (March 08, 2023)
+#### 2.020 (March 8, 2023)
 * Add full locale support
 * Add slave zone file format option in BIND DNS module
 * Add support for editing ACLs in File Manager
 * Add support to configure SSL connection for MySQL/MariaDB module
 * Add support for compressed backups in PostgreSQL module
-* Add support for displaying inodes too in Disk Usage in the Dashboard
+* Add support for displaying inodes too in Disk Usage in the dashboard
 * Add better support for CloudLinux
 * Fix to always default to RSA key type in Let's Encrypt requests
 * Fix setup repository script for Oracle
@@ -81,7 +605,7 @@
 * Fix support for SpamAssassin 4
 * Fix to use system default hashing format for `htpasswd` file
 * Fix FastRPC issues
-* Update the Authentic theme to the latest version, with sped-up Dashboard performance
+* Update the Authentic theme to the latest version, with sped-up dashboard performance
 
 #### 2.013 (January 19, 2023)
 * Fix Authentic theme issue with error handling
@@ -235,12 +759,12 @@ This release adds automatic translations for all languages in UTF-8, updates the
 This release updates the built-in Let's Encrypt client, adds support for creating "safe-mode" Webmin users, support for CAA records in the BIND module, and the ability to search Postfix maps. It also updates the Authentic theme to the latest version, which includes numerous improvements to the File Manager and overall UI.
 
 #### Version 1.930 (August 18, 2019)
-These updates fix a [security vulnerability](http://webmin.com/security.html) and should be installed IMMEDIATELY by all users. Although it is not exploitable in a Webmin install with the default configuration, upgrading is strongly recommended.
+These updates fix a [security vulnerability](https://webmin.com/security/) and should be installed IMMEDIATELY by all users. Although it is not exploitable in a Webmin install with the default configuration, upgrading is strongly recommended.
 
-#### Version 1.920 (July 04, 2019)
+#### Version 1.920 (July 4, 2019)
 This update includes the latest theme version, translation updates, the ability to disable hosts file entries, easier monitoring of bootup actions, and a bunch of bugfixes.
 
-#### Version 1.910 (May 09, 2019)
+#### Version 1.910 (May 9, 2019)
 This release includes theme and translation updates, a page for editing package repositories, cron and status module improvements, and a bunch of other bugfixes and small improvements.
 
 #### Version 1.900 (November 19, 2018)
@@ -252,7 +776,7 @@ This version includes Ubuntu 18 network config support, translation updates, mul
 #### Version 1.880 (March 16, 2018)
 This version includes German, Catalan and Bulgarian translation updates, a new version of the Authentic theme, support for directly editing the MySQL and PostgreSQL config files, Let's Encrypt bugfixes, more control over system status email notifications, and more.
 
-#### Version 1.870 (December 08, 2018)
+#### Version 1.870 (December 8, 2018)
 This release includes many translation updates, fixes for Let's Encrypt support, UI cleanups, and most importantly a new major version of the Authentic theme.
 
 #### Version 1.860 (October 10, 2017)
@@ -261,7 +785,7 @@ This release includes Let's Encrypt DNS fixes, Majordomo module improvements, XS
 #### Version 1.850 (June 28, 2017)
 This release includes Let's Encrypt fixes, Majordomo module improvements, FirewallD forwarding support, translation updates, an update to the Authentic theme, and a bunch of other bugfixes.
 
-#### Version 1.840 (May 08, 2017)
+#### Version 1.840 (May 8, 2017)
 This major release includes a large theme update, XSS security fixes, per-domain SSL cert support, thin-provisioned LVM support, Let's Encrypt improvements, translation updates, and the usual gang of bugfixes. Also available is Usermin 1.710, which contains many of the same updates.
 
 #### Version 1.830 (December 29, 2016)
@@ -568,4 +1092,3 @@ This updated includes the latest Authentic theme, a new IPv6 Firewall module for
 #### Version 1.140
 * Fixed a security hole that allowed any user to view the configuration of any module, even those that they should not have access to.
 * Fixed a security hole that could allow an attacker to lock valid users by sending a bogus username or password.
-

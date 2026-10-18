@@ -6,10 +6,11 @@ require (-r 'sendmail-lib.pl' ? './sendmail-lib.pl' :
 	 -r 'qmail-lib.pl' ? './qmail-lib.pl' :
 			     './postfix-lib.pl');
 &ReadParseMime();
-if (substr($in{'file'}, 0, length($access{'apath'})) ne $access{'apath'}) {
+if (!&is_under_directory($access{'apath'}, $in{'file'})) {
 	&error(&text('rfile_efile', $in{'file'}));
 	}
 $in{'replies_def'} || $in{'replies'} =~ /^\/\S+/ ||
+    $in{'replies'} =~ /^~\/\S+/ ||
 	&error($text{'rfile_ereplies'});
 $in{'period_def'} || $in{'period'} =~ /^\d+$/ ||
 	&error($text{'rfile_eperiod'});

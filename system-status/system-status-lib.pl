@@ -56,7 +56,7 @@ if (&foreign_check("proc")) {
 	}
 
 # Disk space on local filesystems
-if (&foreign_check("mount")) {
+if (&foreign_check("mount", 1)) {
 	&foreign_require("mount");
 	($info->{'disk_total'}, $info->{'disk_free'},
 	 $info->{'disk_fs'}, $info->{'disk_used'}) =
@@ -66,15 +66,17 @@ if (&foreign_check("mount")) {
 # Available package updates
 if (&foreign_installed("package-updates") && $config{'collect_pkgs'}) {
 	&foreign_require("package-updates");
-	my $poss_collect_blocked = (&indexof('package-updates', @{$modskip}) > -1);
+	my $poss_collect_blocked = &indexof('package-updates', @$modskip) >= 0;
 	my $poss_current = !$poss_collect_blocked ? 2 : undef;
-	my @poss = &package_updates::list_possible_updates(undef, $poss_collect_blocked);
+	my @poss = &package_updates::list_possible_updates(
+			undef, $poss_collect_blocked);
 	$info->{'poss'} = \@poss;
-	$info->{'reboot'} = &package_updates::check_reboot_required($poss_collect_blocked);
+	$info->{'reboot'} = $poss_collect_blocked ? 0 :
+				&package_updates::check_reboot_required();
 	}
 
 # CPU and drive temps
-if (!$config{'collect_notemp'} && defined(&proc::get_current_cpu_data)) {
+if (!$config{'collect_notemp2'} && defined(&proc::get_current_cpu_data)) {
 	my ($cpu, $fans) = &proc::get_current_cpu_data();
 	$info->{'cputemps'} = $cpu if (ref($cpu) && @{$cpu} >= 1);
 	$info->{'cpufans'} = $fans if (ref($fans) && @{$fans} >= 1);
@@ -448,15 +450,16 @@ if (!$config{'collect_notemp'} &&
     &foreign_installed("smart-status")) {
 	&foreign_require("smart-status");
 	foreach my $d (&smart_status::list_smart_disks_partitions()) {
-		my $st = &smart_status::get_drive_status($d->{'device'}, $d);
+		# Temperature collection does not need self-test logs.
+		my $st = &smart_status::get_drive_status($d->{'device'}, $d, 1);
 		foreach my $a (@{$st->{'attribs'}}) {
 			if (($a->[0] =~ /^Temperature\s+Celsius$/i ||
 			     $a->[0] =~ /^Temperature$/i ||
 			     $a->[0] =~ /^Current\s+Drive\s+Temperature$/i ||
 			     $a->[0] =~ /^Airflow\s+Temperature\s+Cel/i) &&
-			    $a->[1] > 0) {
+			     defined($a->[1]) && $a->[1] =~ /^\s*(\d+)/ && $1 > 0) {
 				push(@rv, { 'device' => $d->{'device'},
-					    'temp' => int($a->[1]),
+					    'temp' => int($1),
 					    'errors' => $st->{'errors'},
 					    'failed' => !$st->{'check'} });
 				last;

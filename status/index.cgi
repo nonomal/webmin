@@ -39,7 +39,7 @@ if (@serv) {
 		}
 	if (!$config{'index_status'} && $oldstatus) {
 		local @st = stat($oldstatus_file);
-		if (@st) {
+		if (@st && time() - $st[9] > 600) {
 			local $t = &make_date($st[9]);
 			print &ui_alert_box(&text('index_oldtime', $t), 'info');
 			}
@@ -67,8 +67,13 @@ if (@serv) {
 		}
 	print &ui_links_row(\@links);
 	if ($access{'edit'}) {
-		print &ui_form_end([ [ "delete", $text{'index_delete'} ],
-				     [ "refresh", $text{'index_refsel'} ] ]);
+		my @buts = ( [ "delete", $text{'index_delete'} ],
+			     [ "refresh", $text{'index_refsel'} ] );
+		if (!$config{'index_status'}) {
+			push(@buts, [ "disable", $text{'index_disable'} ],
+				    [ "enable", $text{'index_enable'} ]);
+			}
+		print &ui_form_end(\@buts);
 		}
 	}
 else {
@@ -160,9 +165,10 @@ foreach $s (@_) {
 			$h = $remotes[$i];
 			$h = $text{'index_local'} if ($h eq '*');
 			push(@icons, "<img src=".&get_status_icon($up).
-				     " title='".&html_escape($h)."'>");
+				     " title='".&html_escape($h)."'".
+				     " style='padding: 0.25em 0'>");
 			}
-		push(@cols, join("", @icons));
+		push(@cols, join("<br>", @icons));
 		}
 	if ($access{'edit'}) {
 		print &ui_checked_columns_row(\@cols, \@tds, "d", $s->{'id'});
@@ -178,12 +184,14 @@ sub show_button
 {
 if ($access{'edit'}) {
 	print &ui_form_start("edit_mon.cgi");
-	print &ui_submit($text{'index_add'});
-	my @opts;
+	print &ui_submit($text{'index_madd'});
+	my @opts = ( [ "", "&nbsp;" ] );
 	foreach $h (sort { $a->[1] cmp $b->[1] } &list_handlers()) {
-		push(@opts, [ $h->[0], $h->[1] ]);
+		if (!$h->[2]) {
+			push(@opts, [ $h->[0], $h->[1] ]);
+			}
 		}
-	print &ui_select("type", undef, \@opts);
+	print &ui_select("type", "", \@opts);
 	print &ui_form_end();
 	}
 }

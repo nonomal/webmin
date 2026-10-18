@@ -6,6 +6,7 @@ index_sel=Seçilen Modüller ..
 index_search=Ara
 index_header=Genel Webmin yardım araması
 index_return=Ara formu
+
 search_err=Arama işleminde hata oluştu
 search_eterms=Kayıp arama terimleri
 search_emods=Modül seçilmedi
@@ -16,3 +17,4 @@ search_mod=Modül
 search_page=Yardım sayfası
 search_line=Karşılaştır
 search_results=Webmin yardım sayfaları karşılaştırılıyor $1
+__norefs=1

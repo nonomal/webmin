@@ -56,7 +56,7 @@ proc_bareos-dir=Bacula مدیر Daemon
 stop_err=متوقف نشد Bacula
 start_err=Bacula شروع نشد
 start_einit=هیچ اسکریپت مبتدی برای$1 یافت نشد
-start_erun= $1 : $2 شروع نشد
+start_erun=$1 : $2 شروع نشد
 restart_err=راه اندازی مجدد Bacula انجام نشد
 apply_err=پیکربندی انجام نشد
 apply_failed=یک خطای پیکربندی تشخیص داده شد
@@ -234,7 +234,7 @@ dirstatus_refresh=تازه کردن لیست
 
 clientstatus_title=وضعیت مشتری
 clientstatus_err=واکشی وضعیت از $1 : $2 انجام نشد
-clientstatus_msg=وضعیت از $1 : $2 
+clientstatus_msg=وضعیت از $1 : $2
 clientstatus_show=نمایش وضعیت مشتری:
 clientstatus_ok=خوب
 clientstatus_on=$1 (با$2)
@@ -254,7 +254,7 @@ storage_title1=Daemon Storage را ایجاد کنید
 storage_title2=ویرایش ذخیره سازی Daemon
 storage_header=جزئیات شبح ذخیره سازی از راه دور
 storage_egone=Daemon ذخیره سازی دیگر وجود ندارد!
-storage_name=ÙØ§Ù ÙÙÙÙÙ‌Û Ø°Ø®ÛØ±Ù Ø³Ø§Ø²Û
+storage_name=نام دیمن ذخیره‌سازی
 storage_address=نام میزبان یا آدرس IP
 storage_port=پورت SD Bacula
 storage_pass=رمز عبور Bacula SD
@@ -305,7 +305,7 @@ device_echild=این سرویس گیرنده را نمی توان حذف کرد 
 
 storagestatus_title=وضعیت Daemon Storage
 storagestatus_err=واکشی وضعیت از $1 : $2 انجام نشد
-storagestatus_msg=وضعیت از $1 : $2 
+storagestatus_msg=وضعیت از $1 : $2
 storagestatus_show=نمایش وضعیت شبح ذخیره:
 storagestatus_ok=خوب
 
@@ -482,7 +482,7 @@ log_delete_fdirector=مدیر مدیر Daemon پرونده$1 حذف شد
 log_delete_fdirectors=$1 کارگردانان Daemon پرونده حذف شد
 log_create_sdirector=مدیر Daemon ذخیره سازی$1 ایجاد شد
 log_modify_sdirector=مدیر Daemon ذخیره سازی اصلاح شده$1
-log_delete_sdirector=ÙØ¯ÛØ± Daemon ÙØ¶Ø§Û Ø°Ø®ÛØ±Ù‌Ø³Ø§Ø²Û$1 Ø­Ø°Ù Ø´Ø¯
+log_delete_sdirector=مدیر دیمن ذخیره‌سازی $1 حذف شد
 log_delete_sdirectors=مدیر$1 شبنم ذخیره سازی حذف شد
 log_stop=daemons Bacula متوقف شد
 log_start=Daemons Bacula را شروع کرد

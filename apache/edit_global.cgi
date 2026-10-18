@@ -22,13 +22,13 @@ print &ui_form_end([ [ "", $text{'save'} ] ]);
 if ($in{'type'} == 6) {
 	$mfile = &find_directive("TypesConfig", $conf);
 	if (!$mfile) { $mfile = $config{'mime_types'}; }
-	if (!$mfile) { $mfile = &server_root("etc/mime.types", $conf); }
-	if (!-r $mfile) { $mfile = &server_root("conf/mime.types", $conf); }
-	$mfile = &server_root($mfile, $conf);
+	if (!$mfile) { $mfile = &server_root("etc/mime.types"); }
+	if (!-r $mfile) { $mfile = &server_root("conf/mime.types"); }
+	$mfile = &server_root($mfile);
 	print &ui_hr();
 	print &ui_subheading($text{'global_mime'});
 	print "$text{'global_mimedesc'}<p>\n";
-	@links = ( &ui_link("edit_gmime_type.cgi?file=$mfile",
+	@links = ( &ui_link("edit_gmime_type.cgi?file=".&urlize($mfile),
 	           $text{'global_add'}) );
 	print &ui_links_row(\@links);
 	print &ui_columns_start([ $text{'global_type'},
@@ -41,7 +41,8 @@ if ($in{'type'} == 6) {
 		if (/^\s*(\S+)\s*(.*)$/) {
 			print &ui_columns_row([
 				&ui_link("edit_gmime_type.cgi?line=$line".
-				"&file=$mfile", $1), $2 ]);
+				"&file=".&urlize($mfile), &html_escape($1)),
+				&html_escape($2) ]);
 			}
 		$line++;
 		}

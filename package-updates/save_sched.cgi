@@ -5,7 +5,8 @@ require './package-updates-lib.pl';
 &ReadParse();
 
 &lock_file($module_config_file);
-$config{'sched_email'} = $in{'email'};
+$config{'sched_email'} = $in{'email_def'} ? '*' : $in{'email'};
+$config{'sched_when'} = $in{'when'};
 $config{'sched_action'} = $in{'action'};
 &save_module_config();
 &unlock_file($module_config_file);
@@ -51,6 +52,11 @@ else {
 	$msg = $text{'sched_yes'};
 	}
 
+# Disable auto-update services if requested
+if ($in{'disable_auto_updates'}) {
+	&disable_enabled_auto_update_services();
+	}
+
 # Tell the user
 &ui_print_header(undef, $text{'sched_title'}, "");
 
@@ -59,4 +65,3 @@ print "$msg<p>\n";
 &webmin_log("sched", undef, $in{'sched_def'} ? 0 : 1);
 &ui_print_footer("index.cgi?mode=$in{'mode'}&search=".
 		 &urlize($in{'search'}), $text{'index_return'});
-

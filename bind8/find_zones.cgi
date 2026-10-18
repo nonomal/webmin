@@ -7,7 +7,7 @@ no warnings 'redefine';
 no warnings 'uninitialized';
 our (%in, %config, %text); 
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 &ReadParse();
 
 if (&have_dnssec_tools_support()) {
@@ -26,6 +26,10 @@ foreach my $z (@zones) {
 		 $v eq "." || !&can_edit_zone($z) ||
 		 &arpa_to_ip($v) !~ /\Q$in{'search'}\E/i);
 	my $t = $z->{'type'};
+	next if (!$t);
+	$t = "delegation" if ($t eq "delegation-only");
+	$t = "master" if ($t eq "primary");
+	$t = "slave" if ($t eq "secondary");
 	if ($z->{'view'}) {
 		push(@zlinks, "edit_$t.cgi?zone=$z->{'name'}".
 			      "&view=$z->{'viewindex'}");

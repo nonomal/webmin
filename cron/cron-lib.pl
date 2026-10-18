@@ -309,7 +309,8 @@ elsif ($fcron) {
 			 undef, $cron_temp_file, undef);
 	}
 else {
-	system("cp ".&translate_filename("$config{'cron_dir'}/$_[0]->{'user'}").
+	system("cp ".quotemeta(
+			&translate_filename("$config{'cron_dir'}/$_[0]->{'user'}")).
 	       " ".quotemeta($cron_temp_file)." 2>/dev/null");
 	}
 }
@@ -513,7 +514,7 @@ if (&read_file_contents($cron_temp_file) =~ /\S/) {
 		$ENV{"VISUAL"} = $ENV{"EDITOR"} =
 			"$module_root_directory/cron_editor.pl";
 		$ENV{"CRON_EDITOR_COPY"} = $cron_temp_file;
-		system("chown $_[0] $cron_temp_file");
+		system("chown ".quotemeta($_[0])." ".quotemeta($cron_temp_file));
 		local $oldpwd = &get_current_dir();
 		chdir("/");
 		if ($single_user) {
@@ -600,7 +601,7 @@ sub user_sub
 {
 local($tmp);
 $tmp = $_[0];
-$tmp =~ s/USER/$_[1]/g;
+$tmp =~ s/USER/quotemeta($_[1])/ge;
 return $tmp;
 }
 
@@ -744,7 +745,7 @@ sub is_run_parts
 local ($cmd) = @_;
 local $rp = $config{'run_parts'};
 $cmd =~ s/\s*#.*$//;
-return $rp && $cmd =~ /$rp(.*)\s+(\-\-\S+\s+)*([a-z0-9\.\-\/_]+)(\s*\))?$/i ? $3 : undef;
+return $rp && $cmd =~ /$rp(.*)\s+(\-\-\S+\s+)*([a-z0-9\.\-\/_]+);?\s*[\)\}]?$/i ? $3 : undef;
 }
 
 =head2 can_edit_user(&access, user)
@@ -833,7 +834,7 @@ if ($config{'vixie_cron'} && (!$nospecial || $job->{'special'})) {
 			1, 0, 0, 0, "onChange='change_special_mode(form, 1)'");
 	$rv .= &ui_table_row($msg,
 		&ui_radio("special_def", $job->{'special'} ? 1 : 0,
-			  [ [ 1, $text{'edit_special1'}." ".$specialsel ],
+			  [ [ 1, $text{'edit_special1'}."&nbsp;&nbsp;".$specialsel ],
 			    [ 0, $text{'edit_special0'} ] ]),
 			  $msg ? $width-1 : $width);
 	}
@@ -924,7 +925,7 @@ foreach my $arr ("mins", "hours", "days", "months", "weekdays") {
 $table .= &ui_columns_row(\@cols, [ "valign=top", "valign=top", "valign=top",
 				    "valign=top", "valign=top" ]);
 $table .= &ui_columns_end();
-$table .= $text{'edit_ctrl'};
+$table .= &ui_note($text{'edit_ctrl'}, 0);
 $rv .= &ui_table_row(undef, $table, $width, undef, ['data-schedule-tr']);
 return $rv;
 }
@@ -1056,7 +1057,8 @@ foreach $arr ("mins", "hours", "days", "months", "weekdays") {
 		}
 	print "</tr></table></td>\n";
 	}
-print "</tr> <tr $cb> <td colspan=5>$text{'edit_ctrl'}</td> </tr>\n";
+my $ctlnote = &ui_note($text{'edit_ctrl'}, 0);
+print "</tr> <tr $cb> <td colspan=5>$ctlnote</td> </tr>\n";
 }
 
 =head2 parse_times_input(&job, &in)
@@ -1077,6 +1079,8 @@ if ($in{'special_def'}) {
 	foreach $arr (@pers) {
 		delete($job->{$arr});
 		}
+	# Special times are single words like daily or reboot
+	$in{'special'} =~ /^[a-z]+$/i || &error($text{'save_especial'});
 	$job->{'special'} = $in{'special'};
 	}
 else {
@@ -1090,6 +1094,11 @@ else {
 			# Need to work out and simplify ranges selected
 			local (@range, @newrange, $i);
 			@range = split(/\0/, $in{$arr});
+			# Selected times are plain numbers
+			foreach my $v (@range) {
+				$v =~ /^\d+$/ || &error(&text('save_etime',
+							$text{"edit_$arr"}));
+				}
 			@range = sort { $a <=> $b } @range;
 			local $start = -1;
 			for($i=0; $i<@range; $i++) {
@@ -1166,6 +1175,11 @@ if ($in->{'range_def'}) {
 else {
 	# Validate and store range
 	foreach my $r ("start", "end") {
+		# Dates go into the job's command, so only allow numbers
+		foreach my $f ("day", "month", "year") {
+			$in->{'range_'.$r.'_'.$f} =~ /^\d+$/ ||
+				&error($text{'range_e'.$r});
+			}
 		eval { timelocal(0, 0, 0, $in->{'range_'.$r.'_day'},
 					  $in->{'range_'.$r.'_month'}-1,
 					  $in->{'range_'.$r.'_year'}-1900) };
@@ -1304,6 +1318,43 @@ elsif ($config{cron_deny_all} == 1) {
 	if ($in{user} ne "root") { $err = 1; }
 	}
 return !$err;
+}
+
+=head2 get_cron_move_target(\@jobs, index, direction)
+
+Returns the Cron entry that the indexed entry would be swapped with for an up,
+down, top or bottom move.
+
+=cut
+sub get_cron_move_target
+{
+my ($jobs, $idx, $direction) = @_;
+my $job = $jobs->[$idx];
+return if (!$job);
+
+if ($direction eq "up") {
+	return $idx > 0 ? $jobs->[$idx-1] : undef;
+	}
+elsif ($direction eq "down") {
+	return $idx < $#$jobs ? $jobs->[$idx+1] : undef;
+	}
+elsif ($direction eq "top") {
+	my $swap;
+	for(my $i=$idx-1;
+	    $i >= 0 && $jobs->[$i]->{'file'} eq $job->{'file'}; $i--) {
+		$swap = $jobs->[$i];
+		}
+	return $swap;
+	}
+elsif ($direction eq "bottom") {
+	my $swap;
+	for(my $i=$idx+1;
+	    $i < @$jobs && $jobs->[$i]->{'file'} eq $job->{'file'}; $i++) {
+		$swap = $jobs->[$i];
+		}
+	return $swap;
+	}
+return;
 }
 
 =head2 swap_cron_jobs(&job1, &job2)
@@ -1556,7 +1607,7 @@ if ($err) {
 
 =head2 cleanup_temp_files
 
-Called from cron to delete old files in the Webmin /tmp directory, and also
+Called from cron to delete old files in the Webmin temp directory, and also
 old lock links directories.
 
 =cut
@@ -1567,39 +1618,64 @@ if (!$gconfig{'tempdelete_days'}) {
 	print STDERR "Temp file clearing is disabled\n";
 	return;
 	}
+
+# Cleanup files in the default Webmin temp directory
 if ($gconfig{'tempdir'} && !$gconfig{'tempdirdelete'}) {
 	print STDERR "Temp file clearing is not done for the custom directory $gconfig{'tempdir'}\n";
-	return;
 	}
+else {
+	my $tempdir = &transname();
+	$tempdir =~ s/\/([^\/]+)$//;
+	if (!$tempdir || $tempdir eq "/") {
+		$tempdir = &default_webmin_temp_dir();
+		}
 
-local $tempdir = &transname();
-$tempdir =~ s/\/([^\/]+)$//;
-if (!$tempdir || $tempdir eq "/") {
-	$tempdir = "/tmp/.webmin";
-	}
-
-local $cutoff = time() - $gconfig{'tempdelete_days'}*24*60*60;
-opendir(DIR, $tempdir);
-foreach my $f (readdir(DIR)) {
-	next if ($f eq "." || $f eq "..");
-	local @st = lstat("$tempdir/$f");
-	if ($st[9] < $cutoff) {
-		&unlink_file("$tempdir/$f");
+	my $cutoff = time() - $gconfig{'tempdelete_days'}*24*60*60;
+	if (opendir(DIR, $tempdir)) {
+		foreach my $f (readdir(DIR)) {
+			next if ($f eq "." || $f eq "..");
+			my @st = lstat("$tempdir/$f");
+			if ($st[9] < $cutoff) {
+				&unlink_file("$tempdir/$f");
+				}
+			}
+		closedir(DIR);
 		}
 	}
-closedir(DIR);
 
+# Delete stale lock files
 my $lockdir = $var_directory."/locks";
-opendir(DIR, $lockdir);
-foreach my $f (readdir(DIR)) {
-	next if ($f eq "." || $f eq "..");
-	next if ($f !~ /^\d+$/);
-	if (!kill(0, $f)) {
-		# Process is gone, but never cleaned up!
-		&unlink_file("$lockdir/$f");
+if (opendir(DIR, $lockdir)) {
+	foreach my $f (readdir(DIR)) {
+		next if ($f eq "." || $f eq "..");
+		next if ($f !~ /^\d+$/);
+		if (!kill(0, $f)) {
+			# Process is gone, but never cleaned up!
+			&unlink_file("$lockdir/$f");
+			}
 		}
+	closedir(DIR);
 	}
-closedir(DIR);
+
+# Cleanup old websockets
+foreach (&get_miniserv_websockets_modules()) {
+	&cleanup_miniserv_websockets(undef, $_);
+	}
+
+# Delete forgot-password files older than 1 day
+if (opendir(DIR, $main::forgot_password_link_dir)) {
+	my $cutoff = time() - 24*60*60;
+	foreach my $f (readdir(DIR)) {
+		next if ($f eq "." || $f eq "..");
+		next if ($f eq "ratelimit");
+		my $path = $main::forgot_password_link_dir."/".$f;
+		my @st = stat($path);
+		if ($st[9] < $cutoff) {
+			&unlink_file($path);
+			}
+		}
+	closedir(DIR);
+	}
 }
 
 =head2 list_cron_files()

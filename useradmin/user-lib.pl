@@ -63,6 +63,30 @@ $password_file_cache{$file} = $rv;
 return $rv;
 }
 
+# read_batch_local_file(file)
+# Returns the contents of a server-side batch file, after checking both the
+# Users and Groups batch directory ACL and the global file chooser ACL.
+sub read_batch_local_file
+{
+my ($file) = @_;
+&can_read_batch_local_file($file) || &error($text{'batch_elocaldir'});
+my $data = &read_file_under_global_acl($file);
+defined($data) || &error($text{'batch_elocal'});
+return $data;
+}
+
+# can_read_batch_local_file(file)
+# Returns 1 if a local batch file path is allowed by all relevant ACLs.
+sub can_read_batch_local_file
+{
+my ($file) = @_;
+return 0 if (!defined($file) || $file !~ /^\//);
+my $batchdir = defined($access{'batchdir'}) ? $access{'batchdir'} : "/";
+return 0 if ($batchdir eq "");
+return 0 if (!&is_under_directory($batchdir, $file));
+return &can_read_file_under_global_acl($file);
+}
+
 =head2 list_users
 
 Returns an array of hash references, each containing info about one user. Each
@@ -133,7 +157,8 @@ if ($pft == 1) {
 	}
 elsif ($pft == 6) {
 	# Read netinfo dump
-	&open_execute_command(PASSWD, "nidump passwd '$netinfo_domain'", 1);
+	&open_execute_command(PASSWD,
+		"nidump passwd ".quotemeta($netinfo_domain), 1);
 	while(<PASSWD>) {
 		s/\r|\n//g;
 		if (/\S/ && !/^[#\+\-]/) {
@@ -151,7 +176,7 @@ elsif ($pft == 6) {
 elsif ($pft == 7) {
 	# Read directory services dump of users
 	&open_execute_command(PASSWD,
-		"dscl '$netinfo_domain' readall /Users", 1);
+		"dscl ".quotemeta($netinfo_domain)." readall /Users", 1);
 	local $user;
 	local $ls = $config{'lock_string'};
 	while(<PASSWD>) {
@@ -323,15 +348,22 @@ if ($pft == 1) {
 	}
 elsif ($pft == 3) {
 	# Just invoke the useradd command
-	&system_logged("useradd -u $_[0]->{'uid'} -g $_[0]->{'gid'} -c \"$_[0]->{'real'}\" -d $_[0]->{'home'} -s $_[0]->{'shell'} $_[0]->{'user'}");
+	&system_logged("useradd -u ".quotemeta($_[0]->{'uid'}).
+		" -g ".quotemeta($_[0]->{'gid'}).
+		" -c ".quotemeta($_[0]->{'real'}).
+		" -d ".quotemeta($_[0]->{'home'}).
+		" -s ".quotemeta($_[0]->{'shell'}).
+		" ".quotemeta($_[0]->{'user'}));
 	# And set the password
 	&system_logged("echo ".quotemeta($_[0]->{'pass'}).
 		       " | /usr/lib/scoadmin/account/password.tcl ".
-		       "$_[0]->{'user'} >/dev/null 2>&1");
+		       quotemeta($_[0]->{'user'})." >/dev/null 2>&1");
 	}
 elsif ($pft == 6) {
 	# Use the niutil command
-	&system_logged("niutil -create '$netinfo_domain' '/users/$_[0]->{'user'}'");
+	&system_logged("niutil -create ".
+		quotemeta($netinfo_domain)." ".
+		quotemeta("/users/$_[0]->{'user'}"));
 	&set_netinfo($_[0]);
 	}
 elsif ($pft == 7) {
@@ -438,15 +470,26 @@ if ($pft == 1) {
 	}
 elsif ($pft == 3) {
 	# Just use the usermod command
-	&system_logged("usermod -u $_[1]->{'uid'} -g $_[1]->{'gid'} -c \"$_[1]->{'real'}\" -d $_[1]->{'home'} -s $_[1]->{'shell'} $_[1]->{'user'}");
-	&system_logged("echo ".quotemeta($_[1]->{'pass'})." | /usr/lib/scoadmin/account/password.tcl $_[1]->{'user'}");
+	&system_logged("usermod -u ".quotemeta($_[1]->{'uid'}).
+		" -g ".quotemeta($_[1]->{'gid'}).
+		" -c ".quotemeta($_[1]->{'real'}).
+		" -d ".quotemeta($_[1]->{'home'}).
+		" -s ".quotemeta($_[1]->{'shell'}).
+		" ".quotemeta($_[1]->{'user'}));
+	&system_logged("echo ".quotemeta($_[1]->{'pass'}).
+		" | /usr/lib/scoadmin/account/password.tcl ".
+		quotemeta($_[1]->{'user'}));
 	}
 elsif ($pft == 6) {
 	# Just use the niutil command to update
 	if ($_[0]->{'user'} && $_[0]->{'user'} ne $_[1]->{'user'}) {
 		# Need to delete and re-create!
-		&system_logged("niutil -destroy '$netinfo_domain' '/users/$_[0]->{'user'}'");
-		&system_logged("niutil -create '$netinfo_domain' '/users/$_[1]->{'user'}'");
+		&system_logged("niutil -destroy ".
+			quotemeta($netinfo_domain)." ".
+			quotemeta("/users/$_[0]->{'user'}"));
+		&system_logged("niutil -create ".
+			quotemeta($netinfo_domain)." ".
+			quotemeta("/users/$_[1]->{'user'}"));
 		}
 	&set_netinfo($_[1]);
 	}
@@ -508,7 +551,12 @@ else {
 		# update AIX security user file as well..
 		# use chuser command because it's easier than working
 		# with the complexity issues of the file.
-		&system_logged("chuser expires=$_[1]->{'expire'} minage=$_[1]->{'min'} maxage=$_[1]->{'max'} pwdwarntime=$_[1]->{'warn'} $_[1]->{'user'}");
+		&system_logged("chuser expires=".
+			quotemeta($_[1]->{'expire'}).
+			" minage=".quotemeta($_[1]->{'min'}).
+			" maxage=".quotemeta($_[1]->{'max'}).
+			" pwdwarntime=".quotemeta($_[1]->{'warn'}).
+			" ".quotemeta($_[1]->{'user'}));
 		}
 	}
 if ($_[0] ne $_[1] && &indexof($_[0], @list_users_cache) != -1) {
@@ -546,15 +594,17 @@ if ($pft == 1) {
 	}
 elsif ($pft == 3) {
 	# Just invoke the userdel command
-	&system_logged("userdel -n0 $_[0]->{'user'}");
+	&system_logged("userdel -n0 ".quotemeta($_[0]->{'user'}));
 	}
 elsif ($pft == 4) {
 	# Just invoke the rmuser command
-	&system_logged("rmuser -p $_[0]->{'user'}");
+	&system_logged("rmuser -p ".quotemeta($_[0]->{'user'}));
 	}
 elsif ($pft == 6) {
 	# Just delete with the niutil command
-	&system_logged("niutil -destroy '$netinfo_domain' '/users/$_[0]->{'user'}'");
+	&system_logged("niutil -destroy ".
+		quotemeta($netinfo_domain)." ".
+		quotemeta("/users/$_[0]->{'user'}"));
 	}
 elsif ($pft == 7) {
 	# Delete from directory services
@@ -608,7 +658,8 @@ $lnum = 0;
 local $gft = &groupfiles_type();
 if ($gft == 5) {
 	# Get groups from netinfo
-	&open_execute_command(GROUP, "nidump group '$netinfo_domain'", 1);
+	&open_execute_command(GROUP,
+		"nidump group ".quotemeta($netinfo_domain), 1);
 	while(<GROUP>) {
 		s/\r|\n//g;
 		if (/\S/ && !/^[#\+\-]/) {
@@ -624,7 +675,7 @@ if ($gft == 5) {
 elsif ($gft == 7) {
 	# Read directory services dump of groups
 	&open_execute_command(PASSWD,
-		"dscl '$netinfo_domain' readall /Groups", 1);
+		"dscl ".quotemeta($netinfo_domain)." readall /Groups", 1);
 	local $group;
 	while(<PASSWD>) {
 		s/\r|\n//g;
@@ -737,7 +788,9 @@ sub create_group
 local $gft = &groupfiles_type();
 if ($gft == 5) {
 	# Use niutil command
-	&system_logged("niutil -create '$netinfo_domain' '/groups/$_[0]->{'group'}'");
+	&system_logged("niutil -create ".
+		quotemeta($netinfo_domain)." ".
+		quotemeta("/groups/$_[0]->{'group'}"));
 	&set_group_netinfo($_[0]);
 	}
 elsif ($gft == 7) {
@@ -795,8 +848,12 @@ if ($gft == 5) {
 	# Call niutil to update the group
 	if ($_[0]->{'group'} && $_[0]->{'group'} ne $_[1]->{'group'}) {
 		# Need to delete and re-create!
-		&system_logged("niutil -destroy '$netinfo_domain' '/groups/$_[0]->{'group'}'");
-		&system_logged("niutil -create '$netinfo_domain' '/groups/$_[1]->{'group'}'");
+		&system_logged("niutil -destroy ".
+			quotemeta($netinfo_domain)." ".
+			quotemeta("/groups/$_[0]->{'group'}"));
+		&system_logged("niutil -create ".
+			quotemeta($netinfo_domain)." ".
+			quotemeta("/groups/$_[1]->{'group'}"));
 		}
 	&set_group_netinfo($_[1]);
 	}
@@ -846,7 +903,9 @@ $_[0] || &error("Missing parameter to delete_group");
 local $gft = &groupfiles_type();
 if ($gft == 5) {
 	# Call niutil to delete
-	&system_logged("niutil -destroy '$netinfo_domain' '/groups/$_[0]->{'group'}'");
+	&system_logged("niutil -destroy ".
+		quotemeta($netinfo_domain)." ".
+		quotemeta("/groups/$_[0]->{'group'}"));
 	}
 elsif ($gft == 7) {
 	# Delete from directory services
@@ -1134,7 +1193,8 @@ else {
 	&set_ownership_permissions($_[2], $_[3], $st[2], "$_[1]/$base");
 	$nochown++;
 	}
-&system_logged("chown $opts -R $_[2]:$_[3] ".quotemeta("$_[1]/$base").
+&system_logged("chown $opts -R ".quotemeta($_[2]).":".
+	       quotemeta($_[3])." ".quotemeta("$_[1]/$base").
 	       " >/dev/null 2>/dev/null") if (!$nochown);
 return @rv;
 }
@@ -1403,33 +1463,34 @@ parent dirs. The parameters are :
 =cut
 sub auto_home_dir
 {
-local $pfx = $_[0] eq "/" ? "/" : $_[0]."/";
+my ($base, $user, $group) = @_;
+my $pfx = $base eq "/" ? "/" : $base."/";
 if ($config{'home_style'} == 0) {
-	return $pfx.$_[1];
+	return $pfx.$user;
 	}
 elsif ($config{'home_style'} == 1) {
-	&mkdir_if_needed($pfx.substr($_[1], 0, 1));
-	return $pfx.substr($_[1], 0, 1)."/".$_[1];
+	&mkdir_if_needed($pfx.substr($user, 0, 1));
+	return $pfx.substr($user, 0, 1)."/".$user;
 	}
 elsif ($config{'home_style'} == 2) {
-	&mkdir_if_needed($pfx.substr($_[1], 0, 1));
-	&mkdir_if_needed($pfx.substr($_[1], 0, 1)."/".
-			 substr($_[1], 0, 2));
-	return $pfx.substr($_[1], 0, 1)."/".
-	       substr($_[1], 0, 2)."/".$_[1];
+	&mkdir_if_needed($pfx.substr($user, 0, 1));
+	&mkdir_if_needed($pfx.substr($user, 0, 1)."/".
+			 substr($user, 0, 2));
+	return $pfx.substr($user, 0, 1)."/".
+	       substr($user, 0, 2)."/".$user;
 	}
 elsif ($config{'home_style'} == 3) {
-	&mkdir_if_needed($pfx.substr($_[1], 0, 1));
-	&mkdir_if_needed($pfx.substr($_[1], 0, 1)."/".
-			 substr($_[1], 1, 1));
-	return $pfx.substr($_[1], 0, 1)."/".
-	       substr($_[1], 1, 1)."/".$_[1];
+	&mkdir_if_needed($pfx.substr($user, 0, 1));
+	&mkdir_if_needed($pfx.substr($user, 0, 1)."/".
+			 substr($user, 1, 1));
+	return $pfx.substr($user, 0, 1)."/".
+	       substr($user, 1, 1)."/".$user;
 	}
 elsif ($config{'home_style'} == 4) {
-	return $_[0];
+	return $base;
 	}
 elsif ($config{'home_style'} == 5) {
-	return $pfx.$_[2]."/".$_[1];
+	return $pfx.$group."/".$user;
 	}
 }
 
@@ -1446,15 +1507,26 @@ Update a NetInfo user based on a Webmin user hash. Mainly for internal use.
 sub set_netinfo
 {
 local %u = %{$_[0]};
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' passwd '$u{'pass'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' uid '$u{'uid'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' gid '$u{'gid'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' class '$u{'class'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' change '$u{'change'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' expire '$u{'expire'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' realname '$u{'real'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' home '$u{'home'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/users/$u{'user'}' shell '$u{'shell'}'");
+local $domain = quotemeta($netinfo_domain);
+local $upath = quotemeta("/users/$u{'user'}");
+&system_logged("niutil -createprop $domain $upath passwd ".
+	quotemeta($u{'pass'}));
+&system_logged("niutil -createprop $domain $upath uid ".
+	quotemeta($u{'uid'}));
+&system_logged("niutil -createprop $domain $upath gid ".
+	quotemeta($u{'gid'}));
+&system_logged("niutil -createprop $domain $upath class ".
+	quotemeta($u{'class'}));
+&system_logged("niutil -createprop $domain $upath change ".
+	quotemeta($u{'change'}));
+&system_logged("niutil -createprop $domain $upath expire ".
+	quotemeta($u{'expire'}));
+&system_logged("niutil -createprop $domain $upath realname ".
+	quotemeta($u{'real'}));
+&system_logged("niutil -createprop $domain $upath home ".
+	quotemeta($u{'home'}));
+&system_logged("niutil -createprop $domain $upath shell ".
+	quotemeta($u{'shell'}));
 }
 
 =head2 set_group_netinfo(&group)
@@ -1465,10 +1537,14 @@ Update a NetInfo group based on a Webmin group hash. Mainly for internal use.
 sub set_group_netinfo
 {
 local %g = %{$_[0]};
-local $mems = join(" ", map { "'$_'" } split(/,/, $g{'members'}));
-&system_logged("niutil -createprop '$netinfo_domain' '/groups/$g{'group'}' gid '$g{'gid'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/groups/$g{'group'}' passwd '$g{'pass'}'");
-&system_logged("niutil -createprop '$netinfo_domain' '/groups/$g{'group'}' users $mems");
+local $domain = quotemeta($netinfo_domain);
+local $gpath = quotemeta("/groups/$g{'group'}");
+local $mems = join(" ", map { quotemeta($_) } split(/,/, $g{'members'}));
+&system_logged("niutil -createprop $domain $gpath gid ".
+	quotemeta($g{'gid'}));
+&system_logged("niutil -createprop $domain $gpath passwd ".
+	quotemeta($g{'pass'}));
+&system_logged("niutil -createprop $domain $gpath users $mems");
 }
 
 =head2 set_user_dirinfo(&user)
@@ -1567,7 +1643,9 @@ if ($config{'passwd_prog'}) {
 		&print_tempfile(TEMP, $username,"\n");
 		&print_tempfile(TEMP, $pass,"\n");
 		&close_tempfile(TEMP);
-		$out = &backquote_command("$config{'passwd_prog'} <$temp 2>&1");
+		$out = &backquote_command(
+			"$config{'passwd_prog'} <".quotemeta($temp).
+			" 2>&1");
 		}
 	if ($?) {
 		return $out || $text{'usave_epasswd_cmd'};
@@ -1798,7 +1876,8 @@ if (!$nosha1 && $gconfig{'os_type'} eq 'macos' && &passfiles_type() == 7) {
 	elsif (&has_command("openssl")) {
 		# Use openssl command
 		local $temp = &transname();
-		&open_execute_command(OPENSSL, "openssl dgst -sha1 >$temp", 0);
+		&open_execute_command(OPENSSL,
+			"openssl dgst -sha1 >".quotemeta($temp), 0);
 		print OPENSSL $salt,$pass;
 		close(OPENSSL);
 		local $rv = &read_file_contents($temp);
@@ -2377,8 +2456,9 @@ print &ui_columns_start([
 	$lshow ? ( $text{'lastlogin'} ) : ( )
 	], 100, 0, \@tds);
 local $llogin;
+my $os_most_recent_logins = defined(&os_most_recent_logins);
 if ($lshow) {
-	$llogin = &get_recent_logins();
+	$llogin = &get_recent_logins() if ($os_most_recent_logins);
 	if (&foreign_check("mailboxes")) {
 		&foreign_require("mailboxes");
 		}
@@ -2398,6 +2478,8 @@ if (@$users) {
 		push(@cols, &html_escape($u->{'shell'}));
 		if ($lshow) {
 			# Show last login, in local format after Unix time conversion
+			$llogin = &get_recent_logins($u->{'user'}, 1)
+				if (!$os_most_recent_logins);
 			my $ll = $llogin->{$u->{'user'}};
 			if (defined(&mailboxes::parse_mail_date)) {
 				my $tm = &mailboxes::parse_mail_date($ll);
@@ -2552,11 +2634,13 @@ Returns a list of array references, each containing the details of a login.
 =cut
 sub list_last_logins
 {
-local @rv;
-&open_last_command(LAST, $_[0]);
+my ($user, $max) = @_;
+my @rv;
+undef($max) if (defined($max) && $max <= 0); # sanity check
+&open_last_command(LAST, $user, $max);
 while(@last = &read_last_line(LAST)) {
 	push(@rv, [ @last ]);
-	if ($_[1] && scalar(@rv) >= $_[1]) {
+	if ($max && scalar(@rv) >= $max) {
 		last;	# reached max
 		}
 	}
@@ -2564,19 +2648,20 @@ close(LAST);
 return @rv;
 }
 
-=head2 get_recent_logins()
+=head2 get_recent_logins([user], [max])
 
 Returns a hash ref from username to most recent login time/date
 
 =cut
 sub get_recent_logins
 {
+my ($user, $max) = @_;
 if (defined(&os_most_recent_logins)) {
 	return &os_most_recent_logins();
 	}
 else {
 	my %rv;
-	foreach my $l (&list_last_logins()) {
+	foreach my $l (&list_last_logins($user, $max)) {
 		$rv{$l->[0]} ||= $l->[3];
 		}
 	return \%rv;
@@ -2719,8 +2804,12 @@ if ($user->{'home'} && -d $user->{'home'}) {
 	local $realhome = &resolve_links($user->{'home'});
 	local $qhome = quotemeta($realhome);
 	if ($config{'delete_only'}) {
-		&system_logged("find $qhome ! -type d -user $user->{'uid'} | xargs rm -f >/dev/null 2>&1");
-		&system_logged("find $qhome -type d -user $user->{'uid'} | xargs rmdir >/dev/null 2>&1");
+		&system_logged("find $qhome ! -type d -user ".
+			quotemeta($user->{'uid'}).
+			" | xargs rm -f >/dev/null 2>&1");
+		&system_logged("find $qhome -type d -user ".
+			quotemeta($user->{'uid'}).
+			" | xargs rmdir >/dev/null 2>&1");
 		&unlink_file($realhome);
 		}
 	else {
@@ -2772,6 +2861,299 @@ foreach (1 .. 15) {
 	$rv .= $random_password_chars[rand(scalar(@random_password_chars))];
 	}
 return $rv;
+}
+
+# can_user_sudo_root(user)
+# Returns 1 if some user can run all commands via sudo, 0 if not, or -1 if
+# sudo is not installed
+sub can_user_sudo_root
+{
+my ($user) = @_;
+my $sudo = &has_command("sudo");
+return -1 if (!$sudo);
+my $out = &backquote_command(
+	"$sudo -l -S -U ".quotemeta($user)." 2>&1 </dev/null");
+return -1 if ($?);
+return $out =~ /\(ALL\)\s+ALL|\(ALL\)\s+NOPASSWD:\s+ALL|\(ALL\s*:\s*ALL\)\s+ALL|\(ALL\s*:\s*ALL\)\s+NOPASSWD:\s+ALL/ ? 1 : 0;
+}
+
+# escape_ssh_key_identifier_user(username)
+# Escapes a username for use inside the managed SSH public key marker.
+sub escape_ssh_key_identifier_user
+{
+my ($user) = @_;
+
+# Keep normal usernames readable, but encode characters that would break the
+# bracketed marker or make it span multiple authorized_keys lines.
+$user =~ s/([\\\]\r\n\t])/sprintf("\\x%02X", ord($1))/ge;
+return $user;
+}
+
+# unescape_ssh_key_identifier_user(username)
+# Reverses escape_ssh_key_identifier_user.
+sub unescape_ssh_key_identifier_user
+{
+my ($user) = @_;
+
+# The marker stores only explicit \xHH escapes, so this is deterministic and
+# does not reinterpret ordinary backslashes in usernames.
+$user =~ s/\\x([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+return $user;
+}
+
+# get_ssh_key_identifier(&user)
+# Returns the marker used for the SSH public key managed by this module.
+sub get_ssh_key_identifier
+{
+my ($user) = @_;
+
+# A readable marker lets admins recognize Webmin-managed keys in the file.
+return "[webmin-useradmin:".
+       &escape_ssh_key_identifier_user($user->{'user'})."]";
+}
+
+# normalize_ssh_pubkey(pubkey)
+# Returns a single-line SSH public key from form input.
+sub normalize_ssh_pubkey
+{
+my ($pubkey) = @_;
+
+# Form input may wrap long keys. SSH wants one logical authorized_keys line.
+$pubkey =~ s/\r/ /g;
+$pubkey =~ s/\n/ /g;
+
+# Collapse repeated whitespace so re-saving an unchanged key does not drift.
+$pubkey =~ s/^\s+|\s+$//g;
+$pubkey =~ s/\s+/ /g;
+return $pubkey;
+}
+
+# ssh_pubkey_validation_user([preferred-user])
+# Returns a non-root local user to run ssh-keygen for key validation.
+sub ssh_pubkey_validation_user
+{
+my ($preferred) = @_;
+my %seen;
+
+# Prefer the edited account, but never run the parser as UID 0.
+foreach my $user ($preferred, "nobody") {
+	next if (!$user || $seen{$user}++);
+	my @uinfo = getpwnam($user);
+	next if (!@uinfo || $uinfo[2] == 0);
+	return $uinfo[0];
+	}
+
+# Systems without a usable unprivileged account will use the regex fallback.
+return undef;
+}
+
+# ssh_pubkey_validation_tempfile(pubkey)
+# Writes a public key to a read-only temp file for unprivileged validation.
+sub ssh_pubkey_validation_tempfile
+{
+my ($pubkey) = @_;
+my $tmpdir = &webmin_temp_dir_path(&tempname_dir_sys());
+
+# Keep the temp file in a root-owned, non-writable directory under system temp.
+if (!-d $tmpdir) {
+	&make_dir($tmpdir, 0755, 0) || return undef;
+	}
+my @dst = lstat($tmpdir);
+my $dmode = @dst ? $dst[2] & 0777 : 0;
+return undef if (!@dst || !-d _ || $dst[4] != $<);
+return undef if ($dmode != 0755);
+
+# Use Webmin's temp-file writer inside a root-owned directory.
+&seed_random();
+for(my $i = 0; $i < 20; $i++) {
+	my $pubkeyfile = $tmpdir."/sshkey-".$$."-".
+			 int(rand(1000000000000)).".pub";
+	next if (-e $pubkeyfile);
+	&open_tempfile(SSHKEY, ">$pubkeyfile", 1) || return undef;
+	&print_tempfile(SSHKEY, $pubkey."\n");
+	if (!&close_tempfile(SSHKEY) || !chmod(0444, $pubkeyfile)) {
+		&unlink_file($pubkeyfile);
+		return undef;
+		}
+	push(@main::temporary_files, $pubkeyfile);
+	return $pubkeyfile;
+	}
+return undef;
+}
+
+# validate_ssh_pubkey(pubkey, [run-as-user])
+# Returns an error message if a public key does not look usable.
+sub validate_ssh_pubkey
+{
+my ($pubkey, $run_as) = @_;
+
+# Callers pass empty string only when they mean "remove"; validation is for add.
+return $text{'sshkey_eempty'} if (!$pubkey);
+my $ssh_keygen = &has_command("ssh-keygen");
+my $validation_user = &ssh_pubkey_validation_user($run_as);
+if ($ssh_keygen && $validation_user) {
+	# Prefer OpenSSH's parser when available, but keep it unprivileged.
+	my $pubkeyfile = &ssh_pubkey_validation_tempfile($pubkey);
+	if (!$pubkeyfile) {
+		$ssh_keygen = undef;
+		}
+	else {
+		my ($out, $err);
+		my $cmd = &command_as_user($validation_user, 0,
+					   $ssh_keygen, "-l", "-f",
+					   $pubkeyfile);
+		&execute_command($cmd, undef, \$out, \$err);
+		&unlink_file($pubkeyfile);
+		if ($?) {
+			# Strip the temp path from ssh-keygen errors before showing them.
+			$err =~ s/\s+$//g;
+			return &text('sshkey_einvalid',
+				     &html_escape($err || $text{'sshkey_eformat'}));
+			}
+		}
+	}
+if ((!$ssh_keygen || !$validation_user) && $pubkey !~
+	/^(ssh-rsa|ssh-dss|ecdsa-sha2-nistp256|rsa-sha2-512|rsa-sha2-256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-ed25519|sk-ecdsa-sha2-nistp256|sk-ssh-ed25519)\s+\S+(?:\s+.*)?$/) {
+	# Minimal fallback for systems without ssh-keygen.
+	return &text('sshkey_einvalid', $text{'sshkey_eformat'});
+	}
+return undef;
+}
+
+# user_ssh_authorized_keys_file(&user)
+# Returns the user's authorized_keys file, if the home directory is usable.
+sub user_ssh_authorized_keys_file
+{
+my ($user) = @_;
+
+# No home directory means there is nowhere safe to create .ssh.
+return undef if (!$user->{'home'} || !-d $user->{'home'});
+my $sshdir = $user->{'home'}."/.ssh";
+if (-l $sshdir) {
+	# Refuse symlinks in the user-controlled path to avoid root-follow races.
+	return (undef, $text{'sshkey_esshdirlink'});
+	}
+if (-e $sshdir && !-d $sshdir) {
+	# A non-directory .ssh cannot contain authorized_keys.
+	return (undef, &text('sshkey_esshdir', "<tt>$sshdir</tt>"));
+	}
+return ($sshdir."/authorized_keys", undef);
+}
+
+# get_user_ssh_pubkey(&user)
+# Returns the SSH public key managed by this module, if any.
+sub get_user_ssh_pubkey
+{
+my ($user) = @_;
+my ($sshfile, $err) = &user_ssh_authorized_keys_file($user);
+
+# Missing files simply mean Webmin has not managed a key for this user.
+return undef if (!$sshfile || !-f $sshfile || -l $sshfile);
+my $identifier = &get_ssh_key_identifier($user);
+
+# Read as the target user so a raced path cannot expose root-only files. Fall
+# back to a plain read when the account is not resolvable locally (e.g. an
+# alternate password_file), so the edit page never fails just to show a key.
+my $lines;
+if (getpwnam($user->{'user'})) {
+	$lines = &eval_as_unix_user($user->{'user'}, sub {
+		return &read_file_lines($sshfile, 1);
+		});
+	}
+else {
+	$lines = &read_file_lines($sshfile, 1);
+	}
+foreach my $line (@$lines) {
+	if ($line =~ /\s+\Q$identifier\E\s*$/) {
+		# Only a marker at end-of-line counts; ordinary comments are ignored.
+		$line =~ s/\s+\Q$identifier\E\s*$//;
+		return $line;
+		}
+	}
+return undef;
+}
+
+# save_user_ssh_pubkey(&user, [&olduser], pubkey)
+# Adds, updates or deletes this module's managed SSH public key.
+sub save_user_ssh_pubkey
+{
+my ($user, $olduser, $pubkey) = @_;
+my ($sshfile, $err) = &user_ssh_authorized_keys_file($user);
+if (!$sshfile) {
+	# Adding requires a real home; removing from a missing home is already done.
+	return $pubkey ? $err || $text{'sshkey_ehome'} : undef;
+	}
+my $sshdir = $user->{'home'}."/.ssh";
+my @pwent = getpwnam($user->{'user'});
+my $user_exists = scalar(@pwent);
+
+# Clearing an empty/nonexistent setup should not create .ssh or authorized_keys.
+return undef if (!$pubkey && !-e $sshdir);
+
+# All changes are made as the target user, so there must be a resolvable local
+# account to drop privileges to. Report this cleanly when adding or updating a
+# key, rather than failing later with an internal error.
+return $text{'sshkey_euser'} if ($pubkey && !$user_exists);
+if (!-d $sshdir) {
+	# Create .ssh as the user, not root, to avoid symlink/ownership races.
+	&eval_as_unix_user($user->{'user'}, sub {
+		&make_dir($sshdir, 0700);
+		chmod(0700, $sshdir);
+		});
+	}
+
+# Refuse symlinked authorized_keys after .ssh creation, just before use.
+return $text{'sshkey_efilelink'} if (-l $sshfile);
+return undef if (!$pubkey && !-f $sshfile);
+return $text{'sshkey_euser'} if (!$user_exists);
+
+my $identifier = &get_ssh_key_identifier($user);
+my $oldidentifier = $olduser ? &get_ssh_key_identifier($olduser)
+			     : $identifier;
+&eval_as_unix_user($user->{'user'}, sub {
+	# Lock as the user before reading, otherwise a concurrent edit can be lost.
+	&lock_file($sshfile);
+
+	my @lines;
+	if (-f $sshfile) {
+		# Read the existing file as the account owner, preserving all other keys.
+		my $lines = &read_file_lines($sshfile, 1);
+		@lines = @$lines;
+		}
+
+	my $found;
+	for (my $i = 0; $i < @lines; $i++) {
+		if ($lines[$i] =~ /\s+\Q$oldidentifier\E\s*$/) {
+			if ($pubkey) {
+				# Replace the managed key and update the marker after rename.
+				$lines[$i] = "$pubkey $identifier";
+				}
+			else {
+				# Empty field removes only the Webmin-managed key.
+				splice(@lines, $i, 1);
+				}
+			$found = 1;
+			last;
+			}
+		}
+
+	# If no previous marker exists, add a new Webmin-managed entry.
+	push(@lines, "$pubkey $identifier") if ($pubkey && !$found);
+
+	# Removing a non-existent managed key is a no-op.
+	if (!$pubkey && !$found) {
+		&unlock_file($sshfile);
+		return;
+		}
+
+	my $contents = join("", map { $_."\n" } @lines);
+
+	# Write and chmod as the target user; root must not follow this path.
+	&write_file_contents($sshfile, $contents);
+	chmod(0600, $sshfile);
+	&unlock_file($sshfile);
+	});
+return undef;
 }
 
 1;

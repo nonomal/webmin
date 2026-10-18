@@ -9,13 +9,14 @@ our $dnssec_cron_cmd;
 our $module_name;
 our $module_config_file;
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 &foreign_require("cron", "cron-lib.pl");
 &ReadParse();
 &error_setup($text{'dnssec_err'});
 $access{'defaults'} || &error($text{'dnssec_ecannot'});
 
 $in{'period'} =~ /^[1-9]\d*$/ || &error($text{'dnssec_eperiod'});
+$in{'period'} < 30 || &error($text{'dnssec_eperiod30'});
 
 # Create or delete the cron job
 my $job = &get_dnssec_cron_job();

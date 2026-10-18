@@ -45,10 +45,13 @@ elsif ($in{'source'} == 1) {
 	&close_tempfile(MOD);
 	}
 elsif ($in{'source'} == 2) {
-	# find latest version at www.webmin.com by looking at index page
+	# find latest version at webmin.com by looking at index page
 	&error_setup($text{'upgrade_err3'});
 	$file = &transname();
-	&http_download('www.webmin.com', 80, '/index6.html', $file, \$error);
+	my ($index_host, $index_port, $index_page, $index_ssl) =
+		&parse_http_url($latest_page_url);
+	&http_download($index_host, $index_port, $index_page, $file, \$error,
+		       undef, $index_ssl);
 	$error && &inst_error($error);
 	open(FILE, "<$file");
 	while(<FILE>) {
@@ -124,6 +127,7 @@ elsif ($in{'source'} == 5) {
 	$error && &inst_error($error);
 	}
 $qfile = quotemeta($file);
+$qindir = quotemeta($indir) if (defined($indir));
 
 # gunzip the file if needed
 open(FILE, "<$file");
@@ -134,7 +138,8 @@ if ($two eq "\037\213") {
 		&inst_error($text{'upgrade_egunzip'});
 		}
 	$newfile = &transname();
-	$out = `gunzip -c $file 2>&1 >$newfile`;
+	$qnewfile = quotemeta($newfile);
+	$out = `gunzip -c $qfile 2>&1 >$qnewfile`;
 	if ($?) {
 		unlink($newfile);
 		&inst_error(&text('upgrade_egzip', "<tt>$out</tt>"));
@@ -148,7 +153,7 @@ $qfile = quotemeta($file);
 # Get list of updates
 $updatestemp = &transname();
 &http_download($update_host, $update_port, $update_page, $updatestemp,
-               \$updates_error);
+               \$updates_error, undef, $update_ssl);
 
 if ($in{'mode'} eq 'rpm') {
 	# Check if it is an RPM package
@@ -199,7 +204,7 @@ elsif ($in{'mode'} eq 'deb') {
 	}
 else {
 	# Check if it is a usermin tarfile
-	open(TAR, "tar tf $file 2>&1 |");
+	open(TAR, "tar tf $qfile 2>&1 |");
 	while(<TAR>) {
 		if (/^usermin-([0-9\.]+)\//) {
 			$version = $1;
@@ -235,7 +240,8 @@ else {
 		# Installing .. extract it in /usr/local and run setup.sh
 		local $root = "/usr/local";
 		mkdir($root, 0755);
-		$out = `cd $root ; tar xf $file 2>&1 >/dev/null`;
+		$qroot = quotemeta($root);
+		$out = `cd $qroot ; tar xf $qfile 2>&1 >/dev/null`;
 		if ($?) {
 			&inst_error(&text('upgrade_euntar', "<tt>$out</tt>"));
 			}
@@ -268,7 +274,8 @@ else {
 			}
 
 		# Extract it next to the current directory and run setup.sh
-		$out = `cd $extract ; tar xf $file 2>&1 >/dev/null`;
+		$qextract = quotemeta($extract);
+		$out = `cd $qextract ; tar xf $qfile 2>&1 >/dev/null`;
 		if ($?) {
 			&inst_error(&text('upgrade_euntar', "<tt>$out</tt>"));
 			}
@@ -276,7 +283,7 @@ else {
 		$ENV{'config_dir'} = $config{'usermin_dir'};
 		$ENV{'webmin_upgrade'} = 1;
 		$ENV{'autothird'} = 1;
-		$setup = $indir ? "./setup.sh '$indir'" : "./setup.sh";
+		$setup = $indir ? "./setup.sh $qindir" : "./setup.sh";
 		if ($in{'delete'}) {
 			$ENV{'deletedold'} = 1;
 			$cmd = "(cd $extract/usermin-$version && $setup && rm -rf \"$miniserv{'root'}\")";
@@ -340,4 +347,3 @@ unlink($file) if ($need_unlink);
 &error($_[0]);
 exit;
 }
-

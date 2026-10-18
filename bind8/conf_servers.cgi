@@ -8,7 +8,7 @@ no warnings 'uninitialized';
 # Globals
 our (%access, %text);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 $access{'defaults'} || &error($text{'servers_ecannot'});
 &ui_print_header(undef, $text{'servers_title'}, "",
 		 undef, undef, undef, undef, &restart_links());
@@ -28,12 +28,12 @@ for(my $i=0; $i<@servers; $i++) {
 	my @cols = ( );
 	push(@cols, &ui_textbox("ip_$i", $s->{'value'}, 30));
 
-	my $bogus = &find_value("bogus", $s->{'members'});
+	my $bogus = &find_value("bogus", $s->{'members'}) // "";
 	push(@cols, &ui_radio("bogus_$i", lc($bogus) eq 'yes' ? 1 : 0,
 			      [ [ 1, $text{'yes'} ],
 				[ 0, $text{'no'} ] ]));
 
-	my $format = &find_value("transfer-format", $s->{'members'});
+	my $format = &find_value("transfer-format", $s->{'members'}) // "";
 	push(@cols, &ui_radio("format_$i", lc($format),
 			      [ [ 'one-answer', $text{'servers_one'} ],
 				[ 'many-answers', $text{'servers_many'} ],

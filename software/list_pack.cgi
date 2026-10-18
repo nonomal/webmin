@@ -30,14 +30,14 @@ for($i=0; $i<$n; $i++) {
 		push(@cols, "", "");
 		}
 	else {
-		$table = "<table width=100% cellpadding=0 cellspacing=0><tr><td>".
-		      &ui_link($ls, &html_escape($files{$i,'path'}) ).
-              "</td><td align=right>\n";
+		my $table = &ui_link($ls, &html_escape($files{$i,'path'}));
 		if ($ty == 0 || $ty == 5) {
-			$table .= &ui_link("view.cgi".
-				&html_escape($files{$i,'path'}), $text{'list_view'});
+			my $view = "view.cgi?package=".&urlize($in{'package'}).
+				   "&version=".&urlize($in{'version'}).
+				   "&file=".&urlize($files{$i,'path'});
+			$table .= "&nbsp;&nbsp;".&ui_link($view,
+					     $text{'list_view'});
 			}
-		$table .= "</td></tr></table>";
 		push(@cols, $table);
 		push(@cols, &html_escape($files{$i,'user'}));
 		push(@cols, &html_escape($files{$i,'group'}));
@@ -61,4 +61,3 @@ print &ui_columns_end();
 &ui_print_footer("edit_pack.cgi?package=".&urlize($in{'package'}).
 	"&version=".&urlize($in{'version'}), $text{'edit_return'},
 	"tree.cgi", $text{'index_treturn'});
-

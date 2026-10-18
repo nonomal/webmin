@@ -17,12 +17,18 @@ sub groupfiles_type
 return &password_file($config{'gshadow_file'}) ? 2 : 0;
 }
 
-# open_last_command(handle, user)
+# open_last_command(handle, user, [max])
 sub open_last_command
 {
-local ($fh, $user) = @_;
-local $quser = quotemeta($user);
-open($fh, "(last -F $quser || last $quser) |");
+my ($fh, $user, $max) = @_;
+if (&has_command("last")) {
+	my $quser = quotemeta($user);
+	$max = " -n ".quotemeta($max) if ($max);
+	open($fh, "(last -F -w$max $quser || last -w$max $quser) |");
+	}
+else {
+	open($fh, "</dev/null");
+	}
 }
 
 # read_last_line(handle)
@@ -39,12 +45,16 @@ while(1) {
 		# jcameron  pts/0  fudu Thu Feb 22 09:47 - 10:15
 		return ($1, $2, $3, $4, $5 eq "down" ? "Shutdown" : $5, $6);
 		}
-	elsif ($line =~ /^(\S+)\s+(\S+)\s+(\S+)?\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+\-\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+\((\d+:\d+)\)/) {
+	elsif ($line =~ /^(\S+)\s+(\S+)\s+(\S+)?\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+\-\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+\((.*?\d+:\d+)\)/) {
 		# jcameron  pts/0  fudu Thu Feb 22 09:47 - 10:15
+		# jcameron  pts/0  fudu Sun Feb  4 02:26:28 2024 - Wed Feb  7 18:25:09 2024 (3+15:58)
 		return ($1, $2, $3, $4, $5 eq "down" ? "Shutdown" : $5, $6);
 		}
-	elsif ($line =~ /^(\S+)\s+(\S+)\s+(\S+)?\s+(\S+\s+\S+\s+\d+\s+\d+:\d+)\s+still/) {
-		# root  pts/0  fudu  Fri Feb 23 18:46  still logged in   
+	elsif ($line =~ /^(\S+)\s+(\S+)\s+(\S+)?\s+(\S+\s+\S+\s+\d+\s+\d+:\d+)\s+(still|gone)/ ||
+	       $line =~ /^(\S+)\s+(\S+)\s+(\S+)?\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+(still|gone)/) {
+		# root  pts/0  fudu  Fri Feb 23 18:46  still logged in
+		# root  ftpd10 fudu  Thu Jun 20 11:19  gone - no logout
+		# root  pts/0  fudu  Tue Jun 18 23:10:30 2024  still logged in
 		return ($1, $2, $3, $4);
 		}
 	}
@@ -76,13 +86,49 @@ return \%rv;
 }
 
 # logged_in_users()
-# Returns a list of hashes containing details of logged-in users
+# Returns a list of login hashes with user, tty, when and from fields.
 sub logged_in_users
 {
 local @rv;
+
+# Use logind when utmp is absent and systemd and its Webmin module are available.
+if (!-e "/run/utmp" && !-e "/var/run/utmp" &&
+    -d "/run/systemd/system" && &foreign_check("systemd")) {
+	&foreign_require("systemd");
+	my $sessions = &systemd::list_login_sessions();
+	# Accept a successful result even when it contains no sessions.
+	if (defined($sessions)) {
+		foreach my $s (@$sessions) {
+			# Keep terminal/desktop types, including SSH without a
+			# TTY. Exclude managers, closing sessions and web
+			# logins. Webmin/Usermin use a port as the TTY, even
+			# with custom PAM names.
+			next if ($s->{'Class'} !~ /^user(?:-|$)/ ||
+				 $s->{'Type'} !~ /^(tty|x11|wayland)$/ ||
+				 $s->{'Service'} =~ /^(webmin|usermin)$/ ||
+				 $s->{'TTY'} =~ /^\d+$/ ||
+				 $s->{'State'} eq "closing");
+
+			# Match the existing date format; use the service if TTY
+			# is absent.
+			my ($when) = $s->{'Timestamp'} =~
+				/(\d+-\d+-\d+\s+\d+:\d+)/;
+			push(@rv, { 'user' => $s->{'Name'},
+				    'tty' => $s->{'TTY'} || $s->{'Service'},
+				    'when' => $when,
+				    'from' => $s->{'RemoteHost'} });
+			}
+		return @rv;
+		}
+	}
+
+# Use who when utmp exists, logind is unavailable, or its query fails.
 open(WHO, "who |");
 while(<WHO>) {
-	if (/^(\S+)\s+(\S+)\s+(\S+\s+\d+\s+\d+:\d+)\s+(\((\S+)\))?/) {
+	# root  pts/0       Oct 15 02:33 (192.168.1.1)      C locale
+	# root  pts/0       2026-10-15 02:33 (192.168.1.1)  other locales
+	# root  sshd pts/0  2026-10-15 02:33 (192.168.1.1)  logind backend
+	if (/^(\S+)\s+(\S.*?)\s+(\S+\s+\d+\s+\d+:\d+|\d+-\d+-\d+\s+\d+:\d+)\s+(\((\S+)\))?/) {
 		push(@rv, { 'user' => $1, 'tty' => $2,
 			    'when' => $3, 'from' => $5 });
 		}

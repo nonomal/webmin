@@ -8,8 +8,14 @@ $access{'sched'} || &error($text{'sched_ecannot'});
 &error_setup($text{'sched_err'});
 
 # Parse and save inputs
-$in{'email_def'} || $in{'email'} =~ /\S/ || &error($text{'sched_eemail'});
-$config{'sched_email'} = $in{'email_def'} ? '' : $in{'email'};
+if ($in{'email_def'} == 2 && !$gconfig{'webmin_email_to'}) {
+	$in{'email_def'} = 1;
+	}
+if ($in{'email_def'} == 0) {
+	$in{'email'} =~ /\S/ || &error($text{'sched_eemail'});
+	}
+$config{'sched_email'} = $in{'email_def'} == 1 ? '' :
+			 $in{'email_def'} == 2 ? '*' : $in{'email'};
 if ($config{'pager_cmd'}) {
 	$config{'sched_pager'} = $in{'pager_def'} ? '' : $in{'pager'};
 	}
@@ -60,6 +66,14 @@ else {
 			&error($text{'sched_esmtp'});
 		}
 	$config{'sched_smtp'} = $in{'smtp'};
+	if ($in{'login_def'}) {
+		delete($config{'smtp_user'});
+		delete($config{'smtp_pass'});
+		}
+	else {
+		$config{'smtp_user'} = $in{'smtp_user'};
+		$config{'smtp_pass'} = $in{'smtp_pass'};
+		}
 	}
 if ($in{'webhook_def'}) {
 	delete($config{'sched_webhook'});

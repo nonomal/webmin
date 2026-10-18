@@ -7,7 +7,7 @@ no warnings 'uninitialized';
 # Globals
 our (%access, %text, %in, %config);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 &ReadParse();
 &error_setup($text{'drecs_err'});
 my $zone = &get_zone_name_or_error($in{'zone'}, $in{'view'});
@@ -44,7 +44,8 @@ else {
 	my @recs = &read_zone_file($zone->{'file'}, $dom);
 
 	my %bumpedrev;
-	foreach my $d (sort { $b <=> $a } @d) {
+	my @delr;
+	foreach my $d (sort { ($b =~ /^(\d+)/)[0] <=> ($a =~ /^(\d+)/)[0] } @d) {
 		my ($num, $id) = split(/\//, $d, 2);
 		my $r = &find_record_by_id(\@recs, $id, $num);
 		next if (!$r);
@@ -76,14 +77,20 @@ else {
 		# Delete the actual record
 		&lock_file(&make_chroot($r->{'file'}));
 		&delete_record($r->{'file'}, $r);
-		splice(@recs, $d, 1);
+		splice(@recs, $num, 1);
+		push(@delr, $r);
 		}
 	&bump_soa_record($zone->{'file'}, \@recs);
 	&sign_dnssec_zone_if_key($zone, \@recs);
 	&after_editing($zone);
 	&unlock_all_files();
 
-	&webmin_log("delete", "recs", scalar(@d));
+	if (@delr == 1) {
+		&webmin_log('delete', 'record', $dom, $delr[0]);
+		}
+	else {
+		&webmin_log("delete", "recs", scalar(@delr), { 'dom' => $dom });
+		}
 	&redirect("edit_recs.cgi?zone=$in{'zone'}&view=$in{'view'}&type=$in{'type'}&sort=$in{'sort'}");
 	}
 

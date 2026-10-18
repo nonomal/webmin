@@ -8,9 +8,24 @@ eval "use WebminCore;";
 &foreign_require("cron", "cron-lib.pl");
 &foreign_require("webmin", "webmin-lib.pl");
 
+# Known OS package auto-update services that can overlap with Webmin's
+# scheduled package updates.
+@auto_update_services = (
+	"unattended-upgrades",
+	"dnf-automatic.timer",
+	"dnf-automatic-install.timer",
+	"dnf-automatic-download.timer",
+	"dnf-automatic-notifyonly.timer",
+);
+
+# Cache files for the package lists and the error from a failed check for
+# updates
 $available_cache_file = &cache_file_path("available.cache");
 $current_cache_file = &cache_file_path("current.cache");
 $updates_cache_file = &cache_file_path("updates.cache");
+$held_updates_cache_file = &cache_file_path("held-updates.cache");
+$updates_error_file = &cache_file_path("updates.error");
+$failed_check_retry_mins = 15;	# Minutes before a failed check is retried
 $cron_cmd = "$module_config_directory/update.pl";
 
 $yum_cache_file = &cache_file_path("yumcache");
@@ -18,6 +33,37 @@ $apt_cache_file = &cache_file_path("aptcache");
 $yum_changelog_cache_dir = &cache_file_path("yumchangelog");
 
 $update_progress_dir = "$module_var_directory/progress";
+$notified_file = "$module_var_directory/notified";
+
+# list_enabled_auto_update_services()
+# Returns known OS-level auto-update services that are currently enabled.
+sub list_enabled_auto_update_services
+{
+return ( ) if (!&foreign_check("init"));
+&foreign_require("init");
+my @rv;
+foreach my $service (@auto_update_services) {
+	next if (&init::action_status($service) != 2); # not enabled
+	my $service_name = $service;
+	$service_name =~ s/\.[^\.]+$//; # nice name
+	push(@rv, { 'service' => $service, 'name' => $service_name });
+	}
+return @rv;
+}
+
+# disable_enabled_auto_update_services()
+# Stops, disables and masks known auto-update services that are enabled.
+sub disable_enabled_auto_update_services
+{
+return ( ) if (!&foreign_check("init"));
+&foreign_require("init");
+my @services = map { $_->{'service'} } &list_enabled_auto_update_services();
+my @rv;
+foreach my $service (@services) {
+	push(@rv, $service) if (&init::deactivate_action($service, 0));
+	}
+return @rv;
+}
 
 # cache_file_path(name)
 # Returns a path in the /var directory unless the file already exists under
@@ -180,6 +226,32 @@ if (-r $file) {
 return ( );
 }
 
+# save_updates_error([error])
+# Saves the error from a failed check for updates, or removes the saved
+# error if none is given
+sub save_updates_error
+{
+my ($err) = @_;
+if ($err) {
+	# Save it for the module pages and the scheduled job to report
+	&open_tempfile(ERR, ">$updates_error_file");
+	&print_tempfile(ERR, $err);
+	&close_tempfile(ERR);
+	}
+else {
+	# No error, so stop warning about an earlier failure
+	unlink($updates_error_file);
+	}
+}
+
+# get_updates_error()
+# Returns the error if the last check for updates failed, or undef
+sub get_updates_error
+{
+return undef if (!-r $updates_error_file);
+return &read_file_contents($updates_error_file);
+}
+
 # compare_versions(&pkg1, &pkg2)
 # Returns -1 if the version of pkg1 is older than pkg2, 1 if newer, 0 if same.
 sub compare_versions
@@ -268,30 +340,100 @@ sub supports_updates_available
 return defined(&software::update_system_updates);
 }
 
-# updates_available(no-cache)
+# supports_package_holds()
+# Returns true if the current update system can list and change package holds.
+sub supports_package_holds
+{
+return 0 if (!defined(&software::list_update_system_holds) ||
+	     !defined(&software::update_system_hold) ||
+	     !defined(&software::update_system_hold_flags));
+return &software::supports_update_system_holds()
+	if (defined(&software::supports_update_system_holds));
+return 1;
+}
+
+# list_package_holds()
+# Returns the package names currently held by the update system.
+sub list_package_holds
+{
+return ( ) if (!&supports_package_holds());
+return &software::list_update_system_holds();
+}
+
+# package_is_held(package, [holds])
+# Returns true if a package is in a supplied or freshly-read list of holds.
+sub package_is_held
+{
+my ($name, $holds) = @_;
+my @holds = $holds ? @$holds : &list_package_holds();
+return 1 if (grep { $_ eq $name } @holds);
+if ($software::update_system eq 'apt' &&
+    defined(&software::strip_apt_package_arch)) {
+	my $base = &software::strip_apt_package_arch($name);
+	return 1 if (grep {
+		&software::strip_apt_package_arch($_) eq $base
+		} @holds);
+	}
+return 0;
+}
+
+# update_package_holds(&packages, hold)
+# Holds or unholds packages. Returns undef on success, or an error message.
+sub update_package_holds
+{
+my ($packages, $hold) = @_;
+return $text{'hold_enotsupported'} if (!&supports_package_holds());
+return &software::update_system_hold($packages, $hold);
+}
+
+# updates_available([no-cache], [include-held])
 # Returns an array of hash refs of package updates available, according to
-# the update system, with caching.
+# the update system, with caching. If the check fails, returns the last
+# known list and saves the error for get_updates_error.
 sub updates_available
 {
-my ($nocache) = @_;
-if (!scalar(@updates_available_cache)) {
-	if ($nocache || &cache_expired($updates_cache_file)) {
+my ($nocache, $include_held) = @_;
+# Held updates have their own cache file and in-memory list
+my $cache_file = $include_held ? $held_updates_cache_file :
+				$updates_cache_file;
+my $cache = $include_held ? \@held_updates_available_cache :
+				\@updates_available_cache;
+# Load the list, unless a non-empty one is already in memory
+if (!scalar(@$cache)) {
+	if ($nocache || &cache_expired($cache_file)) {
 		# Get from original source
-		@updates_available_cache = &software::update_system_updates();
-		foreach my $a (@updates_available_cache) {
+		@$cache = &software::update_system_updates($include_held);
+		if ($software::update_system_error) {
+			# The check failed, so keep the last known list rather
+			# than caching an empty one, and save the error
+			@$cache = &read_cache_file($cache_file);
+			&save_updates_error($software::update_system_error);
+			}
+		else {
+			# The check worked, so clear any earlier error
+			&save_updates_error(undef);
+			}
+		# Add the fields callers use, and cache the list
+		foreach my $a (@$cache) {
 			$a->{'update'} = $a->{'name'};
 			$a->{'system'} = $software::update_system;
 			}
-		&write_cache_file($updates_cache_file,
-				  \@updates_available_cache);
+		&write_cache_file($cache_file, $cache);
+		if ($software::update_system_error) {
+			# Expire the cache after $failed_check_retry_mins
+			# minutes, so a failed check is retried soon but not on
+			# every page load. A shorter cache time is left alone.
+			my $retry = time() - $config{'cache_time'}*60*60 +
+				    $failed_check_retry_mins*60;
+			utime($retry, $retry, $cache_file) if ($retry < time());
+			}
 		}
 	else {
 		# Use on-disk cache
-		@updates_available_cache =
-			&read_cache_file($updates_cache_file);
+		@$cache = &read_cache_file($cache_file);
 		}
 	}
-return @updates_available_cache;
+return @$cache;
 }
 
 # package_install(package-name, [system], [new-install], [flags])
@@ -303,12 +445,15 @@ my ($name, $system, $install, $flags) = @_;
 $system ||= $software::update_system;
 my @rv;
 my $pkg;
+my $include_held = $system eq $software::update_system &&
+		   &supports_package_holds() && defined($flags) &&
+		   $flags eq &software::update_system_hold_flags();
 
 # First get from list of updates
 ($pkg) = grep { $_->{'update'} eq $name &&
 		($_->{'system'} eq $system || !$system) }
 	      sort { &compare_versions($b, $a) }
-		   &list_possible_updates(0);
+	           &list_possible_updates(0, 0, $include_held);
 if (!$pkg) {
 	# Then try list of all available packages
 	($pkg) = grep { $_->{'update'} eq $name &&
@@ -402,14 +547,13 @@ unlink($current_cache_file);
 return @rv;
 }
 
-# list_package_operations(package|packages, system)
-# Given a package (or space-separate package list), returns a list of all
-# dependencies that will be installed
+# list_package_operations(package|packages, system, [flags])
+# Returns packages and dependencies that would be installed or updated.
 sub list_package_operations
 {
-my ($name, $system) = @_;
+my ($name, $system, $flags) = @_;
 if (defined(&software::update_system_operations)) {
-	my @rv = &software::update_system_operations($name);
+	my @rv = &software::update_system_operations($name, $flags);
 	foreach my $p (@rv) {
 		$p->{'system'} = $system;
 		}
@@ -418,14 +562,14 @@ if (defined(&software::update_system_operations)) {
 return ( );
 }
 
-# list_possible_updates([nocache], [nocache-no-data])
+# list_possible_updates([nocache], [nocache-no-data], [include-held])
 # Returns a list of updates that are available. Each element in the array
 # is a hash ref containing a name, version, description and severity flag.
 # Intended for calling from themes. Nocache 0=cache everything, 1=flush all
 # caches, 2=flush only current. Nocache-no-data prohibits collecting data
 sub list_possible_updates
 {
-my ($nocache, $nocache_no_data) = @_;
+my ($nocache, $nocache_no_data, $include_held) = @_;
 my @rv;
 return @rv if ($nocache_no_data);
 my @current = &list_current($nocache);
@@ -436,9 +580,10 @@ if (&supports_updates_available()) {
 	foreach my $c (@current) {
 		$currentmap{$c->{'name'},$c->{'system'}} ||= $c;
 		}
-	foreach my $a (&updates_available($nocache == 1)) {
+	foreach my $a (&updates_available($nocache == 1, $include_held)) {
 		my $c = $currentmap{$a->{'name'},$a->{'system'}};
 		next if (!$c);
+		next if ($a->{'held'} && !$include_held);
 		next if ($a->{'version'} eq $c->{'version'} &&
 			 $a->{'epoch'} eq $c->{'epoch'});
 		push(@rv, { 'name' => $a->{'name'},
@@ -449,6 +594,7 @@ if (&supports_updates_available()) {
 			    'epoch' => $a->{'epoch'},
 			    'oldepoch' => $c->{'epoch'},
 			    'security' => $a->{'security'},
+			    'held' => $a->{'held'},
 			    'source' => $a->{'source'},
 			    'desc' => $c->{'desc'} || $a->{'desc'} });
 		}
@@ -656,14 +802,26 @@ if ($pkg->{'system'} eq 'yum') {
 return undef;
 }
 
+# flush_package_caches()
+# Clears the package list caches, so the next lookups fetch fresh data. Also
+# removes any saved error from a failed check for updates.
 sub flush_package_caches
 {
 unlink($current_cache_file);
-unlink($updates_cache_file);
 unlink($available_cache_file);
+# Expire the update lists rather than deleting them, so a failed check can
+# still fall back to the last known list
+foreach my $f ($updates_cache_file, $held_updates_cache_file) {
+	utime(0, 0, $f) if (-e $f);
+	}
+# Delete the remaining cache files and the saved error
 unlink($available_cache_file.'0');
 unlink($available_cache_file.'1');
+unlink($updates_error_file);
+# Clear the lists held in memory by this process
 @packages_available_cache = ( );
+@updates_available_cache = ( );
+@held_updates_available_cache = ( );
 %read_cache_file_cache = ( );
 }
 
@@ -673,17 +831,16 @@ unlink($available_cache_file.'1');
 sub list_for_mode
 {
 my ($mode, $nocache) = @_;
+return grep { $_->{'held'} }
+	&list_possible_updates($nocache, 0, 1) if ($mode eq 'held');
 return $mode eq 'updates' || $mode eq 'security' ?
 	&list_possible_updates($nocache) : &list_available($nocache);
 }
 
-# check_reboot_required([no-collect])
+# check_reboot_required()
 # Returns 1 if the package system thinks a reboot is needed
-# If the no-collect flag is set, then check won't happen
 sub check_reboot_required
 {
-my ($no_collect) = @_;
-return 0 if ($no_collect);
 if ($gconfig{'os_type'} eq 'debian-linux') {
 	if (-e "/var/run/reboot-required") {
 		return 1;
@@ -700,6 +857,11 @@ if ($gconfig{'os_type'} eq 'debian-linux') {
 elsif ($gconfig{'os_type'} eq 'redhat-linux') {
 	my $needs_restarting_cmd = "needs-restarting";
 	my $needs_restarting = has_command($needs_restarting_cmd);
+	if (!$needs_restarting) {
+		# Fall back to the DNF subcommand when no standalone command exists
+		my $dnf = has_command("dnf");
+		$needs_restarting = "$dnf $needs_restarting_cmd" if ($dnf);
+		}
 	if ($needs_restarting) {
 		my $needs_restarting_rs =
 			&backquote_command("$needs_restarting -r 2>&1 </dev/null");

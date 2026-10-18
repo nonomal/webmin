@@ -4,6 +4,26 @@
 $no_acl_check++;
 require './fsdump-lib.pl';
 
+# start_tls(handle, channel-name, [control-handle])
+# Enables TLS and optionally reuses the control connection's session.
+sub start_tls
+{
+my ($fh, $what, $control) = @_;
+eval { require IO::Socket::SSL; IO::Socket::SSL->import(); 1; } ||
+	&error_exit("FTP server requires TLS, but IO::Socket::SSL is not installed");
+my %sslopts = ( SSL_verify_mode => 0,
+		SSL_session_key => $host );
+if ($control) {
+	$sslopts{'SSL_reuse_ctx'} = $control;
+	}
+else {
+	$sslopts{'SSL_session_cache_size'} = 1;
+	}
+IO::Socket::SSL->start_SSL($fh, %sslopts) ||
+	&error_exit("FTP $what TLS handshake failed : ".
+		    IO::Socket::SSL::errstr());
+}
+
 # Parse args, and get password
 select(STDERR); $| = 1; select(STDOUT);
 $host = $ARGV[0];
@@ -36,6 +56,11 @@ while(1) {
 		&error_exit("FTP connection failed : $err") if ($err);
 		&ftp_command("", 2, \$err) ||
 			&error_exit("FTP prompt failed : $err");
+		$ssl_enabled = 0;
+		if (&ftp_command("AUTH TLS", 2, \$err)) {
+			&start_tls(\*SOCK, "control");
+			$ssl_enabled = 1;
+			}
 
 		# Login to server
 		@urv = &ftp_command("USER $user", [ 2, 3 ], \$err);
@@ -43,6 +68,13 @@ while(1) {
 		if (int($urv[1]/100) == 3) {
 			&ftp_command("PASS $pass", 2, \$err) ||
 				&error_exit("FTP login failed : $err");
+			}
+		if ($ssl_enabled) {
+			# Some servers accept data-channel protection only after login
+			&ftp_command("PBSZ 0", 2, \$err) ||
+				&error_exit("FTP TLS setup failed : $err");
+			&ftp_command("PROT P", 2, \$err) ||
+				&error_exit("FTP TLS setup failed : $err");
 			}
 		&ftp_command("TYPE I", 2, \$err) ||
 			&error_exit("FTP file type failed : $err");
@@ -174,5 +206,7 @@ elsif ($mode == 2) {
 else {
 	$opened = 0;
 	}
+if ($opened && $ssl_enabled) {
+	&start_tls(\*CON, "data", \*SOCK);
+	}
 }
-

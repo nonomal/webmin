@@ -19,64 +19,156 @@ sub list_update_system_commands
 return ($yum_command);
 }
 
+# get_dnf_version()
+# Returns the DNF major version, or zero when using YUM.
+sub get_dnf_version
+{
+return 0 if ($yum_command !~ /(?:^|\/)dnf(?:-\d+)?$/);
+if (!defined($dnf_version)) {
+	&clean_language();
+	my $out = &backquote_command(
+		"$yum_command --version 2>&1 </dev/null");
+	&reset_environment();
+	$dnf_version = $out =~ /^dnf5\s+version\s+(\d+)/m ? $1 : 4;
+	}
+return $dnf_version;
+}
+
+# supports_update_system_holds()
+# Reports whether DNF provides the versionlock command.
+sub supports_update_system_holds
+{
+if (!defined($supports_dnf_versionlock)) {
+	$supports_dnf_versionlock = 0;
+	if (&get_dnf_version()) {
+		&clean_language();
+		my $out = &backquote_command(
+			"$yum_command --help 2>&1 </dev/null");
+		&reset_environment();
+		$supports_dnf_versionlock = 1
+			if ($out =~ /^\s*versionlock\s+/m);
+		}
+	}
+return $supports_dnf_versionlock;
+}
+
+# update_system_hold_flags()
+# Returns the DNF option that exposes version-locked updates.
+sub update_system_hold_flags
+{
+return &get_dnf_version() >= 5 ? '--setopt=disable_excludes=*' :
+				 '--disableplugin=versionlock';
+}
+
 # update_system_install([packages], [&in], [no-force], [flags])
-# Install some package with yum
+# Installs or updates space-separated packages with YUM or DNF. The package
+# list defaults to form input, the input hash can select a repository, and
+# flags are passed to the transaction. No-force is kept for compatibility but
+# has no effect.
 sub update_system_install
 {
 local $update = $_[0] || $in{'update'};
 local $in = $_[1];
 local $force = !$_[2];
 local $flags = $_[3];
+local $versionlock_update = defined($flags) &&
+			   $flags eq &update_system_hold_flags();
+local $runflags = $versionlock_update ? undef : $flags;
 local $qflags;
-$qflags = &trim(join(" ", map { quotemeta($_) } split(/ /, $flags)))
-	if ($flags);
+$qflags = &trim(join(" ", map { quotemeta($_) } split(/ /, $runflags)))
+	if ($runflags);
 $update =~ s/\.\*/\*/g;
 local $enable;
+# Add the repository selected on the install form.
 if ($in->{'enablerepo'}) {
 	$enable = "enablerepo=".quotemeta($in->{'enablerepo'});
 	}
 local (@rv, @newpacks);
 
-# If there are multiple architectures to update for a package, split them out
+# Split installed packages by architecture and record missing packages.
 local @updates = split(/\s+/, $update);
-local @names = map { &append_architectures($_) } split(/\s+/, $update);
+local (@names, @installed, @missing);
+foreach my $u (@updates) {
+	my $installed;
+	my @package_names = &append_architectures($u, \$installed);
+	push(@names, @package_names);
+	if ($installed) {
+		# Queue installed architectures for update.
+		push(@installed, @package_names);
+		}
+	else {
+		# Queue missing package specifications for installation.
+		push(@missing, @package_names);
+		}
+	}
 if (@names == 1) {
+	# Keep the original specification when no architecture split was needed.
 	@names = ( $update );
 	}
 $update = join(" ", map { quotemeta($_) } @names);
 
-# Work out command to use - for DNF, upgrades need to use the update command
-local $cmd;
-if ($yum_command =~ /dnf$/) {
-	local @pinfo = &package_info($updates[0]);
-	if ($pinfo[0]) {
-		$cmd = "update";
+# Temporarily unlock selected packages, then restore their holds after the
+# transaction.
+local @relock;
+if ($versionlock_update) {
+	my @packages = &unique(@updates);
+	my $unlock_error = &delete_update_system_holds(
+		\@packages, \@relock);
+	if ($unlock_error) {
+		my $relock_error = &restore_update_system_holds(\@relock);
+		if ($relock_error) {
+			print &text('yum_reholdfailed',
+				"<tt>".&html_escape(join(" ", @packages))."</tt>",
+				&html_escape($relock_error)),"<p>\n";
+			}
+		print &text('yum_unholdfailed',
+			"<tt>".&html_escape(join(" ", @packages))."</tt>",
+			&html_escape($unlock_error)),"<p>\n";
+		return ( );
 		}
-	else {
-		$cmd = "install";
-		}
-	}
-else {
-	$cmd = "install";
 	}
 
-# Work out the command to run, which may enable some repos
-my $uicmd = "$yum_command $enable -y $cmd ".join(" ", @names);
-$uicmd .= " $flags" if ($flags);
-my $fullcmd = "$yum_command $enable -y $cmd $update";
-$fullcmd .= " $qflags" if ($flags);
+# DNF 4 installs and upgrades a mixed package set in one transaction. DNF 5
+# needs separate actions because install does not upgrade packages by name.
+my @actions;
+if ($yum_command =~ /dnf$/ && @installed && @missing &&
+    &get_dnf_version() >= 5) {
+	@actions = ( [ 'update', \@installed ], [ 'install', \@missing ] );
+	}
+else {
+	# Use one action for YUM and non-mixed DNF sets.
+	my $cmd = $yum_command =~ /dnf$/ && @installed && !@missing ?
+		'update' : 'install';
+	@actions = ( [ $cmd, \@names ] );
+	}
+
+# Join actions so DNF 5 installs only after its update succeeds.
+my (@uicmds, @fullcmds);
+foreach my $action (@actions) {
+	my ($cmd, $packages) = @$action;
+	my $uicmd = "$yum_command $enable -y $cmd ".join(" ", @$packages);
+	$uicmd .= " $runflags" if ($runflags);
+	push(@uicmds, $uicmd);
+	my $fullcmd = "$yum_command $enable -y $cmd ".
+		join(" ", map { quotemeta($_) } @$packages);
+	$fullcmd .= " $qflags" if ($qflags);
+	push(@fullcmds, $fullcmd);
+	}
+my $uicmd = join(" && ", @uicmds);
+my $fullcmd = join(" && ", @fullcmds);
 foreach my $u (@updates) {
 	my $repo = &update_system_repo($u);
 	if ($repo) {
-		$fullcmd = "$yum_command -y $cmd $repo ; $fullcmd";
+		# Install a required repository package first.
+		$fullcmd = "$yum_command -y install $repo ; $fullcmd";
 		}
 	}
 
-print "<b>",&text('yum_install', "<tt>".&html_escape($uicmd)."</tt>"),"</b><p>\n";
-print "<pre>";
+print &text('yum_install', "<tt>".&html_escape($uicmd)."</tt>"),"\n";
+print "<pre data-installer>";
 &additional_log('exec', undef, $fullcmd);
 $SIG{'TERM'} = 'ignore';	# Installing webmin itself may kill this script
-&open_execute_command(CMD, "$fullcmd </dev/null", 2);
+&open_execute_command(CMD, "($fullcmd) </dev/null", 2);
 while(<CMD>) {
 	s/\r|\n//g;
 	if (/^\[(update|install|deps):\s+(\S+)\s+/) {
@@ -110,7 +202,7 @@ while(<CMD>) {
 			}
 		}
 	elsif (/^\s+(Updating|Installing|Upgrading)\s+:\s+(\S+)/) {
-		# Line like :
+		# Older DNF and YUM progress lines, for example:
 		#   Updating       : wbt-virtual-server-theme       1/2 
 		# or
 		#   Installing : 2:nmap-5.51-2.el6.i686             1/1
@@ -118,6 +210,12 @@ while(<CMD>) {
 		$pkg =~ s/^\d://;	# Strip epoch from front
 		$pkg =~ s/\-\d.*$//;	# Strip version number from end
 		push(@rv, $pkg);
+		}
+	elsif (/\]\s+(Upgrading|Installing|Downgrading|Reinstalling)\s+(\S+)/) {
+		# DNF 5 progress line, for example:
+		# [3/8] Upgrading libcurl-0:8.11.1-5.fc42 100% ...
+		local $pkg = &update_system_nevra_name($2);
+		push(@rv, $pkg) if ($pkg);
 		}
 	if (!/ETA/ && !/\%\s+done\s+\d+\/\d+\s*$/) {
 		print &html_escape($_."\n");
@@ -127,32 +225,47 @@ while(<CMD>) {
 		}
 	}
 close(CMD);
+local $status = $?;
+
+# Restore holds at the versions now installed.
+if (@relock) {
+	local $relock_error = &restore_update_system_holds(\@relock);
+	if ($relock_error) {
+		print &text('yum_reholdfailed',
+			"<tt>".&html_escape(join(" ", &unique(@updates)))."</tt>",
+			&html_escape($relock_error)),"<p>\n";
+		}
+	}
 print "</pre>\n";
-if ($? || $nopackage) {
-	print "<b>$text{'yum_failed'}</b><p>\n";
+if ($status || $nopackage) {
+	print "$text{'yum_failed'}<p>\n";
 	return ( );
 	}
 else {
-	print "<b>$text{'yum_ok'}</b><p>\n";
+	print "$text{'yum_ok'}<p>\n";
 	return &unique(@rv);
 	}
 }
 
-# append_architectures(package)
-# Given a package name, if it has multiple architectures return the name with
-# each appended
+# append_architectures(package, [installed])
+# Returns installed package names with their architectures. Sets installed
+# when any are found, or returns the original specification when none are.
 sub append_architectures
 {
-my ($name) = @_;
+my ($name, $installed) = @_;
 local %packages;
 my $n = &list_packages($name);
+$$installed = $n ? 1 : 0 if ($installed);
+# Keep an unresolved specification for installation.
 return ( $name ) if (!$n);
 my @rv;
 for(my $i=0; $i<$n; $i++) {
 	if ($packages{$i,'arch'}) {
+		# Include the installed architecture.
 		push(@rv, $packages{$i,'name'}.".".$packages{$i,'arch'});
 		}
 	else {
+		# Keep names with no architecture metadata.
 		push(@rv, $packages{$i,'name'});
 		}
 	}
@@ -160,12 +273,26 @@ for(my $i=0; $i<$n; $i++) {
 return @rv;
 }
 
-# update_system_operations(packages)
-# Given a list of packages, returns a list containing packages that will
-# actually get installed, each of which is a hash ref with name and version.
+# update_system_nevra_name(nevra)
+# Extracts the package name from a NEVRA string printed by DNF.
+sub update_system_nevra_name
+{
+my ($nevra) = @_;
+$nevra =~ s/^\d+://;	# Older DNF may put the epoch before the name
+return $1 if ($nevra =~ /^(.+)-\d+:/);
+return $1 if ($nevra =~ /^(.+)-\d[^-]*-[^-]+(?:\.[^.]+)?$/);
+return undef;
+}
+
+# update_system_operations(packages, [flags])
+# Returns packages YUM or DNF would install or update. DNF previews the
+# transaction directly; YUM uses shell mode.
 sub update_system_operations
 {
-my ($packages) = @_;
+my ($packages, $flags) = @_;
+if ($yum_command =~ /(?:^|\/)dnf(?:-\d+)?$/) {
+	return &update_system_dnf_operations($packages, $flags);
+	}
 my $temp = &transname();
 &open_tempfile(SHELL, ">$temp", 0, 1);
 &print_tempfile(SHELL, "install $packages\n");
@@ -188,6 +315,87 @@ while(<SHELL>) {
 	}
 close(SHELL);
 &unlink_file($temp);
+return @rv;
+}
+
+# update_system_dnf_operations(packages, [flags])
+# Returns packages DNF would install or update in a simulated transaction.
+sub update_system_dnf_operations
+{
+my ($packages, $flags) = @_;
+my @rv;
+my $hold_override = defined($flags) &&
+		    $flags eq &update_system_hold_flags();
+my $runflags = defined($flags) && !$hold_override ?
+	&trim(join(" ", map { quotemeta($_) } split(/\s+/, $flags))) : "";
+my @relock;
+if ($hold_override) {
+	my @selected = &unique(split(/\s+/, $packages));
+	my $error = &delete_update_system_holds(\@selected, \@relock);
+	if ($error) {
+		&restore_update_system_holds(\@relock) if (@relock);
+		return ( );
+		}
+	}
+# DNF 5 does not upgrade installed packages with install, so use upgrade for
+# its previews.
+my $action = &get_dnf_version() >= 5 ? 'upgrade' : 'install';
+my $command = "$yum_command --assumeno $action ".
+	join(" ", map { quotemeta($_) } split(/\s+/, $packages));
+$command .= " $runflags" if ($runflags);
+$command .= " 2>/dev/null";
+&clean_language();
+&open_execute_command(DNF, $command, 1, 1);
+my ($intable, $skip, $wrapped);
+while(<DNF>) {
+	s/\r|\n//g;
+	if (/^\s*Package\s+Arch(itecture)?\s+Version\s+Repo/i) {
+		# Start reading the transaction table.
+		$intable = 1;
+		}
+	elsif (/^\s*Transaction\s+Summary/i) {
+		last;
+		}
+	elsif (!$intable || /^=+$/) {
+		next;
+		}
+	elsif (/^\S/) {
+		# Ignore sections that do not add package versions.
+		$skip = !/^(Installing|Upgrading|Reinstalling|Downgrading)/i;
+		$wrapped = undef;
+		}
+	elsif ($skip) {
+		next;
+		}
+	elsif (/^\s+(\S+)\s*$/) {
+		# Save a long package name wrapped onto its own line.
+		$wrapped = $1;
+		}
+	elsif (/^\s+replacing\s/i) {
+		# Ignore an old package shown below its replacement.
+		$wrapped = undef;
+		}
+	elsif (/^\s+\S/) {
+		# Parse a complete row, or the remainder of a wrapped row.
+		my @cols = split(/\s+/, &trim($_));
+		unshift(@cols, $wrapped) if ($wrapped);
+		$wrapped = undef;
+		next if (@cols < 4);
+		my $pkg = { 'name' => $cols[0],
+			    'arch' => $cols[1],
+			    'version' => $cols[2] };
+		if ($pkg->{'version'} =~ s/^(\S+)://) {
+			$pkg->{'epoch'} = $1;
+			}
+		push(@rv, $pkg);
+		}
+	}
+close(DNF);
+&reset_environment();
+if (@relock) {
+	my $error = &restore_update_system_holds(\@relock);
+	return ( ) if ($error);
+	}
 return @rv;
 }
 
@@ -326,19 +534,53 @@ while(<PKG>) {
 close(PKG);
 }
 
-# update_system_updates()
-# Returns a list of package updates available from yum
+# update_system_updates([include-holds])
+# Returns available package updates, optionally including version-locked ones.
+# On DNF, a failed check returns an empty list and sets $update_system_error
+# to the error output. Any other result clears it, so callers can tell a
+# failure from no updates.
 sub update_system_updates
 {
+my ($include_holds) = @_;
 local @rv;
 local %done;
+$update_system_error = undef;
 if ($yum_command =~ /dnf/) {
-	&open_execute_command(PKG, "$yum_command check-update 2>/dev/null", 1, 1);
+	# With DNF, add the flag that also lists version-locked updates if
+	# asked, escaping * for the shell
+	my $holdflag = $include_holds && &supports_update_system_holds() ?
+			" ".&update_system_hold_flags() : "";
+	$holdflag =~ s/\*/\\*/g;
+
+	# Capture the exit status: DNF exits with 0 for no updates, 100 for
+	# updates found and any other status on failure. Stderr goes to a file
+	# rather than a second pipe, which could fill up and block DNF while
+	# stdout is still being read. Stdin comes from /dev/null so a prompt,
+	# such as for a repository key import, cannot hang.
+	my $out = "";
+	my $errfile = &transname();
+	my $ex = &execute_command("$yum_command$holdflag check-update",
+				  "/dev/null", \$out, $errfile, undef, 1);
+	my $code = $ex >> 8;
+	my $err = &read_file_contents($errfile);
+	unlink($errfile);
+	if ($code != 0 && $code != 100) {
+		# The check failed, so return no updates and set the error from
+		# stderr, or from stdout or the exit status if stderr is empty
+		$err =~ s/\s+$//;
+		$out =~ s/\s+$//;
+		$update_system_error = $err || $out ||
+			"$yum_command check-update exited with status $code";
+		return ( );
+		}
+	# Parse the captured output with the shared loop below
+	open(PKG, "<", \$out);
 	}
 else {
+	# YUM wraps long entries onto indented lines, so join them first.
+	# Failed YUM checks are not detected.
 	&open_execute_command(PKG, "$yum_command check-update 2>/dev/null | tr '\n' '#' | sed -e 's/# / /g' | tr '#' '\n'", 1, 1);
 	}
-
 while(<PKG>) {
         s/\r|\n//g;
 	if (/^(\S+)\.([^\.]+)\s+(\S+)\s+(\S+)/ && $2 ne 'src') {
@@ -352,10 +594,158 @@ while(<PKG>) {
 		$done{$pkg->{'name'}} = $pkg;
 		push(@rv, $pkg);
 		}
+	last if (/Obsoleting\s+Packages/i);
 	}
 close(PKG);
+if (&supports_update_system_holds()) {
+	my %holds = map { $_, 1 } &list_update_system_holds();
+	foreach my $pkg (@rv) {
+		$pkg->{'held'} = 1 if ($holds{$pkg->{'name'}});
+		}
+	@rv = grep { !$_->{'held'} } @rv if (!$include_holds);
+	}
 &set_yum_security_field(\%done);
 return @rv;
+}
+
+# update_system_hold_spec_name(spec)
+# Extracts the package name from an exact DNF 4 versionlock entry.
+sub update_system_hold_spec_name
+{
+my ($spec) = @_;
+return undef if ($spec =~ /^!/);
+return $1 if ($spec =~ /^(.+)-\d+:[^-]+-[^-]+\.[^.]+$/);
+return $1 if ($spec =~ /^\d+:(.+)-[^-]+-[^-]+\.[^.]+$/);
+return undef;
+}
+
+# list_update_system_hold_specs()
+# Returns exact locks that Webmin can safely manage by package name.
+sub list_update_system_hold_specs
+{
+return ( ) if (!&supports_update_system_holds());
+my @locks;
+&clean_language();
+&open_execute_command(VLOCK,
+	"$yum_command -q versionlock list 2>/dev/null", 1, 1);
+if (&get_dnf_version() >= 5) {
+	# DNF 5 formats each lock as a multi-line package block.
+	my ($lock, @blocks);
+	while(<VLOCK>) {
+		s/\r|\n//g;
+		if (/^Package name:\s*(\S+)/) {
+			push(@blocks, $lock) if ($lock);
+			$lock = { 'name' => $1, 'spec' => $1 };
+			}
+		elsif ($lock && /^evr\s*=\s*(\S+)/) {
+			$lock->{'exact'} = 1;
+			}
+		elsif ($lock && /\S/ && !/^\s*#/) {
+			$lock->{'custom'} = 1;
+			}
+		elsif (!/\S/) {
+			push(@blocks, $lock) if ($lock);
+			$lock = undef;
+			}
+		}
+	push(@blocks, $lock) if ($lock);
+
+	# Ignore globs, duplicate entries and custom conditions because deleting
+	# them by name could remove rules that Webmin cannot restore.
+	my (%blocks, %custom);
+	foreach my $block (@blocks) {
+		$blocks{$block->{'name'}}++;
+		$custom{$block->{'name'}} = 1
+			if (!$block->{'exact'} || $block->{'custom'});
+		}
+	@locks = grep { !$custom{$_->{'name'}} &&
+			$blocks{$_->{'name'}} == 1 &&
+			$_->{'name'} !~ /[\*\?\[\]]/ } @blocks;
+	}
+else {
+	# DNF 4 prints standard entries as name-epoch:version-release.arch.
+	while(<VLOCK>) {
+		s/\r|\n//g;
+		my $name = &update_system_hold_spec_name($_);
+		push(@locks, { 'name' => $name, 'spec' => $_ }) if ($name);
+		}
+	}
+close(VLOCK);
+&reset_environment();
+return @locks;
+}
+
+# list_update_system_holds()
+# Returns package names held by exact DNF version locks.
+sub list_update_system_holds
+{
+my %holds = map { $_->{'name'}, 1 } &list_update_system_hold_specs();
+return sort keys %holds;
+}
+
+# run_update_system_hold(action, package)
+# Runs one versionlock operation. Returns undef on success, or error text.
+sub run_update_system_hold
+{
+my ($action, $package) = @_;
+my $cmd = "$yum_command -q versionlock $action ".quotemeta($package);
+my $out;
+&clean_language();
+my $status = &execute_command_logged($cmd, undef, \$out, \$out);
+&reset_environment();
+if ($status) {
+	$out = &trim($out);
+	return $out || &text('yum_versionlock_failed', $action);
+	}
+return undef;
+}
+
+# delete_update_system_holds(&packages, &removed)
+# Unlocks selected packages and records each removed hold for restoration.
+sub delete_update_system_holds
+{
+my ($packages, $removed) = @_;
+my %held = map { $_, 1 } &list_update_system_holds();
+my $error;
+foreach my $package (&unique(@$packages)) {
+	next if (!$held{$package});
+	$error = &run_update_system_hold('delete', $package);
+	last if ($error);
+	push(@$removed, $package);
+	}
+return $error;
+}
+
+# restore_update_system_holds(&packages)
+# Re-locks packages at their currently installed versions.
+sub restore_update_system_holds
+{
+my ($packages) = @_;
+foreach my $package (&unique(@$packages)) {
+	my $error = &run_update_system_hold('add', $package);
+	return $error if ($error);
+	}
+return undef;
+}
+
+# update_system_hold(&packages, hold)
+# Holds or unholds DNF packages by name. Returns undef on success, or error text.
+sub update_system_hold
+{
+my ($packages, $hold) = @_;
+return $text{'yum_versionlock_missing'}
+	if (!&supports_update_system_holds());
+my @packages = &unique(@$packages);
+return $text{'yum_versionlock_none'} if (!@packages);
+if ($hold) {
+	foreach my $package (@packages) {
+		my $error = &run_update_system_hold('add', $package);
+		return $error if ($error);
+		}
+	return undef;
+	}
+my @removed;
+return &delete_update_system_holds(\@packages, \@removed);
 }
 
 # get_yum_config()
@@ -536,4 +926,3 @@ else {
 }
 
 1;
-

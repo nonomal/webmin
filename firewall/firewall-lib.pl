@@ -144,7 +144,7 @@ while(<FILE>) {
 		$table->{'eline'} = $lnum;
 		}
 	elsif (/\S/) {
-		&error(&text('eiptables', "<tt>$_</tt>"));
+		&error(&text('eiptables2', "<tt>$_</tt>", $lnum+1));
 		}
 	$lnum++;
 	if (! defined($read_comment)) { $cmt=undef; }
@@ -527,7 +527,7 @@ local @oldjumps = grep { $_->{'chain'} eq 'INPUT' &&
 # Get all new fail2ban chain rules and inputs that jump to them
 local @newrules = grep { $_->{'chain'} =~ /^f2b-/ } @$newrules;
 local @newjumps = grep { $_->{'chain'} eq 'INPUT' &&
-			 $_->{'j'}->[1] =~ /^f2b-/ } @newrules;
+			 $_->{'j'}->[1] =~ /^f2b-/ } @$newrules;
 
 # Re-create the chains
 my @oldchains = &unique(map { $_->{'chain'} } @oldrules);

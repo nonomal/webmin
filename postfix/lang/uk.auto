@@ -125,9 +125,13 @@ smtpd_nomap2=Карта обмежень щодо адрес відправни�
 smtpd_map=Дозволені адреси для ретрансляції
 smtpd_map2=Обмеження щодо адрес відправника
 
-opts_smtp_use_tls=Використовуйте TLS для з'єднань SMTP
 opts_smtp_sasl_security_options=Параметри безпеки SASL
 opts_smtp_tls_security_level=Рівень безпеки клієнта SMTP TLS
+opts_inet_protocols=Інтернет-протоколи для ввімкнення
+opts_inet_protocols_all=Всі в наявності
+opts_smtp_address_preference=Бажаний протокол клієнта SMTP
+opts_smtp_address_preference_any=Або
+opts_smtp_balance_inet_protocols=Перевірте клієнтські протоколи SMTP
 
 opts_edebug=Відсутній або недійсний рівень вхідного журналу - повинен бути числом більше нуля
 
@@ -149,10 +153,13 @@ mapping_find=Показати відповідні зіставлення:
 mapping_search=Пошук
 mapping_match=Записи файлів карти, що відповідають <tt>$1</tt>.
 
-opts_virtual_alias_maps=Таблиці пошуку доменних карт
+virtual_title=Віртуальні карти псевдонімів
+virtual_ecannot=Ви не маєте права редагувати конфігурацію зіставлення віртуальних псевдонімів
+opts_virtual_maps=Таблиці пошуку віртуальних псевдонімів
+opts_virtual_alias_maps=Таблиці пошуку віртуальних псевдонімів
 opts_virtual_alias_domains=Домени для віртуального відображення для
-virtual_same=З таблиць відображення домену
-virtual_return=віртуальні домени
+virtual_same=З таблиць пошуку віртуальних псевдонімів
+virtual_return=карти віртуальних псевдонімів
 
 transport_return=транспортні карти
 
@@ -169,6 +176,7 @@ opts_content_filter=Фільтр вмісту по електронній пош
 start_efailed=Не вдалося запустити Postfix
 start_ecannot=Вам не дозволяється запускати Postfix
 
+acl_virtual=Можна редагувати віртуальні псевдоніми?
 acl_sni=Чи можете редагувати сертифікати?
 acl_header=Чи можна редагувати чеки заголовка?
 acl_sasl=Чи можна редагувати автентифікацію SMTP?
@@ -180,9 +188,20 @@ acl_postfinger=Чи можна перевірити конфігурацію п�
 acl_manual=Чи можна редагувати конфігураційний файл?
 acl_dir=Дозволений каталог для файлів карт
 acl_bcc=Чи можна редагувати відображення BCC?
+acl_body=Чи можна редагувати перевірки тіла?
+acl_dependent=Чи можна редагувати залежні від відправника транспортні карти?
 
 mail_move=Переїжджати:
 mail_eexists=Повідомлення більше не існує!
+mail_qfile=Файл черги пошти
+mail_qlast=Остання повторна спроба о
+mail_qdir=Статус черги пошти
+mail_qdir_active=Активний
+mail_qdir_incoming=Вхідні
+mail_qdir_deferred=Відкладено
+mail_qdir_corrupt=Корумпований
+mail_qdir_hold=На утриманні
+mail_qdir_maildrop=Розсилка пошти
 
 view_flush=Промийте
 view_body=Текст повідомлення
@@ -225,9 +244,11 @@ mailq_active=Активний
 mailq_deferred=Відкладено
 mailq_hold=Утримуйте вибране
 mailq_unhold=Скасувати вибране
+mailq_dir=Стан черги
 
 flushq_title=Черга змивання
 flushq_desc=Примушування спроби доставки пошти за допомогою команди $1.
+flushq_desc2=.. перевірте журнал пошти на наявність результатів
 
 qview_title=Повідомлення в черзі
 qview_desc=З файлу $1
@@ -247,6 +268,7 @@ opts_mime_header_checks=Таблиці перевірки заголовків M
 opts_header_checks_no_map=(Карта перевірки заголовка наразі не визначена. Спочатку визначте карту, а потім її можна редагувати)
 
 opts_mime_header_checks_no_map=(Наразі не визначено жодної карти перевірки заголовків MIME. Спочатку визначте карту, а потім її можна редагувати)
+opts_mime_header_checks_same_map=(Перевірка MIME-заголовків така ж, як і звичайна перевірка заголовків. Спочатку визначте іншу мапу, а потім можете її редагувати)
 header_name=Регулярне вираження
 header_value=Дія на матчі
 header_discard=Відкинути (з повідомленням журналу..)
@@ -345,7 +367,7 @@ log_misc=Змінено загальні параметри
 log_opts=Змінено переписування адрес та маскування
 log_aliases=Змінено параметри псевдонімів
 log_canonical=Зміна параметрів канонічного відображення
-log_virtual=Змінено параметри віртуального домену
+log_virtual=Змінено параметри зіставлення віртуальних псевдонімів
 log_bcc=Змінено параметри карти BCC
 log_transport=Змінено варіанти транспортування карт
 log_sni=Змінити параметри зіставлення сертифікатів
@@ -435,6 +457,10 @@ opts_broken_sasl_auth_clients=Обробляти клієнтів, які не �
 sasl_opts=Параметри безпеки SMTP
 sasl_noanonymous=Відхилити анонімні входи
 sasl_noplaintext=Відхилити вхід із звичайним текстом
+sasl_noactive=Відхилити Заборонити під активну (не словникову) атаку
+sasl_nodictionary=Відхилення методів, що піддаються пасивній (словниковій) атаці
+sasl_forward_secrecy=Дозволяйте лише методи, які підтримують пряму секретність
+sasl_mutual_auth=Дозволяйте лише методи, які забезпечують взаємну автентифікацію
 opts_smtpd_delay_reject=Затримка клієнтів із невдалою реєстрацією?
 sasl_recip=Обмеження для одержувачів SMTP
 sasl_relay=Обмеження ретрансляції SMTP
@@ -456,6 +482,7 @@ opts_smtpd_tls_key_file=Файл приватного ключа TLS
 opts_smtpd_tls_CAfile=Файл повноважень сертифіката TLS
 opts_smtpd_use_tls=Увімкнути шифрування TLS?
 opts_smtp_enforce_tls=Потрібна шифрування TLS?
+opts_smtputf8_enable=Увімкнути підтримку SMTPUTF8?
 sasl_err=Не вдалося зберегти автентифікацію та шифрування SMTP
 sasl_ecert=Файл TLS відсутній або недійсний
 sasl_ekey=Відсутній або недійсний файл ключа TLS
@@ -544,7 +571,7 @@ mysql_ecfile=Файл конфігурації MySQL $1 не знайдено
 mysql_ecfile2=Не вдалося знайти таблицю у файлі конфігурації MySQL $1
 mysql_edriver=Не вдалося завантажити драйвер бази даних $1
 mysql_elogin=Не вдалося увійти в базу даних $1:$2.
-mysql_equery=Не вдалося запитувати таблицю $1 : $2 
+mysql_equery=Не вдалося запитувати таблицю $1 : $2
 mysql_eadd=Помилка вставки SQL : $1
 mysql_edelete=Не вдалося видалити SQL : $1
 mysql_eupdate=Помилка оновлення SQL : $1
@@ -555,13 +582,13 @@ mysql_eneed=Параметр конфігурації MySQL $1 не знайде
 ldap_ecfile=Файл конфігурації LDAP $1 не знайдено
 ldap_eldapmod=Модуль Perl $1, необхідний для спілкування з LDAP, не встановлений або не завантажується
 ldap_eldap=Не вдалося підключитися до сервера LDAP $1 на порту $2
-ldap_eldaplogin=Не вдалося увійти на сервер LDAP $1 як $2 : $3 
+ldap_eldaplogin=Не вдалося увійти на сервер LDAP $1 як $2 : $3
 ldap_ebase=База даних LDAP DN $1 не вірна : $2
-ldap_eadd=Не вдалося додати LDAP $1 : $2 
+ldap_eadd=Не вдалося додати LDAP $1 : $2
 ldap_edelete=Видалення LDAP $1 не вдалося : $2
 ldap_equery=LDAP пошук $1 не вдався : $2
 ldap_erename=LDAP перейменувати $1 в $2 не вдалося : $3
-ldap_emodify=Не вдалося змінити LDAP $1 : $2 
+ldap_emodify=Не вдалося змінити LDAP $1 : $2
 
 bcc_title=Картографування BCC
 bcc_ecannot=Вам заборонено редагувати відображення BCC

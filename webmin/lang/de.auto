@@ -1,113 +1,48 @@
-bind_maxconns=Maximale Anzahl gleichzeitiger Verbindungen
-bind_maxconns_per_ip=Maximale gleichzeitige Verbindungen pro IP
-bind_maxconns_per_net=Maximale gleichzeitige Verbindungen pro Netzwerk
-bind_emaxconns=Die maximale Anzahl gleichzeitiger Verbindungen muss größer als 1 sein
-bind_emaxconns_per_ip=Die maximale Anzahl gleichzeitiger Verbindungen pro IP muss größer als 1 sein
-bind_emaxconns_per_net=Die maximale Anzahl gleichzeitiger Verbindungen pro Netzwerk muss größer als 1 sein
-bind_maxlifetime=Maximale Lebensdauer des Webmin-Prozesses
-bind_maxlifetime_def=Unbegrenzt
-bind_maxlifetime_secs=Sekunden
-bind_emaxlifetime=Die maximale Prozesslebensdauer muss eine Zahl größer als 60 Sekunden sein
+ssl_enforce=SSL erzwingen
+ssl_tablets=SSL-Anbieter
+ssl_letsdesc=Mit diesem Formular können Sie ein vertrauenswürdiges SSL-Zertifikat für Webmin von einem ACME-kompatiblen Anbieter wie Let's Encrypt anfordern.
+ssl_letserr=Leider kann dieses System keine Zertifikate von einem SSL-Anbieter anfordern: $1.
+ssl_letserr2=Alternativ können Sie auf der <a href='$1'>Modulkonfigurationsseite</a> überprüfen, ob Sie den richtigen Pfad zum konfigurierten ACME-Clientbefehl verwenden.
 
-os_incorrect=Betriebssystem $1 wurde auf Version $2 aktualisiert
-os_release_notes=Versionshinweise
+ssl_letsdesc2=Das neue Zertifikat ersetzt das aktuell in Webmin konfigurierte. Bevor es ausgestellt werden kann, muss der ACME-Anbieter die Kontrolle über jeden Hostnamen entweder mithilfe einer temporären Datei im Dokumentenverzeichnis der Website oder eines temporären DNS-TXT-Eintrags überprüfen.
+ssl_letsmode=Domänenvalidierungsmethode
+ssl_certbotprehook=Diese Warnung kann jedoch ignoriert werden, wenn der Pre-Request-Befehl den Dienst über Port 80 stoppt, bevor Certbot ausgeführt wird.
+ssl_staging=Provider-Server
+ssl_staging0=Produktion
+ssl_staging1=Staging (nur Test)
+ssl_acmeopts=Anbietereinstellungen
+ssl_acmeextra=Erweiterte Einstellungen anzeigen
+ssl_acmedir=Benutzerdefinierte ACME-Verzeichnis-URL
+ssl_acmedirdesc=Falls diese Option aktiviert ist, wird der oben genannte Standard-Provider-Server überschrieben.
+ssl_acmekid=Schlüssel-ID für die externe Kontobindung
+ssl_acmekiddesc=Optional. Einige ACME-Anbieter benötigen dies zusätzlich zur Verzeichnis-URL.
+ssl_acmehmac=HMAC-Schlüssel für die externe Kontobindung
+ssl_acmehmacdesc=Optional. Erfordert bei Verwendung den nativen Certbot-Client.
 
-lang_title=Sprache und Gebietsschema
-lang_title2=Webmin-Sprache und Gebietsschema
-lang_lang=Sprache
-lang_locale=Gebietsschema
-lang_dateformat=Datumsanzeigeformat
-lang_dateformat_dd/mon/yyyy=tt/mon/jjjj (d. h. 16/Sep/2001)
-lang_dateformat_dd/mm/yyyy=TT/MM/JJJJ (d. h. 16.09.2001)
-lang_dateformat_mm/dd/yyyy=MM/TT/JJJJ (d. h. 16.09.2001)
-lang_dateformat_yyyy/mm/dd=jjjj/mm/tt (d. h. 16.09.2001)
+session_remember=Bieten Sie eine „Angemeldet bleiben“-Option für dauerhafte Logins an?
+session_rpc_timeout=RPC-Sitzungstimeout
+session_erpc_timeout=Das Timeout für die RPC-Sitzung fehlt oder muss eine Zahl größer als 0 sein
+session_edigestcrypt=Das Hash-Format $1 kann nicht verwendet werden, da die Systemfunktion <tt>crypt</tt> es nicht unterstützt
 
-ssl_hsts=Erzwinge SSL mit HSTS-Header
+log_letsencrypt=Neues SSL-Zertifikat von einem ACME-Anbieter angefordert
+log_letsencryptdns=ACME-DNS-Eintrag für $1 erstellt
+log_letsencryptcleanup=ACME-DNS-Eintrag für $1 entfernt
 
-upgrade_repo=Neueste Version aus dem $1-Repository
-upgrade_setup=Ausführen des Skripts <tt>setup.sh</tt> zum Aktualisieren von Webmin ..
-upgrade_setuprpm=<tt>RPM</tt> ausführen, um Webmin zu aktualisieren ..
-upgrade_setupdeb=<tt>DPKG</tt> ausführen, um Webmin zu aktualisieren ..
-upgrade_setuppackage=<tt>pkgadd</tt> ausführen, um Webmin zu aktualisieren ..
+themes_configure=Theme-Konfigurationsseite öffnen
 
-session_utmp=Anmeldungen und Abmeldungen in <tt>utmp</tt> aufzeichnen?
-session_md5off=Automatisch ermitteln
-session_md5on=Verwenden Sie das Hash-Format <tt>MD5</tt>
-session_sha512=Verwenden Sie das Hash-Format <tt>SHA512</tt>
-session_yescrypt=Verwenden Sie das Hash-Format <tt>yescrypt</tt>
-session_emd5mod=Das MD5-Hashing-Format kann nicht verwendet werden, da das Perl $1-Modul nicht installiert ist
-session_esha512mod=Das SHA512-Hashing-Format kann nicht verwendet werden, da das Perl $1-Modul nicht installiert ist
-session_eyescrypt=yescrypt-Hashing-Format kann nicht verwendet werden, da das Perl $1-Modul nicht installiert ist
-session_passapi=API für die Remote-Passwortänderung aktivieren?
-session_passapi0=API deaktiviert
-session_passapi1=API für Unix-Benutzer aktiviert
-session_passurl=Wenn aktiviert, können Benutzerkennwörter über eine POST-Anfrage in $1. geändert werden
+sendmail_name=Anzeigename
 
-log_fixrepo=Das Webmin-Repository wurde korrigiert
+twofactor_qrcode_manual=Geben Sie den Geheimcode $1 in der TOTP-App ein und richten Sie ihn manuell ein, da die QR-Code-Generierung auf diesem System nicht unterstützt wird.
 
-lock_mode=Dateien, die Webmin sperren soll
-lock_s=Sekunden
-lock_m=Protokoll
-lock_h=Std
-lock_pid=PID
-lock_cmd=Skript
-lock_file=Gesperrte Datei
-lock_files=Gesperrte Dateien
-lock_nfiles=Keine gesperrten Dateien
-lock_age=Gehalten für
-lock_noneopen=Derzeit sind keine Dateien von Webmin gesperrt.
-lock_msg=Die unten aufgeführten Dateien sind derzeit durch einen Webmin-Prozess gesperrt.
-lock_kill=Töte ausgewählte Schlösser
-lock_term=Ausgewählte Sperren beenden
-lock_return=Liste der Schlösser
-
-kill_title=Schlösser entfernen
-kill_err=Sperren konnten nicht entfernt werden
-kill_enone=Nichts ausgewählt!
-kill_pid=Prozess $1 wird beendet ..
-term_pid=Prozess $1 wird beendet ..
-kill_gone=.. Prozess existiert nicht mehr!
-kill_gone2=.. Sperre existiert nicht mehr!
-kill_dead=.. $1 getötet und Sperre $2 freigegeben
-kill_alive=.. hat ein Kill-Signal an $1 gesendet, aber es wurde nicht beendet!
-kill_failed=.. Kill ist wegen $1 fehlgeschlagen, Sperre $2 wurde aber trotzdem freigegeben
-kill_already=.. Sperre für $1 aufgehoben
-
-advanced_etempallowed=Verzeichnis für temporäre Dateien $1 ist ein Systemverzeichnis
-advanced_pass_desc=Passwort für Usermin-Programme verfügbar machen?
-advanced_pass_help=Funktioniert nicht, wenn die Sitzungsauthentifizierung aktiviert ist
-advanced_bufsize=Netzwerkpuffergröße in Bytes
-advanced_bufsize_binary=Netzwerkpuffergröße für Downloads in Bytes
-advanced_ebufsize=Die Netzwerkpuffergröße muss eine Zahl größer als Null sein
-advanced_ebufsize_binary=Die Netzwerkpuffergröße für Downloads muss eine Zahl größer als Null sein
-
-notify_yumrepo=Ihr System verwendet das alte Webmin YUM-Repository. Klicken Sie auf die Schaltfläche unten, um zur neuen Repository-URL <tt>$1</tt> zu wechseln, um unseren neuesten Signaturschlüssel zu verwenden und den Zugriff auf aktualisierte Webmin-Versionen sicherzustellen.
-notify_aptrepo=Ihr System verwendet das alte Webmin APT-Repository. Klicken Sie auf die Schaltfläche unten, um zur neuen <tt>stable</tt> Repository-URL <tt>$1</tt> zu wechseln, um unseren neuesten Signaturschlüssel zu verwenden und den Zugriff auf aktualisierte Webmin-Versionen sicherzustellen.
-notif_fixreponow=Aktualisieren Sie das Webmin-Repository
-
-status_err=Fehler beim Speichern der Hintergrundstatussammlung
-status_einterval=Erfassungsintervall muss eine ganze Zahl sein
-
-sendmail_port=SMTP-Port
-sendmail_ssl0=Niemals verschlüsseln
-sendmail_ssl1=Verwenden Sie immer TLS
-sendmail_ssl2=Mit STARTTLS wechseln
-sendmail_url=Webmin-URL zur Verwendung in E-Mails
-sendmail_url_def=Standard ($1)
-sendmail_url_custom=eigene URL
-sendmail_eurl=Fehlende oder ungültige benutzerdefinierte URL
-
-web_rediruurl=Umleitungs-URL für Post-Login-Schalter
-web_redirdesc=Interne Umleitungs-URL-Überschreibungen
-web_eredirurl=„$1“ enthält Leerzeichen und ist keine gültige URL
-web_redirhost=Host umleiten
-web_eredirhost='$1' ist kein gültiger Hostname
-web_redirport=Port umleiten
-web_redirpref=Umleitungspräfix
-web_eredirpref=Präfix muss mit Schrägstrich beginnen
-web_eredirpref2=Präfix darf keine Leerzeichen enthalten
-web_redirssl=SSL umleiten
-
-letsencrypt_eacmedns=Nur der offizielle Let's Encrypt-Client unterstützt die DNS-basierte Validierung
-
-alert_hide=Warnung ausblenden
+letsencrypt_title=SSL-Anbieterzertifikat anfordern
+letsencrypt_err=Zertifikat konnte nicht angefordert werden
+letsencrypt_ecmds=Weder der native ACME-Clientbefehl <tt>certbot</tt> noch der <tt>python</tt> -Befehl wurden auf Ihrem System gefunden
+letsencrypt_eacmedir=Fehlende oder ungültige ACME-Verzeichnis-URL
+letsencrypt_eeabdir=Bei Verwendung der externen Kontobindung muss eine ACME-Verzeichnis-URL eingegeben werden
+letsencrypt_eeabpair=Sowohl die Schlüssel-ID für die externe Kontobindung als auch der HMAC-Schlüssel müssen eingegeben werden
+letsencrypt_eeabnative=Die externe Kontobindung kann nur verwendet werden, wenn der native ACME-Client installiert ist
+letsencrypt_ecertbotport=Die Certbot-Validierung benötigt freien TCP-Port 80, der jedoch bereits von einem anderen Dienst verwendet wird. Beenden Sie diesen Dienst vorübergehend oder verwenden Sie stattdessen Webroot- oder DNS-Validierung.
+letsencrypt_ecertbotwebmin=Die Certbot-Validierung kann nicht verwendet werden, solange Webmin auf TCP-Port 80 lauscht. Verwenden Sie stattdessen die Webroot- oder DNS-Validierung oder wechseln Sie Webmin auf einen anderen Port.
+letsencrypt_enative=Der native ACME-Client (certbot) wurde zuvor auf diesem System verwendet und muss für alle zukünftigen Zertifikatsanforderungen verwendet werden
+letsencrypt_eacmedns=Nur der native ACME-Client unterstützt die DNS-basierte Validierung
+letsencrypt_eacmecertbot=Nur der native ACME-Client unterstützt die Certbot-Validierung

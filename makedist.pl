@@ -1,41 +1,36 @@
 #!/usr/local/bin/perl
 # Builds a tar.gz package of a specified Webmin version
 
-if ($0 =~ /^(.*)\//) {
-	chdir($1);
-	}
-@ARGV == 1 || @ARGV == 2 || @ARGV == 3 || usage();
-if ($ARGV[0] eq "-minimal" || $ARGV[0] eq "--minimal") {
-	$min++;
-	shift(@ARGV);
-	}
-if ($ARGV[0] =~ /^--exclude-modules/) {
-	$exclude_modules = $ARGV[0];
-	shift(@ARGV);
-	}
-if ($ARGV[0] =~ /^--product-type/) {
-	$product_type = $ARGV[0];
-	$product_type =~ s/--product-type=//;
-	if ($product_type =~ /^(minimal|essential)$/) {
-		$product_suff = "-$product_type";
-		$product_pref = "$product_type-";
+# Parse command line options
+$mod_list  = 'full';
+@ARGV = map { /^--\S+\s+/ ? split(/\s+/, $_) : $_ } @ARGV;
+while (@ARGV && $ARGV[0] =~ /^--?/) {
+	my $opt = shift(@ARGV);
+	if ($opt eq '--minimal' || $opt eq '-minimal') {
+		$min = 1;
+		next;
 		}
-	shift(@ARGV);
+	if ($opt eq '--mod-list') {
+		$mod_list = shift(@ARGV) // usage();
+		next;
+		}
+	usage();
 	}
+@ARGV == 1 || usage();
 $fullvers = $ARGV[0];
-$fullvers =~ /^([0-9\.]+)(\-(\d+))?$/ || usage();
-$vers = $1;
-$release = $3;
-$tardir = $min ? "minimal" : "tarballs";
-$vfile = $product_pref ? "$product_pref$fullvers" : $min ? "$fullvers-minimal" : $fullvers;
-$zipdir = "zips";
+$fullvers =~ /^([0-9\.]+)(?:-(\d+))?$/ || usage();
+($vers, $release) = ($1, $2);
+$tardir = $min ? 'minimal' : 'tarballs';
+$vfile  = $min ? "$fullvers-minimal" : $fullvers;
+$zipdir = 'zips';
 $vers || usage();
 
 @files = ("config.cgi", "config-*-linux",
 	  "config-solaris", "images", "index.cgi", "mime.types",
-	  "miniserv.pl", "os_list.txt", "perlpath.pl", "setup.sh", "setup.pl", "setup.bat",
+	  "miniserv.pl", "miniserv-lib.pl", "os_list.txt", "perlpath.pl",
+	  "setup.sh", "setup.pl", "setup.bat",
 	  "setup-repos.sh", "version", "web-lib.pl", "web-lib-funcs.pl",
-	  "config_save.cgi", "chooser.cgi", "miniserv.pem",
+	  "config_save.cgi", "chooser.cgi",
 	  "config-aix", "update-from-repo.sh", "README.md",
 	  "newmods.pl", "copyconfig.pl", "config-hpux", "config-freebsd",
 	  "changepass.pl", "help.cgi", "user_chooser.cgi",
@@ -45,22 +40,23 @@ $vers || usage();
 	  "webmin-systemd", "webmin-init", "webmin-daemon",
 	  "config-openbsd",
 	  "config-macos", "LICENCE",
-	  "session_login.cgi", "acl_security.pl",
-	  "defaultacl", "rpc.cgi", "date_chooser.cgi", "switch_skill.cgi",
+	  "session_login.cgi", "login-lib.pl", "acl_security.pl",
+	  "defaultacl", "rpc.cgi", "date_chooser.cgi",
 	  "safeacl", "install-module.pl", "LICENCE.ja", 
 	  "favicon.ico", "config-netbsd", "fastrpc.cgi",
-	  "defaulttheme", "feedback.cgi", "feedback_form.cgi",
+	  "defaulttheme", "negativeacl",
 	  "javascript-lib.pl", "webmin-pam", "webmin-debian-pam", "maketemp.pl",
 	  "run-uninstalls.pl",
-	  "webmin-gentoo-init", "run-postinstalls.pl",
+	  "webmin-openrc-init", "run-postinstalls.pl",
 	  "config-lib.pl", "entities_map.txt", "ui-lib.pl",
 	  "password_form.cgi", "password_change.cgi", "pam_login.cgi",
-	  "module_chooser.cgi", "config-windows", "xmlrpc.cgi",
+	  "module_chooser.cgi", "config-windows", "xmlrpc.cgi", "xmlrpc-lib.pl",
 	  "uptracker.cgi", "create-module.pl", "webmin_search.cgi",
 	  "webmin-search-lib.pl", "WebminCore.pm",
 	  "record-login.pl", "record-logout.pl", "record-failed.pl",
 	  "robots.txt", "unauthenticated", "bin", "html-editor-lib.pl",
-	  "switch_theme.cgi",
+	  "switch_theme.cgi", "os_eol.json", "forgot_form.cgi",
+	  "forgot_send.cgi", "forgot.cgi",
 	 );
 if ($min) {
 	# Only those required by others
@@ -69,23 +65,26 @@ if ($min) {
 	}
 else {
 	# All the modules
-	my $mod_def_list;
+	my $mods_list;
 	my $curr_dir = $0;
 	($curr_dir) = $curr_dir =~ /^(.+)\/[^\/]+$/;
 	$curr_dir = "." if ($curr_dir !~ /^\//);
-	open(my $fh, '<', "$curr_dir/mod_def_list.txt") || die "Error opening \"mod_def_list.txt\" : $!\n";
-	$mod_def_list = do { local $/; <$fh> };
+	open(my $fh, '<', "$curr_dir/mod_${mod_list}_list.txt") ||
+		die "Error opening \"mod_${mod_list}_list.txt\" : $!\n";
+	$mods_list = do { local $/; <$fh> };
 	close($fh);
-	@mlist = split(/\s+/, $mod_def_list);
-	if ($exclude_modules) {
-		$exclude_modules =~ s/--exclude-modules=//;
-		my @mlist_excluded =
-		    grep { my $f = $_; ! grep $_ eq $f, split(',', $exclude_modules) } @mlist;
-		@mlist = @mlist_excluded;
-		}
+	@mlist = split(/\s+/, $mods_list);
 	}
-@dirlist = ( "vendor_perl" );
 
+# Build EOL data
+if (-r "./webmin/os-eol-lib.pl") {
+	print "Building OS EOL data\n";
+	my $err = system("./os-eol-make.pl");
+	exit(1) if ($err);
+	}
+
+# Prepare dist files
+@dirlist = ( "vendor_perl" );
 $dir = "webmin$product_suff-$vers";
 if (!$release || !-d "$tardir/$dir") {
 	# Copy files into the directory for tarring up, unless this is a minor
@@ -113,8 +112,9 @@ if (!$release || !-d "$tardir/$dir") {
 			next if ($f =~ /^\./ || $f =~ /\.git$/ ||
 				 $f =~ /\.(tar|wbm|wbt)\.gz$/ ||
 				 $f eq "README.md" || $f =~ /^makemodule.*\.pl$/ ||
-				 $f eq "linux.sh" || $f eq "freebsd.sh" || 
-				 $f eq "LICENCE" || $f eq "version");
+			 	 $f eq "linux.sh" || $f eq "freebsd.sh" ||
+				 $f eq "LICENCE" || $f eq "version" ||
+				 (-d "$m/$f" && ($f eq "t" || $f eq "xt")));
 			$flist .= " $m/$f";
 			}
 		closedir(DIR);
@@ -239,7 +239,6 @@ if (-d "/home/jcameron/webmin.com" && (!$release || $release == 1)) {
 		# this is a new full version, so round down to the previous full version
 		$lastvers = sprintf("%.2f0", $vers-0.006);
 		}
-	system("./showchangelog.pl --html $lastvers >/home/jcameron/webmin.com/changes-$vers.html");
 	}
 
 if ($min && !$release) {
@@ -251,12 +250,13 @@ if ($min && !$release) {
 # Fill an associative array with name=value pairs from a file
 sub read_file
 {
-open(ARFILE, $_[0]) || return 0;
+my ($file, $data_hash, $order) = @_;
+open(ARFILE, $file) || return 0;
 while(<ARFILE>) {
         chop;
         if (!/^#/ && /^([^=]+)=(.*)$/) {
-		$_[1]->{$1} = $2;
-		push(@{$_[2]}, $1);
+		$data_hash->{$1} = $2;
+		push(@$order, $1) if ($order);
         	}
         }
 close(ARFILE);
@@ -267,17 +267,25 @@ return 1;
 # Write out the contents of an associative array as name=value lines
 sub write_file
 {
-local($arr);
-$arr = $_[1];
-open(ARFILE, "> $_[0]");
-foreach $k (keys %$arr) {
-        print ARFILE "$k=$$arr{$k}\n";
+my ($file, $data_hash) = @_;
+my (%old, @order);
+&read_file($file, \%old, \@order);
+open(ARFILE, ">$file");
+my %done;
+foreach my $k (@order) {
+	if (exists($data_hash->{$k}) && !$done{$k}++) {
+		print ARFILE $k,"=",$data_hash->{$k},"\n";
+		}
+	}
+foreach $k (keys %$data_hash) {
+	if (!exists($old{$k}) && !$done{$k}++) {
+		print ARFILE $k,"=",$data_hash->{$k},"\n";
+		}
         }
 close(ARFILE);
 }
 
 sub usage
 {
-die "usage: makedist.pl [-minimal] [--exclude-modules] <version>";
+    die "Usage: $0 [--minimal] [--mod-list type] <version>\n";
 }
-

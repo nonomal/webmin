@@ -82,6 +82,32 @@ if (defined(&quota_possible)) {
 return grep { $_->[4] || $_->[6] } @mtab;
 }
 
+=head2 list_btrfs_filesystems
+
+Returns one entry for each mounted Btrfs filesystem when the OS library
+provides the Btrfs quota API. Command availability and quota status are checked
+separately by callers; on systems without the API, this function returns an
+empty list.
+
+=cut
+sub list_btrfs_filesystems
+{
+# The OS-specific library determines whether Btrfs quota operations exist.
+return ( ) if (!defined(&btrfs_quota_status));
+
+# Separately mounted subvolumes share quota state, so keep only the first mount
+# for each underlying source while preserving the original display order.
+my %seen;
+my @filesystems;
+foreach my $fs (&mount::list_mounted()) {
+	next if ($fs->[2] ne "btrfs");
+	(my $source = $fs->[1]) =~ s/\[[^\]]*\]$//;
+	next if ($seen{$source}++);
+	push(@filesystems, $fs);
+	}
+return @filesystems;
+}
+
 =head2 parse_options(type, options)
 
 Convert an options string for some filesystem into the global hash %options.
@@ -412,6 +438,20 @@ foreach $fs (split(/\s+/, $access{'filesys'})) {
 return 0;
 }
 
+=head2 can_edit_btrfs_filesys(filesys)
+
+Returns 1 if the current Webmin user can manage Btrfs quotas. Btrfs quota state
+and qgroup IDs belong to the whole underlying filesystem, so a mount-path ACL
+cannot safely confine access to one separately mounted subvolume.
+
+=cut
+sub can_edit_btrfs_filesys
+{
+my ($filesys) = @_;
+return 0 if (!&can_edit_filesys($filesys));
+return scalar(grep { $_ eq "*" } split(/\s+/, $access{'filesys'})) ? 1 : 0;
+}
+
 =head2 can_edit_user(user)
 
 Returns 1 if the current Webmin user can manage quotas for some Unix user.
@@ -508,25 +548,31 @@ returned by this function before display to users.
 =cut
 sub block_size
 {
+my ($dir, $forfs) = @_;
+$forfs ||= 0;
 return undef if (!$config{'block_mode'});
 return undef if (!defined(&quota_block_size) &&
 		 !defined(&fs_block_size));
-local @mounts = &mount::list_mounted();
-local ($mount) = grep { $_->[0] eq $_[0] } @mounts;
-if ($mount) {
-	if ($_[1]) {
-		return &fs_block_size(@$mount);
-		}
-	else {
-		if (defined(&quota_block_size)) {
-			return &quota_block_size(@$mount);
+if (!exists($block_size_cache{$dir,$forfs})) {
+	my @mounts = &mount::list_mounted();
+	my ($mount) = grep { $_->[0] eq $dir } @mounts;
+	my $rv = undef;
+	if ($mount) {
+		if ($forfs) {
+			$rv = &fs_block_size(@$mount);
 			}
 		else {
-			return &fs_block_size(@$mount);
+			if (defined(&quota_block_size)) {
+				$rv = &quota_block_size(@$mount);
+				}
+			else {
+				$rv = &fs_block_size(@$mount);
+				}
 			}
 		}
+	$block_size_cache{$dir,$forfs} = $rv;
 	}
-return undef;
+return $block_size_cache{$dir,$forfs};
 }
 
 =head2 nice_limit(amount, bsize, no-blocks)

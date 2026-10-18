@@ -93,9 +93,18 @@ if ($current_lang_info->{'rtl'} || $current_lang eq "ar") {
 	$fscols = "*,$cols";
 	}
 
-# Page header
-print "<html>\n";
+# The frameset declares the scheme inherited by its frames. The script keeps
+# an automatic scheme stable across reloads and provides the per-tab Alt+T
+# toggle and Alt+R content-frame reload. The stylesheet paints the background
+# behind frames while they load.
+$scheme = &theme_color_scheme();
+print "<html".($scheme ? " data-scheme='$scheme'" : "").">\n";
 print "<head>\n";
+print "<meta name='color-scheme' content='".($scheme || "light dark")."'>\n";
+print &theme_scheme_script($scheme);
+print "<link rel='stylesheet' type='text/css' href='".&get_webprefix().
+      "/unauthenticated/gray-theme.css?".
+      &theme_asset_key("gray-theme.css")."'>\n";
 print &ui_switch_theme_javascript();
 print "<title>$title</title>\n";
 my $imgdir = "@{[&get_webprefix()]}/images";

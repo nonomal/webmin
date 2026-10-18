@@ -15,6 +15,8 @@ Example code:
 ##use warnings;
 use Socket;
 use POSIX;
+use IO::Handle;
+use bytes ();
 use feature 'state';
 eval "use Socket6";
 $ipv6_module_error = $@;
@@ -22,8 +24,7 @@ our $error_handler_funcs = [ ];
 
 use vars qw($loaded_theme_library $wait_for_input
 	    $done_webmin_header $trust_unknown_referers $unsafe_index_cgi
-	    %done_foreign_require $webmin_feedback_address
-	    $pragma_no_cache $foreign_args);
+	    %done_foreign_require $pragma_no_cache $foreign_args);
 # Globals
 use vars qw($module_index_name $number_to_month_map $month_to_number_map
 	    $umask_already $default_charset $licence_status $os_type
@@ -123,13 +124,14 @@ my @st = stat($realfile);
 if ($t && $st[9] != $t) {
 	# Changed, invalidate cache
 	delete($main::read_file_cache{$realfile});
+	delete($main::read_file_missing{$realfile});
 	}
 my $rv = &read_file_cached(@_);
 $main::read_file_cache_time{$realfile} = $st[9];
 return $rv;
 }
 
-=head2 write_file(file, &data-hash, [join-char], [sort], [sorted-by], [sorted-by-preserved])
+=head2 write_file(file, &data-hash, [join], [sort])
 
 Write out the contents of a hash as name=value lines. The parameters are :
 
@@ -137,47 +139,41 @@ Write out the contents of a hash as name=value lines. The parameters are :
 
 =item data-hash - A hash reference containing names and values to output
 
-=item join-char - If given, names and values are separated by this instead of =
+=item join - If given, names and values are separated by this instead of =
 
 =item sort - If given, passed hash reference will be sorted by its keys
-
-=item sorted-by - If given, passed as full path to a file, will use its content to sort the keys
-
-=item sorted-by-sectioning-preserved - If sorted-by is used, then preserve the sectioning (line-breaks), and section comment as in hash reference
 
 =cut
 sub write_file
 {
-my ($file, 
-    $data_hash,
-    $join_char,
-    $sort,
-    $sorted_by,
-    $sorted_by_sectioning_preserved) = @_;
+my ($file, $data_hash, $join, $sort) = @_;
 my (%old, @order);
-my $join = defined($join_char) ? $join_char : "=";
+$join //= "=";
 my $realfile = &translate_filename($file);
-&read_file($sorted_by || $file, \%old, \@order);
+&read_file($file, \%old, \@order);
 &open_tempfile(ARFILE, ">$file");
 if ($sort || $gconfig{'sortconfigs'}) {
 	# Always sort by keys
-	foreach $k (sort keys %{$data_hash}) {
-		(print ARFILE $k,$join,$data_hash->{$k},"\n") ||
+	foreach my $k (sort keys %{$data_hash}) {
+		my $v = &write_file_cleanup($data_hash->{$k});
+		(print ARFILE $k,$join,$v,"\n") ||
 			&error(&text("efilewrite", $realfile, $!));
 		}
 	}
 else {
 	# Where possible, write out in the original order
 	my %done;
-	foreach $k (@order) {
+	foreach my $k (@order) {
 		if (exists($data_hash->{$k}) && !$done{$k}++) {
-			(print ARFILE $k,$join,$data_hash->{$k},"\n") ||
+			my $v = &write_file_cleanup($data_hash->{$k});
+			(print ARFILE $k,$join,$v,"\n") ||
 				&error(&text("efilewrite", $realfile, $!));
 			}
 		}
-	foreach $k (keys %{$data_hash}) {
+	foreach my $k (keys %{$data_hash}) {
 		if (!exists($old{$k}) && !$done{$k}++) {
-			(print ARFILE $k,$join,$data_hash->{$k},"\n") ||
+			my $v = &write_file_cleanup($data_hash->{$k});
+			(print ARFILE $k,$join,$v,"\n") ||
 				&error(&text("efilewrite", $realfile, $!));
 			}
 		}
@@ -186,60 +182,111 @@ else {
 
 # Update in-memory caches
 if (defined($main::read_file_cache{$realfile})) {
-    %{$main::read_file_cache{$realfile}} = %{$data_hash};
-    }
+	%{$main::read_file_cache{$realfile}} = %{$data_hash};
+	}
 if (defined($main::read_file_missing{$realfile})) {
-    $main::read_file_missing{$realfile} = 0;
-    }
+	$main::read_file_missing{$realfile} = 0;
+	}
+}
 
-if ($sorted_by && $sorted_by_sectioning_preserved) {
-	my $target = read_file_contents($file);
-	my $model = read_file_contents($sorted_by);
+=head2 write_file_cleanup(value)
 
-	# Extract version related comments for a block, e.g. #1.962
-	my %comments = reverse ($model =~ m/(#\s*[\d\.]+)[\n\s]+(.*?)=/gm);
+Removes newline and any characters after it from a value to be written to
+a data file by write_file.
 
+=cut
+sub write_file_cleanup
+{
+my ($v) = @_;
+$v =~ s/\n[\000-\377]*$//;
+return $v;
+}
+
+=head2 sort_file_by(file, sorted-by-file, [join])
+
+Handles sorting of keys in one file based on another preserving
+line-breaks and comments.
+
+For example, used for one language file (i.e. en) to sort another language
+file (i.e. de) preserving comments and line-breaks.
+
+=item file - Full path to target file write to
+
+=item sorted-by-file - Full path to a file to use for sorting preserving line-breaks and comments
+
+=item join - If given, names and values are separated by this instead of =
+
+=cut
+sub sort_file_by
+{
+my ($file, $sorted_by_file, $join) = @_;
+$join //= "=";
+
+# Sort all the lines in the target file first
+my (%data_target, %data_source, @data_order, %keys_checked);
+my $fh = 'file';
+&read_file($file, \%data_target);
+&read_file($sorted_by_file, \%data_source, \@data_order);
+&open_tempfile($fh, ">$file");
+my $realfile = &translate_filename($file);
+foreach (@data_order) {
+	(print $fh $_,$join,$data_target{$_},"\n") ||
+		&error(&text("efilewrite", $realfile, $!))
+			if (exists($data_target{$_}) && !$keys_checked{$_}++);
+	}
+foreach (keys %data_target) {
+	(print $fh $_,$join,$data_target{$_},"\n") ||
+		&error(&text("efilewrite", $realfile, $!))
+			if (!exists($data_source{$_}) && !$keys_checked{$_}++);
+	}
+&close_tempfile($fh, %data_target ? 1 : 0);
+%{$main::read_file_cache{$realfile}} = %data_target
+	if (defined($main::read_file_cache{$realfile}));
+
+# Preserve comments and line-breaks
+my $target_data = read_file_contents($file);
+my $model_data = read_file_contents($sorted_by_file);
+my %comments = reverse ($model_data =~ m/(#\s*[\d\.]+)[\n\s]+(.*?)=/gm);
+my @lines = (($model_data =~ m/(.*?)$join|(^\s*$)/gm), undef, undef);
+my @blocks;
+my @block;
+for (my $line = 0; $line < scalar(@lines) - 1; $line += 2) {
 	# Build blocks of line's key separated with a new line break
-	my @lines = (($model =~ m/(.*?)$join|(^\s*$)/gm), undef, undef);
-	my @blocks;
-	my @block;
-	for (my $line = 0; $line < scalar(@lines) - 1; $line += 2) {
-		if ($lines[$line] =~ /\S+/) {
-			push(@block, $lines[$line]);
-			}
-		else {
-			push(@blocks, [@block]);
-			@block = ();
-			}
+	if ($lines[$line] =~ /\S+/) {
+		push(@block, $lines[$line]);
 		}
-	for (my $block = 0; $block <= scalar(@blocks) - 1; $block++) {
-		foreach my $line (@{$blocks[$block]}) {
-			# Add a comment to the first block element
-			if ($target =~ /(\Q$line\E)=(.*)/) {
-				foreach my $comment (keys %comments) {
-					if (grep(/^\Q$comment\E$/, @{$blocks[$block]})) {
-						$target =~ s/(\Q$line\E)=(.*)/$comments{$comment}\n$1=$2/;
-						last;
-					}
+	else {
+		push(@blocks, [@block]);
+		@block = ();
+		}
+	}
+for (my $block = 0; $block <= scalar(@blocks) - 1; $block++) {
+	foreach my $line (@{$blocks[$block]}) {
+		# Add a comment to the first block element
+		if ($target_data =~ /(\Q$line\E)=(.*)/) {
+			foreach my $comment (keys %comments) {
+				if (grep(/^\Q$comment\E$/, @{$blocks[$block]})) {
+					$target_data =~ s/(\Q$line\E)=(.*)/$comments{$comment}\n$1=$2/;
+					last;
 				}
+			}
+		last;
+		}
+	}
+	foreach my $line (reverse @{$blocks[$block]}) {
+		if (
+			# Go to another block immediately
+			# if new line already exists
+			$target_data =~ /(\Q$line\E)$join.*?(\r?\n|\r\n?)+$/m ||
+
+			# Add new line to the last element of
+			# the block and go to another block
+			$target_data =~ s/(\Q$line\E)$join(.*)/$1=$2\n/) {
 			last;
 			}
 		}
-		foreach my $line (reverse @{$blocks[$block]}) {
-			if (
-			    # Go to another block immediately
-			    # if new line already exists
-			    $target =~ /(\Q$line\E)$join.*?(\r?\n|\r\n?)+$/m ||
-
-			    # Add new line to the last element of
-			    # the block and go to another block
-			    $target =~ s/(\Q$line\E)$join(.*)/$1=$2\n/) {
-				last;
-				}
-			}
-		}
-		&write_file_contents($file, $target);
 	}
+&write_file_contents($file, $target_data);
 }
 
 =head2 html_escape(string, [no-double-amp-escape])
@@ -256,7 +303,7 @@ if (!defined $tmp) {
 	};
 # Before escaping ampersand use negative lookahead to see if occurrence
 # is not an HTML entity already to prevent double escaping (optionally)
-$tmp =~ s/&(?!(([a-zA-Z]+)|(#|#x)\d+);)/&amp;/g if ($nodblamp);
+$tmp =~ s/&(?!([a-zA-Z]+|#\d+|#[xX][0-9A-Fa-f]+);)/&amp;/g if ($nodblamp);
 # Always escape all ampersands by default
 # to make sure they are displayed per se
 $tmp =~ s/&/&amp;/g if (!$nodblamp);
@@ -329,6 +376,33 @@ $tmp =~ s/\'/&#39;/g if (!$only || $only eq "'");
 return $tmp;
 }
 
+=head2 quote_literal_escape(string, [quote-char])
+
+Escapes a string for safe inclusion in a Perl string literal. By default,
+escapes for single-quoted strings. If quote-char is C<">, escapes for
+double-quoted strings too.
+
+=cut
+sub quote_literal_escape
+{
+my ($str, $quote) = @_;
+return '' if (!defined($str));
+$quote ||= "'";
+
+# Backslashes are escape leaders in both literal types
+$str =~ s/\\/\\\\/g;
+if ($quote eq '"') {
+	# Double-quoted Perl strings also interpolate sigils
+	$str =~ s/"/\\"/g;
+	$str =~ s/\$/\\\$/g;
+	$str =~ s/\@/\\\@/g;
+	}
+else {
+	$str =~ s/'/\\'/g;
+	}
+return $str;
+}
+
 =head2 quote_javascript(string)
 
 Quote all characters that are unsafe for inclusion in javascript strings in HTML
@@ -339,6 +413,108 @@ sub quote_javascript
 my ($str) = @_;
 $str =~ s/["'<>&\\]/sprintf('\x%02x', ord $&)/ge;
 return $str;
+}
+
+=head2 tempname_dir_sys()
+
+Returns a shared base directory for system-wide temporary files. This directory
+does not depend on the current user. The directory is chosen once per process
+and verified by creating a temporary probe file.
+
+The result is cached for the lifetime of the current Perl process.
+
+=cut
+sub tempname_dir_sys
+{
+# Cache per module
+state %base;
+my @can_dirs;
+
+# Return cached value if already determined
+my $mod = &get_module_name() || '';
+return $base{$mod} if (defined $base{$mod});
+
+# Check configured system temp dirs (module override first)
+my $modk = $mod ? "tempdir_sys_$mod" : undef;
+push(@can_dirs, $gconfig{$modk}) if ($modk && $gconfig{$modk});
+push(@can_dirs, $gconfig{'tempdir_sys'}) if ($gconfig{'tempdir_sys'});
+
+# Common fallbacks
+push(@can_dirs, "/dev/shm", "/tmp", "/var/tmp", "/usr/tmp");
+
+# Remove duplicate entries, which can happen when both configured dirs are set
+# to the same path, or when a configured path matches one of the built-in
+# defaults
+@can_dirs = &unique(@can_dirs);
+
+# Test each candidate in turn
+for my $dir (@can_dirs) {
+	next if (!-d $dir);
+	next if (!-w $dir);
+
+	# Confirm we can actually create a file
+	my $tmp = "$dir/.webmin_${$}_".int(rand(1e16));
+	if (open(my $fh, ">", $tmp)) {
+		close($fh);
+		unlink($tmp);
+		$base{$mod} = $dir;	# Success, cache and return
+		return $base{$mod};
+		}
+	}
+
+my $keys = ($modk && $gconfig{$modk}) ? "$modk or tempdir_sys" : "tempdir_sys";
+&error("No usable system temp directory found. Set $keys to a writable ".
+       "directory in $config_directory/config and try again.");
+}
+
+=head2 webmin_temp_dir_name()
+
+Returns the final directory name used for Webmin-private temp directories.
+This defaults to .webmin, and can be changed with the hidden tempdirname
+configuration option.
+
+=cut
+sub webmin_temp_dir_name
+{
+my $name = $gconfig{'tempdirname'} || ".webmin";
+$name =~ s/^\s+//;
+$name =~ s/\s+$//;
+return $name =~ /^[^\/\\]+$/ && $name ne "." && $name ne ".." ?
+	$name : ".webmin";
+}
+
+=head2 webmin_temp_dir_path(path)
+
+Returns a temporary directory path ending in the configured Webmin-private
+directory name.
+
+=cut
+sub webmin_temp_dir_path
+{
+my ($dir) = @_;
+my $name = &webmin_temp_dir_name();
+return $dir if (!defined($dir) || $dir eq "");
+if ($gconfig{'os_type'} eq 'windows' || $dir =~ /^[a-z]:/i) {
+	my $slash = $dir =~ /\// && $dir !~ /\\/ ? "/" : "\\";
+	$dir =~ s/[\/\\]+$// if ($dir !~ /^[a-z]:[\/\\]?$/i);
+	return $dir if ($dir =~ /[\/\\]\Q$name\E$/);
+	return $dir =~ /^[a-z]:[\/\\]?$/i ? "$dir$name" :
+	       "$dir$slash$name";
+	}
+$dir =~ s/\/+$// if ($dir ne "/");
+return $dir if ($dir =~ /(^|\/)\Q$name\E$/);
+return $dir eq "/" ? "/$name" : "$dir/$name";
+}
+
+=head2 default_webmin_temp_dir()
+
+Returns the built-in Webmin temporary directory path used when no tempdir
+configuration or environment override is set.
+
+=cut
+sub default_webmin_temp_dir
+{
+return -d "c:/temp" ? "c:/temp" : "/tmp/".&webmin_temp_dir_name();
 }
 
 =head2 tempname_dir()
@@ -353,7 +529,7 @@ my $tmp_base = $gconfig{'tempdir_'.&get_module_name()} ?
 		  $gconfig{'tempdir'} ? $gconfig{'tempdir'} :
 		  $ENV{'TEMP'} && $ENV{'TEMP'} ne "/tmp" ? $ENV{'TEMP'} :
 		  $ENV{'TMP'} && $ENV{'TMP'} ne "/tmp" ? $ENV{'TMP'} :
-		  -d "c:/temp" ? "c:/temp" : "/tmp/.webmin";
+		  &default_webmin_temp_dir();
 my $tmp_dir;
 if (@remote_user_info && -d $remote_user_info[7] &&
     -w $remote_user_info[7] && !$gconfig{'nohometemp'}) {
@@ -379,9 +555,9 @@ return $tmp_dir;
 
 =head2 tempname([filename])
 
-Returns a mostly random temporary file name, typically under the /tmp/.webmin
-directory. If filename is given, this will be the base name used. Otherwise
-a unique name is selected randomly.
+Returns a mostly random temporary file name, typically under Webmin's default
+temp directory. If filename is given, this will be the base name used.
+Otherwise a unique name is selected randomly.
 
 =cut
 sub tempname
@@ -397,14 +573,18 @@ if ($gconfig{'os_type'} eq 'windows' || $tmp_dir =~ /^[a-z]:/i) {
 	}
 else {
 	# On Unix systems, need to make sure temp dir is valid
-	if ($tmp_dir ne "/tmp") {
+	if ($tmp_dir ne "/dev/shm" && $tmp_dir ne "/tmp" &&
+	    $tmp_dir ne "/var/tmp" && $tmp_dir ne "/usr/tmp") {
 		my $tries = 0;
 		my $mkdirerr;
 		while($tries++ < 10) {
 			my @st = lstat($tmp_dir);
-			last if ($st[4] == $< && (-d _) &&
-				 ($st[2] & 0777) == 0755);
 			if (@st) {
+				my $mode = $st[2] & 07777;
+				# Accept only Webmin-private dirs here. Shared
+				# system temp roots are skipped above.
+				last if ($st[4] == $< && (-d _) &&
+					 $mode == 0755);
 				unlink($tmp_dir) || rmdir($tmp_dir) ||
 					system("/bin/rm -rf ".
 					       quotemeta($tmp_dir));
@@ -423,14 +603,15 @@ else {
 			       $tmp_dir.$mkdirerr);
 			}
 		}
-	# If running as root, check parent dir (usually /tmp) to make sure it's
-	# world-writable and owned by root
+	# If running as root, check parent dir (usually /tmp) to make sure it
+	# is searchable by group and others.
 	my $tmp_parent = $tmp_dir;
 	$tmp_parent =~ s/\/[^\/]+$//;
 	if ($tmp_parent eq "/tmp") {
 		my @st = stat($tmp_parent);
-		if (($st[2] & 0555) != 0555) {
-			&error("Base temp directory $tmp_parent is not world readable and listable");
+		if (($st[2] & 0011) != 0011) {
+			&error("Base temp directory $tmp_parent must be ".
+			       "group and other executable");
 			}
 		}
 	}
@@ -488,11 +669,14 @@ sub trunc
 if (length($_[0]) <= $_[1]) {
 	return $_[0];
 	}
-my $str = substr($_[0],0,$_[1]);
-my $c;
-do {
-	$c = chop($str);
-	} while($c !~ /\S/);
+my $str = substr($_[0], 0, $_[1]);
+# If the cut landed inside a word (next char in the original is
+# non-whitespace), back the partial word out — but only when there's
+# a word boundary inside $str to back up to. If the first word is
+# longer than maxlen, return that partial word rather than empty.
+if (substr($_[0], $_[1], 1) =~ /\S/ && $str =~ /\s/) {
+	$str =~ s/\S+$//;
+	}
 $str =~ s/\s+$//;
 return $str;
 }
@@ -557,37 +741,224 @@ Check if some IPv6 address is properly formatted, and returns 1 if so.
 =cut
 sub check_ip6address
 {
-  my @blocks = split(/:/, $_[0]);
-  return 0 if (@blocks == 0 || @blocks > 8);
+my $addr = $_[0];
+my $m = 0;
 
-  # The address/netmask format is accepted. So we're looking for a "/" to isolate a possible netmask.
-  # After that, we delete the netmask to control the address only format, but we verify whether the netmask
-  # value is in [0;128].
-  my $ib = $#blocks;
-  my $where = index($blocks[$ib],"/");
-  my $m = 0;
-  if ($where != -1) {
-    my $b = substr($blocks[$ib],0,$where);
-    $m = substr($blocks[$ib],$where+1,length($blocks[$ib])-($where+1));
-    $blocks[$ib]=$b;
-  }
+# Strip an optional /N netmask before splitting. Doing this on the
+# raw string (rather than from the last split element) keeps split()'s
+# trailing-empty accounting intact for inputs like "2001:db8::/32",
+# where the netmask would otherwise hide the trailing "::" shorthand.
+if ($addr =~ s{/(\d+)\z}{}) {
+	$m = $1;
+	}
+return 0 if ($m < 0 || $m > 128);
 
-  # The netmask must take its value in [0;128]
-  return 0 if ($m <0 || $m >128);
+# Special case for unspecified address (analogous to 0.0.0.0 in IPv4),
+# both bare and with a netmask.
+return 1 if ($addr eq "::");
 
-  # Check the different blocks of the address : 16 bits block in hexa notation.
-  # Possibility of 1 empty block or 2 if the address begins with "::".
-  my $b;
-  my $empty = 0;
-  foreach $b (@blocks) {
-	  return 0 if ($b ne "" && $b !~ /^[0-9a-f]{1,4}$/i);
-	  $empty++ if ($b eq "");
-	  }
-  return 0 if ($empty > 1 && !($_[0] =~ /^::/ && $empty == 2));
-  return 1;
+my @blocks = split(/:/, $addr);
+return 0 if (@blocks == 0);
+
+# Accept the IPv4-in-IPv6 forms (RFC 4291 §2.5.5: "::ffff:N.N.N.N"
+# IPv4-mapped, and the more general "X:X:X:X:X:X:N.N.N.N"). If the
+# last block is a dotted-quad, validate the octets and count it as two
+# 16-bit groups for the overall 8-group ceiling. The leading ":" guard
+# distinguishes IPv4-tailed IPv6 from a bare IPv4 address — callers
+# like ip_match() rely on this sub returning false for "10.0.0.1".
+my $count = scalar(@blocks);
+if ($addr =~ /:/ &&
+    $blocks[-1] =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)\z/) {
+	return 0 if ($1 > 255 || $2 > 255 || $3 > 255 || $4 > 255);
+	$count++;
+	pop(@blocks);
+	}
+return 0 if ($count > 8);
+
+# Check the different blocks of the address : 16 bits block in hexa notation.
+# Possibility of 1 empty block or 2 if the address begins with "::".
+my $empty = 0;
+foreach my $b (@blocks) {
+	return 0 if ($b ne "" && $b !~ /^[0-9a-f]{1,4}$/i);
+	$empty++ if ($b eq "");
+	}
+return 0 if ($empty > 1 && !($addr =~ /^::/ && $empty == 2));
+return 1;
 }
 
+=head2 is_non_public_ipaddress(ip)
 
+Returns 1 if an IP is non-public (private, local, link-local, reserved,
+multicast), otherwise 0.
+
+=cut
+sub is_non_public_ipaddress
+{
+my ($ip) = @_;
+if (&check_ipaddress($ip)) {
+	my @o = split(/\./, $ip);
+	return 1 if ($o[0] == 0 || $o[0] == 10 || $o[0] == 127);
+	return 1 if ($o[0] == 169 && $o[1] == 254);
+	return 1 if ($o[0] == 172 && $o[1] >= 16 && $o[1] <= 31);
+	return 1 if ($o[0] == 192 && $o[1] == 168);
+	return 1 if ($o[0] == 192 && $o[1] == 0 &&
+		     ($o[2] == 0 || $o[2] == 2));
+	return 1 if ($o[0] == 192 && $o[1] == 88 && $o[2] == 99);
+	return 1 if ($o[0] == 100 && $o[1] >= 64 && $o[1] <= 127);
+	return 1 if ($o[0] == 198 && ($o[1] == 18 || $o[1] == 19));
+	return 1 if ($o[0] == 198 && $o[1] == 51 && $o[2] == 100);
+	return 1 if ($o[0] == 203 && $o[1] == 0 && $o[2] == 113);
+	return 1 if ($o[0] >= 224);
+	}
+elsif (&check_ip6address($ip)) {
+	my $l = lc($ip);
+	$l =~ s{/\d+$}{};
+	return 1 if ($l eq "::1" || $l eq "::");
+	return 1 if ($l =~ /^fe[89ab]/);
+	return 1 if ($l =~ /^fe[c-f]/);
+	return 1 if ($l =~ /^f[cd]/);
+	return 1 if ($l =~ /^ff/);
+	my $packed = eval { inet_pton(AF_INET6(), $l) };
+	if (defined($packed) &&
+	    substr($packed, 0, 12) eq pack("H*", "0064ff9b0000000000000000")) {
+		my $ip4 = join(".", unpack("C4", substr($packed, 12, 4)));
+		return &is_non_public_ipaddress($ip4);
+		}
+	if (defined($packed) && substr($packed, 0, 2) eq "\x20\x02") {
+		my $ip4 = join(".", unpack("C4", substr($packed, 2, 4)));
+		return &is_non_public_ipaddress($ip4);
+		}
+	return 1 if (&ipaddress_matches_network($l, "64:ff9b:1::/48"));
+	return 1 if (&ipaddress_matches_network($l, "100::/64"));
+	return 1 if (&ipaddress_matches_network($l, "2001:db8::/32"));
+	if (defined($packed) &&
+	    (substr($packed, 0, 12) eq "\0" x 12 ||
+	     substr($packed, 0, 10) eq "\0" x 10 &&
+	     substr($packed, 10, 2) eq "\xff" x 2)) {
+		my $ip4 = join(".", unpack("C4", substr($packed, 12, 4)));
+		return &is_non_public_ipaddress($ip4);
+		}
+	}
+return 0;
+}
+
+=head2 ipaddress_matches_network(ip, address-or-network)
+
+Returns 1 if an IPv4 or IPv6 address matches an exact address or CIDR network.
+
+=cut
+sub ipaddress_matches_network
+{
+my ($ip, $network) = @_;
+return 0 if (!defined($ip) || !defined($network));
+$network =~ s/^\s+|\s+$//g;
+my ($base, $prefix) = split(/\//, $network, 2);
+my ($family, $bits);
+# Permit an IPv4 exception to match the equivalent mapped IPv6 destination.
+if (&check_ip6address($ip) && &check_ipaddress($base)) {
+	my $packed = eval { inet_pton(AF_INET6(), $ip) };
+	if (defined($packed) &&
+	    (substr($packed, 0, 12) eq "\0" x 12 ||
+	     substr($packed, 0, 10) eq "\0" x 10 &&
+	     substr($packed, 10, 2) eq "\xff" x 2)) {
+		my $ip4 = join(".", unpack("C4", substr($packed, 12, 4)));
+		return &ipaddress_matches_network(
+			$ip4, $base.(defined($prefix) ? "/$prefix" : ""));
+		}
+	}
+if (&check_ipaddress($ip) && &check_ipaddress($base)) {
+	$family = AF_INET();
+	$bits = 32;
+	}
+elsif (&check_ip6address($ip) && &check_ip6address($base)) {
+	$family = eval { AF_INET6() };
+	return 0 if (!defined($family));
+	$bits = 128;
+	}
+else {
+	return 0;
+	}
+$prefix = $bits if (!defined($prefix));
+return 0 if ($prefix !~ /^\d+$/ || $prefix > $bits);
+my ($packed_ip, $packed_base);
+if ($family == AF_INET()) {
+	$packed_ip = inet_aton($ip);
+	$packed_base = inet_aton($base);
+	}
+else {
+	$packed_ip = eval { inet_pton($family, $ip) };
+	$packed_base = eval { inet_pton($family, $base) };
+	}
+return 0 if (!defined($packed_ip) || !defined($packed_base));
+my $bytes = int($prefix / 8);
+return 0 if (substr($packed_ip, 0, $bytes) ne
+		     substr($packed_base, 0, $bytes));
+my $remaining = $prefix % 8;
+if ($remaining) {
+	my $mask = (0xff << (8-$remaining)) & 0xff;
+	return 0 if ((ord(substr($packed_ip, $bytes, 1)) & $mask) !=
+		     (ord(substr($packed_base, $bytes, 1)) & $mask));
+	}
+return 1;
+}
+
+=head2 get_download_address_callback(mode, [allowed-addresses])
+
+Returns a callback for checking resolved download addresses against a policy.
+The mode can be "public", "listed" or "all". In listed mode, non-public
+addresses are allowed when they match a whitespace-separated list of IP
+addresses or CIDR networks. Returns undef when no checks are required.
+
+=cut
+sub get_download_address_callback
+{
+my ($mode, $allowed) = @_;
+return undef if (!defined($mode) || $mode eq "all");
+$mode = 'public' if ($mode ne 'listed');
+
+return sub {
+	my ($host, $addresses) = @_;
+	foreach my $ip (@$addresses) {
+		next if (!&is_non_public_ipaddress($ip));
+		if ($mode eq 'listed') {
+			my $matched = 0;
+			foreach my $network (split(/\s+/, $allowed || "")) {
+				if (&ipaddress_matches_network($ip, $network)) {
+					$matched = 1;
+					last;
+					}
+				}
+			next if ($matched);
+			}
+		return "Download from non-public IP address $ip is not allowed";
+		}
+	return undef;
+	};
+}
+
+=head2 check_download_address(host, [&callback], [&resolved-addresses])
+
+Resolves a download hostname and passes the resulting IP addresses to an
+optional callback. The callback receives the hostname and an array reference
+of addresses, and returns an error message to reject them or undef to allow
+them. Returns an error message when resolution or validation fails. If the
+resolved-addresses array reference is set, it is populated with the checked
+addresses.
+
+=cut
+sub check_download_address
+{
+my ($host, $callback, $resolved_addresses) = @_;
+my @addresses = &to_ipaddress($host);
+push(@addresses, &to_ip6address($host));
+return "Failed to lookup IP address for $host" if (!@addresses);
+if ($callback) {
+	my $error = &$callback($host, \@addresses);
+	return $error if ($error);
+	}
+@$resolved_addresses = @addresses if ($resolved_addresses);
+return undef;
+}
 
 =head2 generate_icon(image, title, link, [href], [width], [height], [before-title], [after-title])
 
@@ -702,7 +1073,39 @@ while(read($in, $buf, $bs) > 0) {
 return 1;
 }
 
-=head2 ReadParseMime([maximum], [&cbfunc, &cbargs], [array-mode])
+=head2 copydata_len(in-handle, out-handle|&writer, length, [buffer-size])
+
+Read a fixed number of bytes from one file handle and write them to another,
+or pass each chunk to a writer function. The writer must synchronously consume
+the entire chunk and return true on success. Returns the number of bytes
+copied, or undef if a read or write fails.
+
+=cut
+sub copydata_len
+{
+my ($in, $out, $len, $bs) = @_;
+$in = &callers_package($in);
+$out = &callers_package($out) if (ref($out) ne 'CODE');
+$bs ||= &get_buffer_size();
+my $got = 0;
+while($got < $len) {
+	my $want = $len - $got;
+	$want = $bs if ($want > $bs);
+	my $buf;
+	my $r = read($in, $buf, $want);
+	if (!defined($r)) {
+		next if ($!{'EINTR'});
+		return undef;
+		}
+	last if (!$r);
+	my $ok = ref($out) eq 'CODE' ? &$out($buf) : print $out $buf;
+	return undef if (!$ok);
+	$got += $r;
+	}
+return $got;
+}
+
+=head2 ReadParseMime([maximum], [&cbfunc, &cbargs], [array-mode], [&direct-write])
 
 Read data submitted via a POST request using the multipart/form-data coding,
 and store it in the global %in hash. The optional parameters are :
@@ -715,10 +1118,13 @@ and store it in the global %in hash. The optional parameters are :
 
 =item array-mode - If set to 1, values in %in are arrays. If set to 0, multiple values are joined with \0. If set to 2, only the first value is used.
 
+=item direct-dir - If given write file directly to disk temp given directory
+
 =cut
 sub ReadParseMime
 {
-my ($max, $cbfunc, $cbargs, $arrays) = @_;
+my ($max, $cbfunc, $cbargs, $arrays, $direct_dir) = @_;
+$cbargs ||= [ ];
 my ($boundary, $line, $name, $got, $file, $count_lines, $max_lines);
 my $err = &text('readparse_max', $max);
 $ENV{'CONTENT_TYPE'} =~ /boundary=(.*)$/ || &error($text{'readparse_enc'});
@@ -726,6 +1132,7 @@ if ($ENV{'CONTENT_LENGTH'} && $max && $ENV{'CONTENT_LENGTH'} > $max) {
 	&error($err);
 	}
 &$cbfunc(0, $ENV{'CONTENT_LENGTH'}, $file, @$cbargs) if ($cbfunc);
+$got = 0;
 $boundary = $1;
 $count_lines = 0;
 $max_lines = 1000;
@@ -734,10 +1141,12 @@ while(1) {
 	$name = "";
 	# Read section headers
 	my $lastheader;
+	my %header;
 	while(1) {
 		$line = <STDIN>;
 		$got += length($line);
-		&$cbfunc($got, $ENV{'CONTENT_LENGTH'}, @$cbargs) if ($cbfunc);
+		&$cbfunc($got, $ENV{'CONTENT_LENGTH'}, $file, @$cbargs)
+			if ($cbfunc);
 		if ($max && $got > $max) {
 			&error($err)
 			}
@@ -746,15 +1155,16 @@ while(1) {
 		if ($line =~ /^(\S+):\s*(.*)$/) {
 			$header{$lastheader = lc($1)} = $2;
 			}
-		elsif ($line =~ /^\s+(.*)$/) {
-			$header{$lastheader} .= $line;
+		elsif ($lastheader && $line =~ /^\s+(.*)$/) {
+			$header{$lastheader} .= $1;
 			}
 		}
 
 	# Parse out filename and type
-	my $file;
-	if ($header{'content-disposition'} =~ /^form-data(.*)/) {
-		$rest = $1;
+	$file = undef;
+	if ($header{'content-disposition'} &&
+	    $header{'content-disposition'} =~ /^form-data(.*)/) {
+		my $rest = $1;
 		while ($rest =~ /([a-zA-Z]*)=\"([^\"]*)\"(.*)/) {
 			if ($1 eq 'name') {
 				$name = $2;
@@ -785,7 +1195,8 @@ while(1) {
 		}
 
 	# Save content type separately
-	if ($header{'content-type'} =~ /^([^\s;]+)/) {
+	if ($header{'content-type'} &&
+	    $header{'content-type'} =~ /^([^\s;]+)/) {
 		my $foo = $name."_content_type";
 		if ($arrays == 1) {
 			$in{$foo} ||= [];
@@ -802,7 +1213,19 @@ while(1) {
 
 	# Read data
 	my $data = "";
-	while(1) {
+	my $dfile;
+	my $fh;
+	if ($direct_dir && $file) {
+		# Save directly to disk
+		$file =~ s/.*[\\\/]//;
+		$file || &error($text{'readparse_nofile'});
+		my $uppath = "$direct_dir/$file";
+		open($fh, ">", $uppath) ||
+			&error(&text('readparse_cannotdir', $uppath, $!));
+		# Return file name, no data
+		$dfile = $file;
+		}
+	while (1) {
 		$line = <STDIN>;
 		$got += length($line);
 		$count_lines++;
@@ -819,22 +1242,39 @@ while(1) {
 			# Unexpected EOF?
 			&$cbfunc(-1, $ENV{'CONTENT_LENGTH'}, $file, @$cbargs)
 				if ($cbfunc);
+			close($fh) if ($fh);
 			return;
 			}
-		if (index($line, $boundary) != -1) { last; }
-		$data .= $line;
+		last if (index($line, $boundary) != -1);
+		if ($fh) {
+			print($fh $line);  # Write directly to file
+			}
+		else {
+			$data .= $line; # Store in memory
+			}
 		}
-	chop($data); chop($data);
+
+	# Last two bytes are newlines
+	if ($fh) {
+		seek($fh, -2, 2);
+		truncate($fh, tell($fh));
+		close($fh);
+		}
+	else {
+		chop($data); chop($data);
+		}
+
+	# Add value to return hash
 	if ($arrays == 1) {
 		$in{$name} ||= [];
-		push(@{$in{$name}}, $data);
+		push(@{$in{$name}}, $dfile || $data);
 		}
 	elsif ($arrays == 2) {
-		$in{$name} ||= $data;
+		$in{$name} ||= ($dfile || $data);
 		}
 	else {
 		$in{$name} .= "\0" if (defined($in{$name}));
-		$in{$name} .= $data;
+		$in{$name} .= ($dfile || $data);
 		}
 	if (index($line,"$boundary--") != -1) { last; }
 	}
@@ -933,10 +1373,10 @@ if ($<) {
 	$vardir = "$uinfo[7]/.tmp";
 	}
 else {
-	$vardir = $ENV{'WEBMIN_VAR'};
+	$vardir = "$ENV{'WEBMIN_VAR'}/uploads";
 	}
 if (!-d $vardir) {
-	&make_dir($vardir, 0755);
+	&make_dir($vardir, 0750);
 	}
 
 # Remove any upload.* files more than 1 hour old
@@ -993,7 +1433,7 @@ else {
 	}
 }
 
-=head2 PrintHeader(charset, [mime-type])
+=head2 PrintHeader([charset], [mime-type], [headers])
 
 Outputs the HTTP headers for an HTML page. The optional charset parameter
 can be used to set a character set. Normally this function is not called
@@ -1002,13 +1442,15 @@ directly, but is rather called by ui_print_header or header.
 =cut
 sub PrintHeader
 {
-my ($cs, $mt) = @_;
+my ($cs, $mt, $headers) = @_;
 $mt ||= "text/html";
-if ($ENV{'SSL_HSTS'} == 1 && uc($ENV{'HTTPS'}) eq "ON") {
-	print "Strict-Transport-Security: max-age=31536000;\n";
-	}
-elsif (uc($ENV{'HTTPS'}) ne "ON") {
-	print "Strict-Transport-Security: max-age=0;\n";
+if (uc($ENV{'HTTPS'}) eq "ON") {
+	if ($ENV{'SSL_HSTS'}) {
+		print "Strict-Transport-Security: max-age=31536000;\n";
+		}
+	else {
+		print "Strict-Transport-Security: max-age=0;\n";
+		}
 	}
 if ($pragma_no_cache || $gconfig{'pragma_no_cache'}) {
 	print "pragma: no-cache\n";
@@ -1020,6 +1462,12 @@ if ($gconfig{'extra_headers'}) {
 	foreach my $l (split(/\t+/, $gconfig{'extra_headers'})) {
 		print $l."\n";
 		}
+	}
+if ($headers) {
+	foreach my $h (@{$headers}) {
+		my ($name, $value) = @{$h};
+		print "$name: $value\n";
+	    }
 	}
 if (!$gconfig{'no_frame_options'}) {
 	print "X-Frame-Options: SAMEORIGIN\n";
@@ -1120,7 +1568,7 @@ my $bgimage = defined($tconfig{'bgimage'}) ? "background=$tconfig{'bgimage'}" : 
 my $dir = $current_lang_info->{'dir'} ? "dir=\"$current_lang_info->{'dir'}\"" : "";
 my $html_body = "<body bgcolor=\"#$bgcolor\" link=\"#$link\" vlink=\"#$link\" text=\"#$text\" style=\"height:100%\" $bgimage $tconfig{'inbody'} $dir $_[8]>\n";
 print &ui_switch_theme_javascript()
-	if (defined(&ui_switch_theme_javascript));
+	if ($main::session_id && defined(&ui_switch_theme_javascript));
 $html_body =~ s/\s+\>/>/g;
 print $html_body;
 print "<script>function _document_cookie_set_client_height(){document.cookie='client_height='+document.documentElement.clientHeight+'';}_document_cookie_set_client_height();window.onresize=_document_cookie_set_client_height</script>\n";
@@ -1712,34 +2160,16 @@ for(my $i=0; my @stack_ = caller($i); $i++) {
 	push(@stack, \@stack_);
 	}
 my $err_caller;
-my $err_last_eval  = $main::error_last_eval;
-$err_last_eval =~ s/\n$// if ($err_last_eval);
-$err_caller = "$stack[0]->[1] (line $stack[0]->[2])"
-	if ($stack[0]->[1] && $stack[0]->[2]);
-if ($err_caller) {
+if ($stack[0]->[1] && $stack[0]->[2]) {
+	$err_caller = "$stack[0]->[1] (line $stack[0]->[2])";
 	$err_caller =~ s/$root_directory\///;
-	my $err_caller_msg_esc  =
-        &quote_escape(($err_last_eval ? "$err_last_eval : $err_caller" : $err_caller), '"');
-	my $err_caller_msg;
-	if ($err_last_eval) {
-		$err_caller_msg = &ui_details({
-			'title' => $text{'main_error_details'},
-			'content' => $err_caller_msg_esc,
-			'class' =>'error'}, 1);
-		}
-	else {
-		$err_caller_msg = &ui_help($err_caller_msg_esc);
-		}
-	my $err_caller_ =
-		$main::webmin_script_type =~ /^(cmd|cron)$/ ?
-			$err_caller : $err_caller_msg;
-	$msg = $msg ? "$msg $err_caller_" : $err_caller_;
-	push(@msg, $err_caller_);
+	$err_caller = $msg ? "$msg $err_caller" : $err_caller;
 	}
 my $error_details = (($ENV{'WEBMIN_DEBUG'} || $gconfig{'debug_enabled'}) ? "" : "\n");
 my $error_output_right = sub {
 	my ($err_msg) = @_;
-	return $main::webmin_script_type eq 'cmd' ? entities_to_ascii($err_msg) : $err_msg;
+	return $main::webmin_script_type ne 'web' ?
+		&html_strip(&entities_to_ascii($err_msg)) : $err_msg;
 	};
 if (!$main::error_must_die) {
 	&error_stderr(&$error_output_right($msg));
@@ -1775,7 +2205,7 @@ elsif ($ENV{'REQUEST_URI'} =~ /json-error=1/) {
 	print_json(\%jerror);
 	}
 else {
-	&header($text{'error'}, "");
+	&header($text{'error'}, "", undef, 0, &get_module_name() ? 0 : 1);
 	my $hh = $miniserv::page_capture ? " captured" : "";
 	my $err_style = &read_file_contents("$root_directory/unauthenticated/errors.css");
 	if ($err_style) {
@@ -1857,7 +2287,7 @@ $make_datestr =
       $tm[2], $tm[1], $tm[0], $timezone);
 $remote_host = $ENV{"REMOTE_HOST"};
 $page = $ENV{"REQUEST_URI"};
-$err = &html_strip($err);
+$err = &html_strip(&entities_to_ascii($err));
 $err =~ s/[\n\r]+/ /g;
 $err =~ s/\s\?$//g;
 $err =
@@ -2065,7 +2495,7 @@ if ($_[0] =~ /^\// || $_[0] =~ /^[a-z]:[\\\/]/i) {
 else {
 	# Check each directory in the path
 	my %donedir;
-	foreach my $d (split($path_separator, $ENV{'PATH'})) {
+	foreach my $d (split($path_separator || ":", $ENV{'PATH'})) {
 		next if ($donedir{$d}++);
 		$d =~ s/$slash$// if ($d ne $slash);
 		my $t = &translate_filename("$d/$_[0]");
@@ -2095,10 +2525,10 @@ formatted like dd/mmm/yyyy hh:mm:ss. Parameters are :
 
 =item seconds - Unix time is seconds to convert.
 
-=item date-only-or-opts - If set to 1, exclude the time from the returned string.
+=item date-only-or-opts - If set to 1 exclude the time from the returned string.
 
-In case this param is a hash reference use it for options in a new DateTime::Locale
-code or preserve the original, old logic
+In case this param is a hash reference use it for options in a new
+DateTime::Locale code or preserve the original, old logic
 
 =item fmt - Optional, one of dd/mon/yyyy, dd/mm/yyyy, mm/dd/yyyy or yyyy/mm/dd
 
@@ -2113,27 +2543,31 @@ if (!$@ && $] > 5.011) {
 	my $opts = ref($only) ? $only : {};
 	my $locale_default = &get_default_system_locale();
 	my $locale_auto = &parse_accepted_language();
-	my $locale_name = $opts->{'locale'} || $gconfig{'locale_'.$base_remote_user} ||
+	my $locale_name = $opts->{'locale'} ||
+	   $gconfig{'locale_'.$base_remote_user} ||
 	   $gconfig{'locale_'.$remote_user} || $locale_auto ||
 	   $gconfig{'locale'} || &get_default_system_locale();
 	my $tz = $opts->{'tz'};
 	if (!$tz) {
 		eval {
-			$tz =
-			  DateTime::TimeZone->new(name => strftime("%z", localtime()))->name(); # +0200
+			$tz = DateTime::TimeZone->new(
+			  name => strftime("%z", localtime()))->name(); # +0200
 			};
 		if ($@) {
 			eval {
-				$tz = DateTime::TimeZone->new(name => 'local')->name();  # Asia/Nicosia
+				$tz = DateTime::TimeZone->new(
+				  name => 'local')->name();  # Asia/Nicosia
 				};
 			if ($@) {
-				$tz = DateTime::TimeZone->new(name => 'UTC')->name();    # UTC
+				$tz = DateTime::TimeZone->new(
+				  name => 'UTC')->name();    # UTC
 				}
 			}
 		}
 	# Pre-process time locale
 	my $locale_military_status = sub {
-		return ($locale_military_name && $locale_military_name =~ /[a-z]/i) ? 2 :
+		return ($locale_military_name &&
+			$locale_military_name =~ /[a-z]/i) ? 2 :
 		       ($locale_military_name == 1) ? 1 : 0;
 		};
 	# Allow locales with military time (in 24h format)
@@ -2149,15 +2583,18 @@ if (!$@ && $] > 5.011) {
 	my $locale = DateTime::Locale->load($locale_name_loaded);
 	# Create a new locale out of base locale
 	if (&$locale_military_status() == 1) {
-		my %locale_data                       = $locale->locale_data;
-		$locale_data{'code'}                  = $locale_name_initial;
+		my %locale_data = $locale->locale_data;
+		$locale_data{'code'} = $locale_name_initial;
+
 		# Force 24h time
-		$locale_data{'glibc_date_1_format'}   = '%a %b %e %H:%M:%S %Z %Y';
+		$locale_data{'glibc_date_1_format'} = '%a %b %e %H:%M:%S %Z %Y';
 		$locale_data{'glibc_datetime_format'} = '%a %d %b %Y %T %Z';
-		$locale_data{'glibc_time_format'}     = '%T';
+		$locale_data{'glibc_time_format'} = '%T';
 		DateTime::Locale->register_from_data(%locale_data);
+
 		# Load newly cloned locale in 24h time format
-		$locale_military_name = $locale_name_loaded = $locale_name_initial;
+		$locale_military_name = $locale_name_loaded =
+			$locale_name_initial;
 		$locale = DateTime::Locale->load($locale_name_loaded);
 		}
 	my $locale_format_full_tz = $locale->glibc_date_1_format;    # Sat 20 Nov 2286 17:46:39 UTC
@@ -2173,7 +2610,7 @@ if (!$@ && $] > 5.011) {
 		}
 
 	# Return fully detailed object
-	if (%{$opts}) {
+	if (ref($only)) {
 		# Can we get ago time
 		my $ago;
 		my $ago_secs = time() - $secs;
@@ -2191,18 +2628,31 @@ if (!$@ && $] > 5.011) {
 				"pretty" => $ago_obj->pretty
 			};
 		}
-		# my $xxxx = $locale->full_date_format;
 		my $data = {
 			# Wed Feb 8 05:09:39 PM UTC 2023
-			'full-tz-utc' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs)->strftime($locale_format_full_tz),
+			'full-tz-utc' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs)->strftime($locale_format_full_tz),
 			# Wed Feb 8 07:10:01 PM EET 2023 
-			'full-tz' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_full_tz),
+			'full-tz' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_full_tz),
 			# Wed 08 Feb 2023 07:11:26 PM EET
-			'full' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_full),
+			'full' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_full),
 			# 02/08/2023
-			'short' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_short),
+			'short' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_short),
 			# 07:12:07 PM
-			'time' => DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_time),
+			'time' => DateTime->from_epoch(
+			    locale => $locale_name_loaded,
+			    epoch => $secs,
+			    time_zone => $tz)->strftime($locale_format_time),
 			'ago' => $ago,
 			'tz' => $tz,
 			'delimiter' => $locale_format_delimiter,
@@ -2213,10 +2663,16 @@ if (!$@ && $] > 5.011) {
 		$data->{'timeshort'} = $data->{'time'};
 		$data->{'timeshort'} =~ s/(\d+):(\d+):(\d+)(.*?)/$1:$2$4/;
 
-		# %c alternative with full week and month and no seconds in time (complete)
-		# Wednesday, February 8, 2023, 8:18 PM or 星期三, 2023年2月8日 20:18 or miércoles, 8 febrero 2023, 20:28
-		$data->{'monthfull'} = DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime("%B");
-		foreach (split(/\s+/, DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime("%A, %c"))) {
+		# %c alternative with full week and month and no seconds
+		# in time (complete)
+		# Wednesday, February 8, 2023, 8:18 PM or 星期三,
+		# 2023年2月8日 20:18 or miércoles, 8 febrero 2023, 20:28
+		$data->{'monthfull'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%B");
+		foreach (split(/\s+/, DateTime->from_epoch(
+				locale => $locale_name_loaded, epoch => $secs,
+				time_zone => $tz)->strftime("%A, %c"))) {
 			if ($data->{'monthfull'} =~ /^$_/) {
 				$data->{'complete'} .= "$data->{'monthfull'} "
 				}
@@ -2224,9 +2680,24 @@ if (!$@ && $] > 5.011) {
 				$data->{'complete'} .= "$_ "
 				}
 			};
-		$data->{'year'} = DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime("%Y");
+		$data->{'year'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%Y");
+		$data->{'day'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%d");
+		$data->{'week'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%a");
+		$data->{'weekfull'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%A");
+		$data->{'month'} = DateTime->from_epoch(
+			locale => $locale_name_loaded, epoch => $secs,
+			time_zone => $tz)->strftime("%b");
 		$data->{'complete'} =~ s/(\d+):(\d+):(\d+)(.*?)/$1:$2$4/;
-		($data->{'complete_short'} = $data->{'complete'}) =~ s/(.*?)([\s\,]*\Q$data->{'year'}\E.*)/$1/;
+		($data->{'complete_short'} = $data->{'complete'}) =~
+			s/(.*?)([\s\,]*\Q$data->{'year'}\E.*)/$1/;
 
 		if ($opts->{'get'}) {
 			return $data->{$opts->{'get'}};
@@ -2255,13 +2726,18 @@ if (!$@ && $] > 5.011) {
 		}
 	my $date_format_short = DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_short);
 	if (!ref($only) && $only) {
+		return &theme_ui_make_date($date_format_short, $secs)
+			if (defined(&theme_ui_make_date));
 		return $date_format_short;
 		}
 	else {
 		my $date_format_time = DateTime->from_epoch(locale => $locale_name_loaded, epoch => $secs, time_zone => $tz)->strftime($locale_format_time);
 		$date_format_time = $date_format_time;
 		$date_format_time =~ s/(\d+):(\d+):(\d+)(.*?)/$1:$2$4/;
-		return "$date_format_short $date_format_time";
+		my $date_format_full = "$date_format_short $date_format_time";
+		return &theme_ui_make_date($date_format_full, $secs)
+			if (defined(&theme_ui_make_date));
+		return $date_format_full;
 		}
 	}
 
@@ -2298,6 +2774,47 @@ if (ref($only) || !$only) {
 	$date .= sprintf " %2.2d:%2.2d", $tm[2], $tm[1];
 	}
 return $date;
+}
+
+# make_date_relative(timestamp)
+# Return localized relative time from now or to the future
+# for a given timestamp, or undef if not a valid timestamp
+sub make_date_relative
+{
+my $ts = shift;
+return undef unless(defined($ts) && $ts =~ /^-?\d+(?:\.\d+)?$/);
+$ts = 0 + $ts;
+my $last_login;
+my $now = time();
+my $diff = $ts - $now; # >0 future, <0 past
+my $abs = abs($diff);
+return $text{'time_now'} if ($abs < 10); # within ±10 seconds is now
+my @units = (
+    [ 31536000, 'year',  'years'  ],
+    [ 2592000,  'month', 'months' ],
+    [ 604800,   'week',  'weeks'  ],
+    [ 86400,    'day',   'days'   ],
+    [ 3600,     'hour',  'hours'  ],
+    [ 60,       'min',   'mins'   ],
+    [ 1,        'sec',   'secs'   ],
+);
+my ($val, $sing, $plur);
+foreach my $unit (@units) {
+	my ($secs, $s, $p) = @$unit;
+	next if ($abs < $secs);
+	$val = int($abs / $secs);
+	($sing, $plur) = ($s, $p);
+	last;
+	}
+if (defined($val) && $val > 0) {
+	my $key = ($diff > 0 ? 'time_in_' : 'time_ago_').
+		  ($val == 1 ? $sing : $plur);
+	$last_login = &text($key, $val);
+	}
+else {
+	$last_login = $text{'time_now'};
+	}
+return $last_login;
 }
 
 =head2 file_chooser_button(input, type, [form], [chroot], [addmode])
@@ -2566,7 +3083,9 @@ hash reference.
 =cut
 sub get_miniserv_config
 {
-return &read_file_cached_with_stat(&get_miniserv_config_file(), $_[0]);
+# WebSocket backends can change routes several times within one second.
+# An mtime-based cache can lose another process's update even under a file lock.
+return &read_file(&get_miniserv_config_file(), $_[0]);
 }
 
 =head2 put_miniserv_config(&hash)
@@ -2818,7 +3337,7 @@ while(1) {
 return $anyneg;
 }
 
-=head2 http_download(host, port, page, destfile, [&error], [&callback], [sslmode], [user], [pass], [timeout], [osdn-convert], [no-cache], [&headers])
+=head2 http_download(host, port, page, destfile, [&error], [&callback], [sslmode], [user], [pass], [timeout], [osdn-convert], [no-cache], [&headers], [&response-headers], [address-family])
 
 Downloads data from a HTTP url to a local file or string. The parameters are :
 
@@ -2850,11 +3369,30 @@ Downloads data from a HTTP url to a local file or string. The parameters are :
 
 =item response_headers - If set returns a hash ref of response HTTP headers.
 
+=item address-family - If set to 4 or 6, connects only using that IP family.
+
+If the callback function is defined, it will be called at each step of the download process with a mode parameter and
+additional args. The mode will be one of :
+
+=item 1 - Completed reading headers, arg is 1 for a redirect, 0 otherwise
+
+=item 2 - Received content length, arg is the response size in bytes
+
+=item 3 - Received data, arg is the bytes returned so far
+
+=item 4 - Finished receiving data
+
+=item 5 - Following a redirect, arg is the new URL
+
+=item 6 - Data was found in cache, arg is the full cached URL
+
+=item 7 - TCP connection made, arg is the remote IP (if known)
+
 =cut
 sub http_download
 {
 my ($host, $port, $page, $dest, $error, $cbfunc, $ssl, $user, $pass,
-    $timeout, $osdn, $nocache, $headers, $response_headers) = @_;
+    $timeout, $osdn, $nocache, $headers, $response_headers, $family) = @_;
 if ($gconfig{'debug_what_net'}) {
 	&webmin_debug_log('HTTP', "host=$host port=$port page=$page ssl=$ssl".
 				  ($user ? " user=$user pass=$pass" : "").
@@ -2898,7 +3436,11 @@ if ($user) {
 	push(@headers, [ "Authorization", "Basic $auth" ]);
 	}
 foreach my $hname (keys %$headers) {
-	push(@headers, [ $hname, $headers->{$hname} ]);
+	my $hv = $headers->{$hname};
+	$hv = [ $hv ] if (!ref($hv));
+	foreach my $v (@$hv) {
+		push(@headers, [ $hname, $v ]);
+		}
 	}
 
 # Actually download it
@@ -2906,7 +3448,8 @@ $main::download_timed_out = undef;
 local $SIG{ALRM} = \&download_timeout;
 $timeout = 60 if (!defined($timeout));
 alarm($timeout) if ($timeout);
-my $h = &make_http_connection($host, $port, $ssl, "GET", $page, \@headers);
+my $h = &make_http_connection($host, $port, $ssl, "GET", $page, \@headers,
+			      undef, undef, $family);
 alarm(0) if ($timeout);
 $h = $main::download_timed_out if ($main::download_timed_out);
 if (!ref($h)) {
@@ -2914,15 +3457,19 @@ if (!ref($h)) {
 	if ($error) { $$error = $h; return; }
 	else { &error(&html_escape($h)); }
 	}
+&$cbfunc(7, $h->{'ip'}) if ($cbfunc);
 &complete_http_download($h, $dest, $error, $cbfunc, $osdn, $host, $port,
-			$headers, $ssl, $nocache, $timeout,
-			defined($response_headers) ? $response_headers : undef);
+			$headers, $ssl, $nocache, $timeout, $response_headers,
+			$family);
 if ((!$error || !$$error) && !$nocache) {
 	&write_to_http_cache($url, $dest);
 	}
 }
 
-=head2 complete_http_download(handle, destfile, [&error], [&callback], [osdn], [oldhost], [oldport], [&send-headers], [old-ssl], [no-cache], [timeout], [response-header])
+=head2 complete_http_download(handle, destfile, [&error], [&callback], [osdn],
+			      [oldhost], [oldport], [&send-headers], [old-ssl],
+			      [no-cache], [timeout], [response-header],
+			      [address-family])
 
 Do a HTTP download, after the headers have been sent. For internal use only,
 typically called by http_download.
@@ -2931,7 +3478,7 @@ typically called by http_download.
 sub complete_http_download
 {
 my ($h, $destfile, $error, $cbfunc, $osdn, $oldhost, $oldport, $headers,
-    $oldssl, $nocache, $timeout, $response_headers) = @_;
+    $oldssl, $nocache, $timeout, $response_headers, $family) = @_;
 
 # Kept local so that callback funcs # can access them.
 local ($line, %header, @headers, $s);
@@ -2940,7 +3487,7 @@ local ($line, %header, @headers, $s);
 $timeout = 60 if (!defined($timeout));
 alarm($timeout) if ($timeout);
 ($line = &read_http_connection($h)) =~ tr/\r\n//d;
-if ($line !~ /^HTTP\/1\..\s+(200|30[0-9]|400)(\s+|$)/) {
+if ($line !~ /^HTTP\/1\..\s+(20[0-9]|30[0-9]|400)(\s+|$)/) {
 	$line ||= "Failed to read HTTP response line";
 	alarm(0) if ($timeout);
 	&close_http_connection($h);
@@ -2982,11 +3529,11 @@ if ($rcode >= 300 && $rcode < 400) {
 		$port = $ssl ? 443 : 80;
 		$page = $3 || "/";
 		}
-	elsif ($header{'location'} =~ /^\// && $_[5]) {
+	elsif ($header{'location'} =~ /^\// && $oldhost) {
 		# Relative to same server
-		$host = $_[5];
-		$port = $_[6];
-		$ssl = $_[8];
+		$host = $oldhost;
+		$port = $oldport;
+		$ssl = $oldssl;
 		$page = $header{'location'};
 		}
 	elsif ($header{'location'}) {
@@ -3006,7 +3553,8 @@ if ($rcode >= 300 && $rcode < 400) {
 	$page =~ s/ /%20/g;
 	$page .= "?".$params if (defined($params));
 	&http_download($host, $port, $page, $destfile, $error, $cbfunc, $ssl,
-		       undef, undef, undef, $_[4], $_[9], $_[7]);
+		       undef, undef, undef, $osdn, $nocache, $headers, undef,
+		       $family);
 	}
 else {
 	# read data
@@ -3045,7 +3593,9 @@ else {
 }
 
 
-=head2 http_post(host, port, page, content, destfile, [&error], [&callback], [sslmode], [user, pass], [timeout], [osdn-convert], [no-cache], [&headers])
+=head2 http_post(host, port, page, content, destfile, [&error], [&callback], [sslmode],
+		 [user, pass], [timeout], [osdn-convert], [no-cache], [&headers],
+		 [&response_headers])
 
 Posts data to an HTTP url and downloads the response to a local file or string. The parameters are :
 
@@ -3077,11 +3627,13 @@ Posts data to an HTTP url and downloads the response to a local file or string. 
 
 =item headers - If set to a hash ref of additional HTTP headers, they will be added to the request.
 
+=item response_headers - If set returns a hash ref of response HTTP headers.
+
 =cut
 sub http_post
 {
 my ($host, $port, $page, $content, $dest, $error, $cbfunc, $ssl, $user, $pass,
-    $timeout, $osdn, $nocache, $headers) = @_;
+    $timeout, $osdn, $nocache, $headers, $response_headers) = @_;
 if ($gconfig{'debug_what_net'}) {
 	&webmin_debug_log('HTTP', "host=$host port=$port page=$page ssl=$ssl".
 				  ($user ? " user=$user pass=$pass" : "").
@@ -3112,7 +3664,11 @@ if ($user) {
 	}
 @headers = grep { !$headers->{$_->[0]} } @headers;
 foreach my $hname (keys %$headers) {
-	push(@headers, [ $hname, $headers->{$hname} ]);
+	my $hv = $headers->{$hname};
+	$hv = [ $hv ] if (!ref($hv));
+	foreach my $v (@$hv) {
+		push(@headers, [ $hname, $v ]);
+		}
 	}
 
 # Actually download it
@@ -3129,10 +3685,10 @@ if (!ref($h)) {
 	}
 &write_http_connection($h, $content."\r\n");
 &complete_http_download($h, $dest, $error, $cbfunc, $osdn, $host, $port,
-			$headers, $ssl, $nocache, $timeout);
+			$headers, $ssl, $nocache, $timeout, $response_headers);
 }
 
-=head2 ftp_download(host, file, destfile, [&error], [&callback], [user, pass], [port], [no-cache])
+=head2 ftp_download(host, file, destfile, [&error], [&callback], [user, pass], [port], [no-cache], [timeout])
 
 Download data from an FTP site to a local file. The parameters are :
 
@@ -3159,7 +3715,8 @@ Download data from an FTP site to a local file. The parameters are :
 =cut
 sub ftp_download
 {
-my ($host, $file, $dest, $error, $cbfunc, $user, $pass, $port, $nocache, $timeout) = @_;
+my ($host, $file, $dest, $error, $cbfunc, $user, $pass, $port, $nocache,
+    $timeout) = @_;
 $port ||= 21;
 $timeout = 60 if (!defined($timeout));
 if ($gconfig{'debug_what_net'}) {
@@ -3247,7 +3804,8 @@ if ($gconfig{'ftp_proxy'} =~ /^http:\/\/(\S+):(\d+)/ && !&no_proxy($_[0])) {
 
 if (!$connected) {
 	# connect to host and login with real FTP protocol
-	&open_socket($host, $port, "SOCK", $_[3]) || return 0;
+	my $ip = &open_socket($host, $port, "SOCK", $_[3]) || return 0;
+	&$cbfunc(7, $ip) if ($cbfunc);
 	alarm(0) if ($timeout);
 	if ($main::download_timed_out) {
 		if ($error) {
@@ -3335,7 +3893,8 @@ if (!$connected) {
 		}
 
 	# finish off..
-	&ftp_command("QUIT", 2, $error) || return 0;
+	my $dummy;
+	&ftp_command("QUIT", 2, \$dummy);
 	close(SOCK);
 	}
 
@@ -3458,7 +4017,8 @@ if ($got != $st[7]) {
 
 # finish off..
 &ftp_command("", 2, $_[3]) || return 0;
-&ftp_command("QUIT", 2, $_[3]) || return 0;
+my $dummy;
+&ftp_command("QUIT", 2, \$dummy);
 close(SOCK);
 
 return 1;
@@ -3480,7 +4040,7 @@ foreach my $n (split(/\s+/, $gconfig{'noproxy'})) {
 return 0;
 }
 
-=head2 open_socket(host, port, handle, [&error])
+=head2 open_socket(host, port, handle, [&error], [bind-ip], [address-family])
 
 Open a TCP connection to some host and port, using a file handle. The
 parameters are :
@@ -3495,10 +4055,14 @@ parameters are :
 
 =item bindip - Local IP address to bind to for outgoing connections
 
+=item address-family - If set to 4 or 6, connects only using that IP family.
+
+Returns the IP to which the connection was actually made.
+
 =cut
 sub open_socket
 {
-my ($host, $port, $fh, $err, $bindip) = @_;
+my ($host, $port, $fh, $err, $bindip, $family) = @_;
 $fh = &callers_package($fh);
 $bindip ||= $gconfig{'bind_proxy'};
 
@@ -3506,60 +4070,60 @@ if ($gconfig{'debug_what_net'}) {
 	&webmin_debug_log('TCP', "host=$host port=$port");
 	}
 
-# Lookup all IPv4 and v6 addresses for the host
-my @ips = &to_ipaddress($host);
-push(@ips, &to_ip6address($host));
-if (!@ips) {
-	my $msg = "Failed to lookup IP address for $host";
-	if ($err) { $$err = $msg; return 0; }
-	else { &error($msg); }
-	}
-
-# Try each of the resolved IPs
-my $msg;
+# Use the requested family, or prefer IPv4 before falling back to IPv6.
+my ($msg, $gotip);
 my $proto = getprotobyname("tcp");
-foreach my $ip (@ips) {
-	$msg = undef;
-	if (&check_ipaddress($ip)) {
-		# Create IPv4 socket and connection
-		if (!socket($fh, PF_INET(), SOCK_STREAM, $proto)) {
-			$msg = "Failed to create socket : $!";
-			next;
-			}
-		my $addr = inet_aton($ip);
-		if ($gconfig{'bind_proxy'}) {
-			# BIND to outgoing IP
-			if (!bind($fh, pack_sockaddr_in(0, inet_aton($bindip)))) {
-				$msg = "Failed to bind to source address : $!";
+my @lookups = defined($family) && $family == 4 ? ( \&to_ipaddress ) :
+	      defined($family) && $family == 6 ? ( \&to_ip6address ) :
+	      ( \&to_ipaddress, \&to_ip6address );
+foreach my $lookup (@lookups) {
+	my @ips = &$lookup($host);
+	foreach my $ip (@ips) {
+		$msg = undef;
+		if (&check_ipaddress($ip)) {
+			# Create IPv4 socket and connection
+			if (!socket($fh, PF_INET(), SOCK_STREAM, $proto)) {
+				$msg = "Failed to create socket : $!";
+				next;
+				}
+			my $addr = inet_aton($ip);
+			if ($gconfig{'bind_proxy'}) {
+				# BIND to outgoing IP
+				if (!bind($fh, pack_sockaddr_in(0, inet_aton($bindip)))) {
+					$msg = "Failed to bind to source address : $!";
+					next;
+					}
+				}
+			if (!connect($fh, pack_sockaddr_in($port, $addr))) {
+				$msg = "Failed to connect to $host:$port : $!";
 				next;
 				}
 			}
-		if (!connect($fh, pack_sockaddr_in($port, $addr))) {
-			$msg = "Failed to connect to $host:$port : $!";
-			next;
+		else {
+			# Create IPv6 socket and connection
+			if (!&supports_ipv6()) {
+				$msg = "IPv6 connections are not supported";
+				next;
+				}
+			if (!socket($fh, PF_INET6(), SOCK_STREAM, $proto)) {
+				$msg = "Failed to create IPv6 socket : $!";
+				next;
+				}
+			my $addr = inet_pton(AF_INET6(), $ip);
+			if (!connect($fh, pack_sockaddr_in6($port, $addr))) {
+				$msg = "Failed to IPv6 connect to $host:$port : $!";
+				next;
+				}
 			}
+		$gotip = $ip;
+		last;	# If we got this far, it worked
 		}
-	else {
-		# Create IPv6 socket and connection
-		if (!&supports_ipv6()) {
-			$msg = "IPv6 connections are not supported";
-			next;
-			}
-		if (!socket($fh, PF_INET6(), SOCK_STREAM, $proto)) {
-			$msg = "Failed to create IPv6 socket : $!";
-			next;
-			}
-		my $addr = inet_pton(AF_INET6(), $ip);
-		if (!connect($fh, pack_sockaddr_in6($port, $addr))) {
-			$msg = "Failed to IPv6 connect to $host:$port : $!";
-			next;
-			}
-		}
-	last;	# If we got this far, it worked
+	# Resolve IPv6 only after all IPv4 connection attempts have failed.
+	last if ($gotip);
 	}
-if ($msg) {
-	# Last attempt failed
-	if ($err) { $$err = $msg; return 0; }
+if (!$gotip) {
+	$msg ||= "Failed to lookup IP address for $host";
+	if ($err) { $$err = $msg; return undef; }
 	else { &error($msg); }
 	}
 
@@ -3567,7 +4131,7 @@ if ($msg) {
 my $old = select($fh);
 $| = 1;
 select($old);
-return 1;
+return $gotip;
 }
 
 =head2 download_timeout
@@ -3943,7 +4507,7 @@ return "<input name='$_[0]' size=13 value=\"$_[1]\"> ".
        &group_chooser_button($_[0], 0, $_[2] || 0)."\n";
 }
 
-=head2 hlink(text, page, [module], [width], [height])
+=head2 hlink(text, page, [module], [width], [height], [tmpl])
 
 Returns HTML for a link that when clicked on pops up a window for a Webmin
 help page. The parameters are :
@@ -3964,13 +4528,14 @@ The actual help pages are in each module's help sub-directory, in files with
 =cut
 sub hlink
 {
+my ($txt, $page, $mod, $width, $height) = @_;
+$mod ||= &get_module_name();
 if (defined(&theme_hlink)) {
 	return &theme_hlink(@_);
 	}
-my $mod = $_[2] ? $_[2] : &get_module_name();
-my $width = $_[3] || $tconfig{'help_width'} || $gconfig{'help_width'} || 600;
-my $height = $_[4] || $tconfig{'help_height'} || $gconfig{'help_height'} || 400;
-return "<a onClick='window.open(\"@{[&get_webprefix()]}/help.cgi/$mod/$_[1]\", \"help\", \"toolbar=no,menubar=no,scrollbars=yes,width=$width,height=$height,resizable=yes\"); return false' href=\"@{[&get_webprefix()]}/help.cgi/$mod/$_[1]\">$_[0]</a>";
+$width ||= $tconfig{'help_width'} || $gconfig{'help_width'} || 600;
+$height ||= $tconfig{'help_height'} || $gconfig{'help_height'} || 400;
+return "<a onClick='window.open(\"@{[&get_webprefix()]}/help.cgi/$mod/$page\", \"help\", \"toolbar=no,menubar=no,scrollbars=yes,width=$width,height=$height,resizable=yes\"); return false' href=\"@{[&get_webprefix()]}/help.cgi/$mod/$page\">$txt</a>";
 }
 
 =head2 user_chooser_button(field, multiple, [form])
@@ -4083,22 +4648,6 @@ return 0 if (!$acl{$base_remote_user,$_[0]} &&
 # Check for usermod restrictions
 my @usermods = &list_usermods();
 return 0 if (!&available_usermods( [ \%foreign_module_info ], \@usermods));
-
-if (&get_product_name() eq "webmin") {
-	# Check if the user has any RBAC privileges in this module
-	if (&supports_rbac($_[0]) &&
-	    &use_rbac_module_acl(undef, $_[0])) {
-		# RBAC is enabled for this user and module - check if he
-		# has any rights
-		my $rbacs = &get_rbac_module_acl($remote_user, $_[0]);
-		return 0 if (!$rbacs);
-		}
-	elsif ($gconfig{'rbacdeny_'.$base_remote_user}) {
-		# If denying access to modules not specifically allowed by
-		# RBAC, then prevent access
-		return 0;
-		}
-	}
 
 # Check readonly support
 if (&is_readonly_mode()) {
@@ -4318,11 +4867,25 @@ return if ($nocache == 2);
 if (!$system_hostname[$m]) {
 	if ($gconfig{'os_type'} ne 'windows') {
 		# If systemd system try /etc/hostname straight away
-		my $initsys = &trim(&backquote_command("cat /proc/1/comm 2>/dev/null"));
-		if ($initsys eq 'systemd') {
+		if (-d "/run/systemd/system") {
 			my $hostname = &read_file_contents("/etc/hostname");
 			$hostname =~ s/\r|\n//g;
+			# Cache the short name before resolving the full name
 			if ($hostname) {
+				my $shortname = $hostname;
+				$shortname =~ s/\..*$//;
+				$system_hostname[1] = $shortname;
+				}
+			# Resolve a short static hostname before caching it
+			if ($hostname && !$m && $hostname !~ /\./ &&
+			    !$gconfig{'no_hostname_f'}) {
+				my $fqdn;
+				my $ex = &execute_command("hostname -f", undef,
+							  \$fqdn, undef, 0, 1);
+				$fqdn = &trim($fqdn);
+				$hostname = $fqdn if (!$ex && $fqdn =~ /\./);
+				}
+			if ($hostname && ($m || $hostname =~ /\./)) {
 				$hostname =~ s/\..*$// if ($m);
 				$system_hostname[$m] = $hostname;
 				return $hostname;
@@ -4522,22 +5085,16 @@ if (!$nodef) {
 
 	# If this isn't a master admin user, apply the negative permissions
 	# so that he doesn't un-expectedly gain access to new features
-	my %gacccess;
-	&read_file_cached("$config_directory/$u.acl", \%gaccess);
-	if ($gaccess{'negative'}) {
-		&read_file_cached("$mdir/negativeacl", \%rv);
+	if ($u ne '') {
+		my %gacccess;
+		&read_file_cached("$config_directory/$u.acl", \%gaccess);
+		if ($gaccess{'negative'}) {
+			&read_file_cached("$mdir/negativeacl", \%rv);
+			}
 		}
 	}
 my %usersacl;
-if (!$norbac && &supports_rbac($m) && &use_rbac_module_acl($u, $m)) {
-	# RBAC overrides exist for this user in this module
-	my $rbac = &get_rbac_module_acl(
-			defined($_[0]) ? $_[0] : $remote_user, $m);
-	foreach my $r (keys %$rbac) {
-		$rv{$r} = $rbac->{$r};
-		}
-	}
-elsif ($u ne '') {
+if ($u ne '') {
 	# Use normal Webmin ACL, if a user is set
 	my $userdb = &get_userdb_string();
 	my $foundindb = 0;
@@ -5065,7 +5622,7 @@ of the variables set include :
 
 =item %gconfig - Global configuration.
 
-=item $scriptname - Base name of the current perl script.
+=item $scriptname - Base name of the current perl script, like save_user.cgi
 
 =item $module_name - The name of the current module.
 
@@ -5109,8 +5666,9 @@ if (!defined($ENV{'WEBMIN_VAR'})) {
 else {
 	$var_directory = $ENV{'WEBMIN_VAR'};
 	}
-$main::http_cache_directory = $ENV{'WEBMIN_VAR'}."/cache";
-$main::default_debug_log_file = $ENV{'WEBMIN_VAR'}."/webmin.debug";
+$main::http_cache_directory = $var_directory."/cache";
+$main::default_debug_log_file = $var_directory."/webmin.debug";
+$main::forgot_password_link_dir = $var_directory."/forgot-password";
 
 if ($ENV{'SESSION_ID'}) {
 	# Hide this variable from called programs, but keep it for internal use
@@ -5136,8 +5694,11 @@ $config_file = "$config_directory/config";
 %gconfig = ( );
 &read_file_cached($config_file, \%gconfig);
 $gconfig{'webprefix'} = '' if (!exists($gconfig{'webprefix'}));
-if (!$gconfig{'webprefix'} && $gconfig{'webprefix_remote'}) {
+if (!$gconfig{'webprefix'} && $gconfig{'webprefix_remote'} &&
+    defined($ENV{'HTTP_X_WEBMIN_WEBPREFIX'})) {
 	$gconfig{'webprefix'} = $ENV{'HTTP_X_WEBMIN_WEBPREFIX'};
+	# Filter out potentially dangerous characters
+	$gconfig{'webprefix'} =~ s/[^a-zA-Z0-9\.\-_\/]//g;
 	}
 $null_file = $gconfig{'os_type'} eq 'windows' ? "NUL" : "/dev/null";
 $path_separator = $gconfig{'os_type'} eq 'windows' ? ';' : ':';
@@ -5180,9 +5741,8 @@ if (($ENV{'WEBMIN_DEBUG'} || $gconfig{'debug_enabled'}) &&
 	$main::opened_debug_log = 1;
 
 	if ($gconfig{'debug_what_start'}) {
-		my $script_name = $0 =~ /([^\/]+)$/ ? $1 : '-';
 		$main::debug_log_start_time = time();
-		&webmin_debug_log("START", "script=$script_name");
+		&webmin_debug_log("START", "script=".($scriptname || "-"));
 		}
 	}
 
@@ -5266,6 +5826,14 @@ else {
 			}
 		}
 	&error("Script was not run with full path (failed to find $0 under $root_directory)") if (!$rok);
+	}
+
+# Work out the base script name
+if ($0 =~ /([^\/]+)$/) {
+	$scriptname = $1;
+	}
+else {
+	$scriptname = undef;
 	}
 
 # Set the umask based on config
@@ -5426,8 +5994,6 @@ if ($tconfig{'oofunctions'} && !$main::loaded_theme_oo_library++) {
 	do "$theme_root_directory/$tconfig{'oofunctions'}";
 	}
 
-$0 =~ /([^\/]+)$/;
-$scriptname = $1;
 $webmin_logfile = $gconfig{'webmin_log'} ? $gconfig{'webmin_log'}
 					 : "$var_directory/webmin.log";
 
@@ -5456,6 +6022,16 @@ if ($module_name) {
 			 &get_all_module_infos(2);
 	%module_info = %$mi;
 	$module_root_directory = &module_root_directory($module_name);
+	}
+
+if (!$main::allow_rpc_only &&
+    $main::webmin_script_type eq 'web' &&
+    !$main::no_acl_check &&
+    !defined($ENV{'FOREIGN_MODULE_NAME'})) {
+	# Check if this user is RPC-only
+	if (&webmin_user_can_rpc() == 2) {
+		&error($text{'erpconly'});
+		}
 	}
 
 if ($module_name && !$main::no_acl_check &&
@@ -5566,7 +6142,6 @@ else {
 if ($ENV{'HTTP_X_REQUESTED_WITH'} ne "XMLHttpRequest" &&
     $ENV{'REQUEST_URI'} !~ /xhr/  &&
     $ENV{'REQUEST_URI'} !~ /pjax/ &&
-    $ENV{'REQUEST_URI'} !~ /link\.cgi\/\d+/ &&
     $ENV{'REQUEST_URI'} =~ /xnavigation=1/) {
 
     # Store request URI, if safe
@@ -5707,6 +6282,17 @@ if (!defined($auto)) {
 return $auto;
 }
 
+=head2 load_language_neutral()
+
+Returns 1 or 0, if *.neutral files should be used based on user preference
+
+=cut
+sub load_language_neutral
+{
+my $neutral = $gconfig{"langneutral_$remote_user"};
+return $neutral;
+}
+
 =head2 load_language([module], [directory])
 
 Returns a hashtable mapping text codes to strings in the appropriate language,
@@ -5727,21 +6313,23 @@ my %text;
 my $root = $root_directory;
 my $ol = $gconfig{'overlang'};
 my $auto = load_language_auto();
+my $neutral = load_language_neutral();
 my ($dir) = ($_[1] || "lang");
 
 # Read global lang files
 foreach my $o (@lang_order_list) {
 	my $ok = &read_file_cached_with_stat("$root/$dir/$o", \%text);
-	my $ok_auto;
-	$ok_auto = &read_file_cached_with_stat("$root/$dir/$o.auto", \%text) 
-		if ($auto && -r "$root/$dir/$o.auto");
-	return () if (!$ok && !$ok_auto && $o eq $default_lang);
+	my $ok_auto = $auto ?
+	    &read_file_cached_with_stat("$root/$dir/$o.auto", \%text) : 0;
+	my $ok_neutral = $neutral ?
+	    &read_file_cached_with_stat("$root/$dir/$o.neutral", \%text) : 0;
+	return () if (!$ok && !$ok_auto && !$ok_neutral && $o eq $default_lang);
 	}
 if ($ol) {
 	foreach my $o (@lang_order_list) {
 		&read_file_cached("$root/$ol/$o", \%text);
-		&read_file_cached("$root/$ol/$o.auto", \%text) 
-			if ($auto && -r "$root/$ol/$o.auto");
+		&read_file_cached("$root/$ol/$o.auto", \%text) if ($auto);
+		&read_file_cached("$root/$ol/$o.neutral", \%text) if ($neutral);
 		}
 	}
 &read_file_cached("$config_directory/custom-lang", \%text);
@@ -5758,13 +6346,17 @@ if ($_[0]) {
 	foreach my $o (@lang_order_list) {
 		&read_file_cached_with_stat("$mdir/$dir/$o", \%text);
 		&read_file_cached_with_stat("$mdir/$dir/$o.auto", \%text)
-			if($auto && -r "$mdir/$dir/$o.auto");
+			if ($auto);
+		&read_file_cached_with_stat("$mdir/$dir/$o.neutral", \%text)
+			if ($neutral);
 		}
 	if ($ol) {
 		foreach my $o (@lang_order_list) {
 			&read_file_cached("$mdir/$ol/$o", \%text);
 			&read_file_cached("$mdir/$ol/$o.auto", \%text)
-				if ($auto && -r "$mdir/$ol/$o.auto");
+				if ($auto);
+			&read_file_cached("$mdir/$ol/$o.neutral", \%text)
+				if ($neutral);
 			}
 		}
 	&read_file_cached("$config_directory/$_[0]/custom-lang", \%text);
@@ -5816,17 +6408,23 @@ else {
 =head2 text(message, [substitute]+)
 
 Returns a translated message from %text, but with $1, $2, etc.. replaced with
-the substitute parameters. This makes it easy to use strings with placeholders
-that get replaced with programmatically generated text. For example :
+the substitute parameters. If called without parameters, returns a hash of
+values and keys which were already replaced.
+This makes it easy to use strings with placeholders that get replaced with
+programmatically generated text.
 
- print &text('index_hello', $remote_user),"<p>\n";
+For example:
+ print &text('index_hello', $remote_user),"\n";
 
 =cut
 sub text
 {
+state %text_replaced;
+return %text_replaced if (!defined($_[0]));
 my $t = &get_module_variable('%text', 1);
 my $rv = exists($t->{$_[0]}) ? $t->{$_[0]} : $text{$_[0]};
 $rv =~ s/\$(\d+)/$1 < @_ ? $_[$1] : '$'.$1/ge;
+$text_replaced{$rv} = $_[0] if ($rv);
 return $rv;
 }
 
@@ -5911,6 +6509,8 @@ sub decode_base32
 {
 $_ = shift;
 my ($l);
+s/=+$//;
+$_ = uc($_);
 tr|A-Z2-7|\0-\37|;
 $_ = unpack('B*', $_);
 s/000(.....)/$1/g;
@@ -5926,7 +6526,8 @@ Returns a hash containing details of the given module. Some useful keys are :
 
 =item dir - The module directory, like sendmail.
 
-=item desc - Human-readable description, in the current users' language.
+=item desc - Human-readable description, in the current users' language. This
+may be selected from an alternate desc+suffix key.
 
 =item version - Optional module version number.
 
@@ -5939,10 +6540,11 @@ sub get_module_info
 {
 my ($mod, $noclone, $forcache) = @_;
 
-return () if ($mod =~ /^\./);
+return () if (!defined($mod) || $mod eq "" || $mod =~ /[^A-Za-z0-9_-]/);
 my (%rv, $clone, $o);
 my $mdir = &module_root_directory($mod);
 my $auto = load_language_auto();
+my $neutral = load_language_neutral();
 &read_file_cached("$mdir/module.info", \%rv) || return ();
 if (-l $mdir) {
 	# A clone is a module that links to another directory under the root
@@ -5959,8 +6561,8 @@ if (-l $mdir) {
 foreach $o (@lang_order_list) {
 	next if ($o eq "en");
 	&read_file_cached("$mdir/module.info.$o", \%rv);
-	&read_file_cached("$mdir/module.info.$o.auto", \%rv)
-		if ($auto && -r "$mdir/module.info.$o.auto");
+	&read_file_cached("$mdir/module.info.$o.auto", \%rv) if ($auto);
+	&read_file_cached("$mdir/module.info.$o.neutral", \%rv) if ($neutral);
 	}
 
 # Apply desc_$LANG overrides
@@ -5986,6 +6588,24 @@ if (defined($rv{'category_'.$pn})) {
 $rv{'realcategory'} = $rv{'category'};
 $rv{'category'} = $module_categories{$mod}
 	if (defined($module_categories{$mod}));
+
+# Apply alternate description from cached module mode
+if (my @descplus = grep { /^desc\+/ } keys %rv) {
+	my %mode;
+	&read_file_cached("$config_directory/$mod/mode", \%mode);
+	my $alt = $mode{'mode'};
+	if ($alt) {
+		$alt =~ s/^\s+|\s+$//g;
+		$alt =~ s/^desc\+//;
+		my $desc = $rv{"desc+$alt"};
+		foreach my $o (@lang_order_list) {
+			my $k = "desc+${alt}_$o";
+			$desc = $rv{$k} if ($rv{$k});
+			}
+		$rv{'desc'} = $desc if ($desc);
+		}
+	delete(@rv{@descplus});
+	}
 
 # Apply overrides from local configuration files, such as for the title
 my %overs;
@@ -6607,7 +7227,7 @@ if ($language_map{$code}) {
 return $code;
 }
 
-=head2 read_env_file(file, &hash, [include-commented])
+=head2 read_env_file(file, &hash, [include-commented], [&line-numbers-hash])
 
 Similar to Webmin's read_file function, but handles files containing shell
 environment variables formatted like :
@@ -6621,9 +7241,10 @@ ref to read names and values into.
 =cut
 sub read_env_file
 {
-my ($file, $hash, $cmt) = @_;
+my ($file, $hash, $cmt, $lnums) = @_;
 local $_;
 &open_readfile(FILE, $file) || return 0;
+my $lnum = 0;
 while(<FILE>) {
 	if ($cmt) {
 		# Remove start of line comments
@@ -6634,7 +7255,9 @@ while(<FILE>) {
 	    /^\s*(export\s*)?([A-Za-z0-9_\.]+)\s*=\s*'(.*)'/i ||
 	    /^\s*(export\s*)?([A-Za-z0-9_\.]+)\s*=\s*(.*)/i) {
 		$hash->{$2} = $3;
+		$lnums->{$2} = $lnum if ($lnums);
 		}
+	$lnum++;
 	}
 close(FILE);
 return 1;
@@ -6656,22 +7279,32 @@ sub write_env_file
 {
 my ($file, $hash, $emode) = @_;
 my $exp = $emode ? "export " : "";
-&open_tempfile(FILE, ">$file");
-foreach my $k (keys %$hash) {
+my (%oldhash, %lnums);
+&read_env_file($file, \%oldhash, 0, \%lnums);
+my $lref = &read_file_lines($file);
+foreach my $k (grep { defined($hash->{$_}) } keys %$hash) {
 	my $v = $hash->{$k};
-	if (defined($v)) {
-		if ($v =~ /^\S+$/) {
-			&print_tempfile(FILE, "$exp$k=$v\n");
-			}
-		else {
-			&print_tempfile(FILE, "$exp$k=\"$v\"\n");
-			}
+	my $newline = $v =~ /^\S+$/ ? "$exp$k=$v"
+				    : "$exp$k=\"$v\"";
+	if (defined($lnums{$k})) {
+		# Replacing an existing line
+		$lref->[$lnums{$k}] = $newline;
+		}
+	else {
+		# Adding a line
+		push(@$lref, $newline);
 		}
 	}
-&close_tempfile(FILE);
+foreach my $k (grep { !defined($hash->{$_}) } keys %oldhash) {
+	if (defined($lnums{$k})) {
+		# Value is no longer there, so remove it
+		splice(@$lref, $lnums{$k}, 1);
+		}
+	}
+&flush_file_lines($file);
 }
 
-=head2 lock_file(filename, [readonly], [forcefile])
+=head2 lock_file(filename, [readonly], [forcefile], [nodiff])
 
 Lock a file for exclusive access. If the file is already locked, spin
 until it is freed. Uses a .lock file, which is not 100% reliable, but seems
@@ -6772,7 +7405,8 @@ while(1) {
 		if ($lockdir) {
 			my $locklink = $lockdir."/".time()."-".int($main::locked_file_count++);
 			symlink($lockfile, $locklink);
-			push(@main::temporary_files, $lockdir);
+			push(@main::temporary_files, $locklink);
+			$main::locked_file_link{$lockfile} = $locklink;
 			}
 	
 		last;
@@ -6807,8 +7441,13 @@ sub unlock_file
 my ($file) = @_;
 my $realfile = &translate_filename($file);
 return if (!$file || !defined($main::locked_file_list{$realfile}));
-unlink("$realfile.lock") if (&can_lock_file($realfile));
+my $lockfile = $realfile.".lock";
+unlink($lockfile) if (&can_lock_file($realfile));
 delete($main::locked_file_list{$realfile});
+if ($main::locked_file_link{$lockfile}) {
+	unlink($main::locked_file_link{$lockfile});
+	delete($main::locked_file_link{$lockfile});
+	}
 if (exists($main::locked_file_data{$realfile})) {
 	# Diff the new file with the old
 	stat($realfile);
@@ -6852,7 +7491,7 @@ if (exists($main::locked_file_data{$realfile})) {
 		# is a file, or has changed type?!
 		my ($diff, $delete_file);
 		my $type = "modify";
-		if (!-r _) {
+		if (!-e $realfile) {
 			open(NEWFILE, ">$realfile");
 			close(NEWFILE);
 			$delete_file++;
@@ -6990,12 +7629,21 @@ my ($param_action,
 
 my $m = $param_module ? $param_module : &get_module_name();
 
+# When logrotate has emptied the actions log, throw away the file changes
+# and annotations that belonged to the rotated entries
+if ($gconfig{'logrotate'} && -e $webmin_logfile && !-s _) {
+    &unlink_file("$ENV{'WEBMIN_VAR'}/diffs");
+    &unlink_file("$ENV{'WEBMIN_VAR'}/files");
+    &unlink_file("$ENV{'WEBMIN_VAR'}/annotations");
+    }
+
 if ($gconfig{'logclear'}) {
     # check if it is time to clear the log
     my @st = stat("$webmin_logfile.time");
     my $write_logtime = 0;
+    my $log_time = $gconfig{'logtime'} || 168;
     if (@st) {
-        if ($st[9]+$gconfig{'logtime'}*60*60 < time()) {
+        if ($st[9]+$log_time*60*60 < time()) {
             # clear logfile and all diff files
             &unlink_file("$ENV{'WEBMIN_VAR'}/diffs");
             &unlink_file("$ENV{'WEBMIN_VAR'}/files");
@@ -7030,7 +7678,7 @@ if ($gconfig{'action_script_dir'}) {
             $ENV{'ACTION_ACTION'} = $param_action;
             $ENV{'ACTION_TYPE'} = $param_type;
             $ENV{'ACTION_OBJECT'} = $param_object;
-            $ENV{'ACTION_SCRIPT'} = $script_name;
+            $ENV{'ACTION_SCRIPT'} = $scriptname;
             foreach my $p (keys %param) {
                 $ENV{'ACTION_PARAM_'.uc($p)} = $param{$p};
                 }
@@ -7048,19 +7696,29 @@ return if ($gconfig{'logmodules'} && &indexof($m,
        split(/\s+/, $gconfig{'logmodules'})) < 0);
 
 # log the action
+my $sid = $main::session_id;
+if ($sid && &foreign_check("acl")) {
+	&foreign_require("acl");
+	$sid = &acl::hash_session_id($sid);
+	}
+else {
+	$sid = undef;
+	}
 my $now = time();
 my @tm = localtime($now);
-my $script_name = $0 =~ /([^\/]+)$/ ? $1 : '-';
 my $id = sprintf "%d.%d.%d", $now, $$, $main::action_id_count;
 my $idprefix = substr($now, 0, 5);
 $main::action_id_count++;
+my $scriptpath = (&get_module_name() ? &get_module_name().'/' : '').$scriptname;
 my $line = sprintf "%s [%2.2d/%s/%4.4d %2.2d:%2.2d:%2.2d] %s %s %s %s %s \"%s\" \"%s\" \"%s\"",
     $id, $tm[3], ucfirst($number_to_month_map{$tm[4]}), $tm[5]+1900,
     $tm[2], $tm[1], $tm[0],
     $remote_user || '-',
-    $main::session_id || '-',
+    $sid || '-',
     $param_client_ip || $ENV{'REMOTE_HOST'} || '-',
-    $m, $param_host ? "$param_host:$param_script_on_host" : $script_name,
+    $m,
+    $param_host ? $param_host.':'.$param_script_on_host :
+	$scriptname ? $scriptpath : '-',
     $param_action, $param_type ne '' ? $param_type : '-', $param_object ne '' ? $param_object : '-';
 my %param;
 $params_hash ||= {};
@@ -7122,7 +7780,8 @@ if ($gconfig{'logfiles'} && !&get_module_variable('$no_log_file_changes')) {
             }
         $i++;
         }
-    @main::locked_file_diff = undef;
+    # Empty the queue so another action does not inherit a blank record.
+    @main::locked_file_diff = ();
     }
 
 if ($gconfig{'logfullfiles'}) {
@@ -7180,8 +7839,18 @@ foreach my $k (keys %{$params_hash}) {
 # Construct description if one is needed
 my $lm = $m || "global";
 my $lu = $base_remote_user || $remote_user;
+my $logemailto;
+if ($gconfig{'logemail'} eq "*") {
+	$logemailto = $gconfig{'webmin_email_to'};
+	if ($logemailto && $gconfig{'webmin_email_to_name'}) {
+		$logemailto = "$gconfig{'webmin_email_to_name'} <$logemailto>";
+		}
+	}
+else {
+	$logemailto = $gconfig{'logemail'};
+	}
 my $logemail =
-       $gconfig{'logemail'} &&
+       $logemailto &&
        (!$gconfig{'logmodulesemail'} ||
     &indexof($lm, split(/\s+/, $gconfig{'logmodulesemail'})) >= 0) &&
        (!$gconfig{'logusersemail'} ||
@@ -7230,10 +7899,7 @@ if ($logemail) {
     $body .= &text('log_email_system', &get_display_hostname())."\n";
     $body .= &text('log_email_user', $remote_user)."\n";
     $body .= &text('log_email_remote', $param_client_ip || $ENV{'REMOTE_HOST'})."\n";
-    $body .= &text('log_email_script', $script_name)."\n";
-    if ($main::session_id) {
-        $body .= &text('log_email_session', $main::session_id)."\n";
-        }
+    $body .= &text('log_email_script', $scriptname)."\n";
     $body .= "\n";
     $body .= $msg."\n";
     my $subj = $mdesc ? &text('log_email_subject', $mdesc)
@@ -7246,7 +7912,7 @@ if ($logemail) {
         }
     &mailboxes::send_text_mail(
         &mailboxes::get_from_address(),
-        $gconfig{'logemail'},
+        $logemailto,
         undef,
         $subj,
         $body);
@@ -7269,84 +7935,190 @@ if ($gconfig{'logfiles'} && !&get_module_variable('$no_log_file_changes')) {
 	}
 }
 
-=head2 var_dump(objref, [filename|no-html], [pid-to-filename])
+=head2 var_dump(@data)
 
-Prints to UI or dumps to a file content of array/hash
-ref or variable. For internal debug use only.
+Dump any Perl values to a log file and, when running in a
+Webmin web context, also print them to the UI.
 
- Examples to print output to UI:
-   var_dump(\@array_ref, 0); # No HTML, standard output
-   var_dump(\%hash_ref);     # HTML output (newlines and spaces replaced with <br> and &nbsp;)
+=item * Call with one or more arguments.
 
- Examples to dump content to a file (under Webmin tempdir):
-   var_dump(\@array_ref, 'array_ref_name', 'add-process-pid-to-filename');
-   var_dump(\%hash_ref, 'hash_ref_name');
+Use a reference for composites to avoid list flattening.
+
+  var_dump(\@array);
+  var_dump(\%hash);
+  var_dump($hashref);
+  var_dump($scalar);
+  var_dump($scalar, \%hash, \@array);
+
+=item * Log file
+
+Prints by appending to the "/tmp/webmin.dump" file.
+
+=item * Header
+
+Each entry starts with:
+  ===== @ Tue Sep 21 12:00:00.123 2025 pid 1234 =====
+
+Millisecond precision is used when Time::HiRes is available.
+
+=item * UI (web context)
+
+If the dump is also printed to the browser, it is HTML-escaped with preserved
+formatting. A single header is sent once per process if a header hasn't already
+been sent.
+
+Long output is collapsed after the first 5 lines, with the rest shown inside an
+expandable/collapsible accordion toggle.
+
+=item * Return
+
+Returns 0 on success, or an "Error: ..." string. If Data::Dumper is missing,
+the error is written to the log and shown in the UI on the web.
+
+=back
 
 =cut
 sub var_dump
 {
-my ($objref, $filename, $pidtofilename) = @_;
-my $pid;
-$pid = "-" . $$ if ($pidtofilename);
-my $filename_ = "$pid";
+my @args = @_;
 
-if ($filename && $filename_) {
-	$filename  =~ tr/A-Za-z0-9\_\-//cd;
-	$filename = "$filename--";
+# Output target
+my $dir = $main::var_dump_dir || $config{'var_dump_dir'} || '/tmp';
+my $filename = $> == 0 ? "webmin.dump" : "webmin-$remote_user.dump";
+my $file = "$dir/$filename";
+
+# Create directory if missing
+mkdir $dir, 0750 if (!-d $dir);
+
+# Timestamp with milliseconds if possible
+my ($sec, $usec);
+{
+	eval 'use Time::HiRes qw(gettimeofday)';
+	if ($@) { $sec = time; $usec = 0; }
+	else { ($sec, $usec) = Time::HiRes::gettimeofday(); }
+}
+my $ts = scalar localtime($sec);
+my $ms = int($usec / 1000);
+$ts =~ s/(\d{2}:\d{2}:\d{2})/$1 . sprintf(".%03d", $ms)/e;
+
+# Open log file ealier to log open errors too
+my $fh;
+my $opened = open($fh, '>>', $file);
+if ($opened) {
+	eval { flock($fh, 2); };
+	print {$fh} "===== @ $ts pid $$ =====\n";
 	}
-state $check_header;
-my $check_headers = sub {
-	if (!$check_header++ && !$main::done_webmin_header) {
-		print "Content-type: text/html\n\n";
-		}
-	};
 
+# Load Data::Dumper dynamically
+my $dumper_err;
 eval 'use Data::Dumper';
-if (!$@) {
-	$Data::Dumper::Indent = 1;
-	$Data::Dumper::Terse = 1;
-	$Data::Dumper::Deepcopy = 1;
-	$Data::Dumper::Sortkeys = 1;
+if ($@) {
+	$dumper_err = "Error: The Data::Dumper Perl module is not available ".
+		      "on your system";
+	print {$fh} "$dumper_err\n" if $opened;
+	}
 
-	# Write file
-	if ($filename) {
-		my ($seconds, $microseconds);
-			eval 'use Time::Piece';
-			if (!$@) {
-				eval 'use Time::HiRes';
-				if (!$@) {
-				($seconds, $microseconds) = Time::HiRes::gettimeofday;
-				$microseconds = "$seconds$microseconds-";
+# Build dump or error text
+my $dump_txt = $dumper_err || '';
+if (!$dumper_err) {
+	local $Data::Dumper::Indent    = 2;
+	local $Data::Dumper::Terse     = 1;
+	local $Data::Dumper::Sortkeys  = 1;
+	local $Data::Dumper::Quotekeys = 0;
+	local $Data::Dumper::Useqq     = 0;
+	for (my $i = 0; $i < @args; $i++) {
+		$dump_txt .= "----- param #".($i+1)." -----\n";
+		$dump_txt .= Data::Dumper::Dumper($args[$i]);
+		}
+	}
+
+# Write to file or show error if can't open
+$dump_txt = "Error: open($file) failed: $!\n" . ($dump_txt // '') if (!$opened);
+if ($opened) {
+	print {$fh} $dump_txt, "\n\n";
+	eval { flock($fh, 8); };
+	close $fh or return "Error: close($file): $!";
+	}
+
+# Optionally print to UI (web scripts only) only if header already sent
+if ($main::done_webmin_header && $main::webmin_script_type eq 'web') {
+	# Limit long dumps by wrapping parameter chunks between accordion lines
+	my $out = $dump_txt;
+	# Add header
+	$out = "===== @ $ts pid $$ =====\n" . $out;
+	# Split into chunks
+	my @chunks;
+	{
+		my $param_re = qr/^-{3,}\s*param\s*#\d+\s*-{3,}\s*$/i;
+		my @lines = split /\n/, $out, -1;
+		my ($cur_header, @cur_lines);
+		my $push_chunk = sub {
+			push @chunks, {
+				header => $cur_header,
+				lines  => [ @cur_lines ] }
+					if defined($cur_header) || @cur_lines;
+			($cur_header, @cur_lines) = (undef);
+			};
+
+		for my $ln (@lines) {
+			if ($ln =~ $param_re) {
+				$push_chunk->();
+				$cur_header = $ln;
+				}
+			else {
+				push @cur_lines, $ln;
 				}
 			}
-		write_file_contents(tempname("${microseconds}${filename}${filename_}"), Dumper($objref));
-		}
-	# Print on screen
-	else {
-		my $dumped_data = Dumper($objref);
-		# If print to UI, escape HTML and
-		# replace new lines and spaces
-		if ($main::webmin_script_type eq 'web') {
-			$dumped_data = &html_escape($dumped_data);
-			$dumped_data =~ s/\n/<br>/g;
-			$dumped_data =~ s/\s/&nbsp;/g;
+		$push_chunk->();
+	}
+	# Render each chunk and wrap only param chunks that have more than the
+	# limit lines
+	my $limit = 5;
+	my $esc = sub {
+		my ($s) = @_;
+		$s =~ s/&/&amp;/g;
+		$s =~ s/</&lt;/g;
+		$s =~ s/>/&gt;/g;
+		$s =~ s/"/&quot;/g;
+		$s =~ s/'/&apos;/g;
+		$s =~ s/ /&nbsp;/g;
+		return $s;
+	};
+	my @rendered;
+	my $first = 1;
+	for my $c (@chunks) {
+		my $piece = '';
+		$piece .= "<br>\n" unless $first;
+		$first = 0;
+
+		my $hdr = defined $c->{header} ? $esc->($c->{header}) : undef;
+		my @elines = map { $esc->($_) } @{$c->{lines}};
+
+		$piece .= "$hdr<br>\n" if defined $hdr;
+
+		if (defined($hdr) && @elines > $limit) {
+			# Param chunk with wrapping
+			my $head = join '<br>', @elines[0 .. $limit-1];
+			my $tail = join '<br>', @elines[$limit .. $#elines];
+			$piece  .= $head
+				.  "<br>\n"
+				.  "<details class=\"inline\">"
+				.  "<summary>&nbsp;&nbsp;...</summary>\n"
+				.  $tail . "\n</details>\n";
 			}
-		&$check_headers();
-		$objref && print $dumped_data;
+		else {
+			# Non-param chunk or short param with no wrapping
+			$piece .= join '<br>', @elines;
+			}
+		push @rendered, $piece;
 		}
+	$out = join('', @rendered);
+	$out .= "<br>\n";
+	print "<tt>$out</tt>";
 	}
-else {
-	my $dumpererr = "Error: The Data::Dumper Perl module is not available on your system";
-	# Write file
-	if ($filename) {
-		write_file_contents(tempname("${filename_}_error"), $dumpererr);
-		}
-	# Print on screen
-	else {
-		&$check_headers();
-		$objref && print Dumper($dumpererr);
-		}
-	}
+
+# Return result
+return $dumper_err || 0;
 }
 
 =head2 webmin_debug_log(type, message)
@@ -7363,7 +8135,7 @@ if ($gconfig{'debug_modules'}) {
 	my @dmods = split(/\s+/, $gconfig{'debug_modules'});
 	return 0 if (&indexof($main::initial_module_name, @dmods) < 0);
 	}
-my $now;
+my ($now, $ms);
 eval 'use Time::HiRes qw(gettimeofday); ($now, $ms) = gettimeofday';
 $now ||= time();
 my @tm = localtime($now);
@@ -7451,6 +8223,7 @@ my $pid = &open_execute_command(OUT, "($realcmd) <".quotemeta($null_file), 1, $_
 my $start = time();
 my $timed_out = 0;
 my $linecount = 0;
+my $bufsize = $_[3] ? 80 : &get_buffer_size();
 while(1) {
 	my $elapsed = time() - $start;
 	last if ($elapsed > $_[1]);
@@ -7459,10 +8232,10 @@ while(1) {
 	my $sel = select($rmask, undef, undef, $_[1] - $elapsed);
 	last if (!$sel || $sel < 0);
 	my $line;
-	my $got = read(OUT, $line, 1);
+	my $got = read(OUT, $line, $bufsize);
 	last if (!$got);
 	$out .= $line;
-	$linecount++;
+	$linecount += scalar(() = $out =~ /\n/g);
 	if ($_[3] && $linecount >= $_[3]) {
 		# Got enough lines
 		last;
@@ -7859,18 +8632,20 @@ if (&is_selinux_enabled() && &has_command("chcon")) {
 return wantarray ? (1, undef) : 1;
 }
 
-=head2 copy_source_dest(source, dest, [copy-link-target])
+=head2 copy_source_dest(source, dest, [copy-link-target], [keep-dest-permissions])
 
 Copy some file or directory to a new location. Returns 1 on success, or 0
 on failure - also sets $! on failure. If the source is a directory, uses
 piped tar commands to copy a whole directory structure including permissions
-and special files.
+and special files. If keep-dest-permissions is set for a regular file, copies
+the file contents without changing the destination's existing permissions or
+ownership.
 
 =cut
 sub copy_source_dest
 {
 return (1, undef) if (&is_readonly_mode());
-my ($src, $dst, $copylink) = @_;
+my ($src, $dst, $copylink, $keepperms) = @_;
 my $ok = 1;
 my ($err, $out);
 &webmin_debug_log('COPY', "src=$src dst=$dst")
@@ -7906,6 +8681,47 @@ elsif (-d $src) {
 	if ($?) {
 		$ok = 0;
 		$err = $out;
+		}
+	}
+elsif ($keepperms) {
+	# Copy contents without changing destination permissions
+	my ($in, $outfh);
+	if (!open($in, "<", $src)) {
+		$ok = 0;
+		$err = "$src : $!";
+		}
+	elsif (!open($outfh, ">", $dst)) {
+		$ok = 0;
+		$err = "$dst : $!";
+		close($in);
+		}
+	else {
+		binmode($in);
+		binmode($outfh);
+		my $buf;
+		my $bs = &get_buffer_size();
+		while (1) {
+			my $got = read($in, $buf, $bs);
+			if (!defined($got)) {
+				$ok = 0;
+				$err = "$src : $!";
+				last;
+				}
+			last if (!$got);
+			if (!print $outfh $buf) {
+				$ok = 0;
+				$err = "$dst : $!";
+				last;
+				}
+			}
+		if (!close($in) && $ok) {
+			$ok = 0;
+			$err = "$src : $!";
+			}
+		if (!close($outfh) && $ok) {
+			$ok = 0;
+			$err = "$dst : $!";
+			}
 		}
 	}
 else {
@@ -7958,6 +8774,100 @@ return ref($s) && $s->{'host'} && $s->{'port'} ?
 		"$s->{'host'}:$s->{'port'}.$$" :
        $s eq "" || ref($s) && $s->{'id'} == 0 ? "" :
        ref($s) ? "" : "$s.$$";
+}
+
+=head2 verify_session_id(session-id, [sessiondb], [miniserv])
+
+Returns the username (or an array with user, last login, and IP address) for the
+given session (or session hash) ID, or undefined if session ID is invalid.
+
+Args:
+
+    $sid: The session ID to verify
+
+    $sessiondb: A reference to the session database hash (optional)
+
+    $miniserv: A reference to the miniserv configuration hash (optional)
+
+Returns:
+
+    In list context: A list containing the user, last activity time, and IP
+	address associated with the session ID.
+
+    In scalar context: The user associated with the session ID.
+
+    If the session ID is not found, returns an empty list in list context
+	or undef in scalar context.
+
+Usage:
+
+    Retrieve the username associated with the session ID or undef if
+    session is invalid.
+    
+        my $user = verify_session_id($main::session_id);
+        Example of return:
+          root
+  
+    Retrieve array containing the user, last login, and IP address
+    for given session hash ID or undef if session is invalid.
+  
+        my (@user) = verify_session_id('BSRxr6wpF25lqeRinQ/sv0');
+        Example of return:
+          [
+            'root',
+            '1719401071',
+            '10.211.55.2'
+          ]
+
+    Retrieve the username associated with the session ID, using given
+    session DB or undef if session is invalid.
+
+        my %sessiondb;
+        dbmopen(%sessiondb, "$var_directory/sessiondb", 0400);
+        my $user = verify_session_id($main::session_id, \%sessiondb);
+        dbmclose(%sessiondb);
+        Example of return:
+          someuser1
+
+=cut
+sub verify_session_id
+{
+my ($sid, $sessiondb, $miniserv) = @_;
+my $hashsessionidfunc = \&miniserv::hash_session_id;
+my %miniserv;
+if ($miniserv) {
+	# Use provided miniserv configuration
+	%miniserv = %{$miniserv};
+	}
+else {
+	# Load miniserv configuration if not provided
+	&get_miniserv_config(\%miniserv);
+	}
+my %sessiondb_;
+if ($sessiondb) {
+	# Use provided session database
+	%sessiondb_ = %{$sessiondb};
+	}
+elsif (&foreign_available('acl')) {
+	# Use session database using ACL module API
+	&foreign_require("acl");
+	&acl::open_session_db(\%miniserv);
+	$hashsessionidfunc = \&acl::hash_session_id;
+	%sessiondb_ = %acl::sessiondb;
+	}
+else {
+	return wantarray ? ( ) : undef;
+	}
+# Verify given session (hash) ID against the session database
+foreach my $k (grep { $sessiondb_{$_} } keys %sessiondb_) {
+	if ($k eq $sid ||
+	    (defined($hashsessionidfunc) && $k eq $hashsessionidfunc->($sid))) {
+		my ($user, $last, $ip) = split(/\s+/, $sessiondb_{$k});
+		return wantarray ? ($user, $last, $ip) : $user;
+		}
+	}
+# Return an empty list or undef if session ID is not found
+return wantarray ? ( ) : undef;
 }
 
 =head2 remote_foreign_require(server, module, file)
@@ -8110,17 +9020,30 @@ else {
 	my ($data, $got);
 	my $rv = &remote_rpc_call($host, { 'action' => 'tcpwrite',
 					   'file' => $remotefile,
-					   'name' => $remotebase } );
+					   'name' => $remotebase,
+					   'xferauth' => 1 } );
 	my $error;
 	my $serv = !ref($host) ? $host : ($host->{'ip'} || $host->{'host'});
 	&open_socket($serv || "localhost", $rv->[1], TWRITE, \$error);
 	return &$main::remote_error_handler("Failed to transfer file : $error")
 		if ($error);
+	print TWRITE $rv->[2],"\n" if ($rv->[2]);
 	open(FILE, "<".$localfile) ||
 		return &$main::remote_error_handler("Failed to open $localfile : $!");
 	my $bs = &get_buffer_size();
+	my $last_ping = time();
+	my $ping_every = int(($gconfig{'rpc_timeout'} || 60) / 2);
+	$ping_every = 30 if ($ping_every < 30);
 	while(read(FILE, $got, $bs) > 0) {
 		print TWRITE $got;
+		if (time() - $last_ping >= $ping_every) {
+			eval {
+				local $main::remote_error_handler =
+					sub { return undef; };
+				&remote_rpc_call($host, { 'action' => 'ping' });
+				};
+			$last_ping = time();
+			}
 		}
 	close(FILE);
 	shutdown(TWRITE, 1);
@@ -8151,7 +9074,8 @@ if ($sn eq "" && ref($s) && $s->{'local'}) {
 	}
 else {
 	my $rv = &remote_rpc_call($host, { 'action' => 'tcpread',
-					   'file' => $remotefile } );
+					   'file' => $remotefile,
+					   'xferauth' => 1 } );
 	if (!$rv->[0]) {
 		return &$main::remote_error_handler("Failed to transfer file : $rv->[1]");
 		}
@@ -8160,12 +9084,24 @@ else {
 	&open_socket($serv || "localhost", $rv->[1], TREAD, \$error);
 	return &$main::remote_error_handler("Failed to transfer file : $error")
 		if ($error);
+	print TREAD $rv->[2],"\n" if ($rv->[2]);
 	my $got;
 	open(FILE, ">$localfile") ||
 		return &$main::remote_error_handler("Failed to open $localfile : $!");
 	my $bs = &get_buffer_size();
+	my $last_ping = time();
+	my $ping_every = int(($gconfig{'rpc_timeout'} || 60) / 2);
+	$ping_every = 30 if ($ping_every < 30);
 	while(read(TREAD, $got, $bs) > 0) {
 		print FILE $got;
+		if (time() - $last_ping >= $ping_every) {
+			eval {
+				local $main::remote_error_handler =
+					sub { return undef; };
+				&remote_rpc_call($host, { 'action' => 'ping' });
+				};
+			$last_ping = time();
+			}
 		}
 	close(FILE);
 	close(TREAD);
@@ -8184,13 +9120,13 @@ foreach my $sn (keys %remote_session) {
 	my $server = $remote_session_server{$sn};
 	&remote_rpc_call($server, { 'action' => 'quit',
 			            'session' => $remote_session{$sn} } );
-	delete($remote_session{$sn});
-	delete($remote_session_server{$sn});
 	}
+%remote_session = ( );
+%remote_session_server = ( );
 foreach my $fh (keys %fast_fh_cache) {
 	close($fh);
-	delete($fast_fh_cache{$fh});
 	}
+%fast_fh_cache = ( );
 }
 
 =head2 remote_error_setup(&function)
@@ -8203,6 +9139,25 @@ sub remote_error_setup
 {
 my ($func) = @_;
 $main::remote_error_handler = $func || \&error;
+}
+
+=head2 remote_rpc_login_error(&connection, username)
+
+Reads the headers from a failed remote RPC login attempt and
+returns a more helpful error message when the server provides one.
+
+=cut
+sub remote_rpc_login_error
+{
+my ($con, $user) = @_;
+my ($headers, undef, $bad_header) = &read_http_headers($con);
+&close_http_connection($con);
+my $msg = ".. login to RPC server as ".($user || 'unknown')." rejected";
+my $reason = !$bad_header ? &get_http_auth_reason($headers) : undef;
+if ($reason) {
+	$reason = &html_escape($reason);
+	}
+return $reason ? "$msg : @{[lcfirst $reason]}" : $msg;
 }
 
 =head2 remote_rpc_call(server, &structure)
@@ -8241,6 +9196,17 @@ elsif ($serv_host) {
 	}
 my $ip = $serv->{'ip'} || $serv->{'host'};
 
+# Set certificate checks for either RPC transport
+my $reqs;
+if ($serv->{'checkssl'}) {
+	$reqs = { 'host' => $serv->{'host'},
+		  'self' => 1 };
+	my %sconfig = &foreign_config("servers");
+	if ($sconfig{'capath'}) {
+		$reqs->{'capath'} = $sconfig{'capath'};
+		}
+	}
+
 # Work out the username and password
 my ($user, $pass);
 if ($serv->{'sameuser'}) {
@@ -8258,15 +9224,6 @@ if ($serv->{'fast'} || !$sn) {
 	# Make TCP connection call to fastrpc.cgi
 	if (!$fast_fh_cache{$sn} && $sn) {
 		# Need to open the connection
-		my $reqs;
-		if ($serv->{'checkssl'}) {
-			$reqs = { 'host' => $serv->{'host'},
-				  'self' => 1 };
-			my %sconfig = &foreign_config("servers");
-			if ($sconfig{'capath'}) {
-				$reqs->{'capath'} = $sconfig{'capath'};
-				}
-			}
 		my $con = &make_http_connection(
 			$ip, $serv->{'port'}, $serv->{'ssl'},
 			"GET", "/fastrpc.cgi", undef, undef, $reqs);
@@ -8284,7 +9241,8 @@ if ($serv->{'fast'} || !$sn) {
 		my $line = &read_http_connection($con);
 		$line =~ tr/\r\n//d;
 		if ($line =~ /^HTTP\/1\..\s+40[13]\s+/) {
-			return &$main::remote_error_handler("Login to RPC server as $user rejected");
+			return &$main::remote_error_handler(
+				&remote_rpc_login_error($con, $user));
 			}
 		$line || return &$main::remote_error_handler("HTTP error : No status line");
 		$line =~ /^HTTP\/1\..\s+200\s+/ ||
@@ -8389,7 +9347,7 @@ if ($serv->{'fast'} || !$sn) {
 	my $rstr = <$fh>;
 	if ($rstr eq '') {
 		return &$main::remote_error_handler(
-			"Error reading response length from fastrpc.cgi : $!")
+			"Error reading response length from fastrpc.cgi : $!");
 		}
 	my $rlen = int($rstr);
 	my ($fromstr, $got);
@@ -8437,7 +9395,8 @@ else {
 	my $error = 0;
 	my $tostr = &serialise_variable($str);
 	my $con = &make_http_connection($ip, $serv->{'port'},
-					$serv->{'ssl'}, "POST", "/rpc.cgi");
+					$serv->{'ssl'}, "POST", "/rpc.cgi",
+					undef, undef, $reqs);
 	return &$main::remote_error_handler("Failed to connect to $serv->{'host'} : $con") if (!ref($con));
 
 	&write_http_connection($con, "Host: $serv->{'host'}\r\n");
@@ -8453,8 +9412,9 @@ else {
 	my $line = &read_http_connection($con);
 	$line =~ tr/\r\n//d;
 	if ($line =~ /^HTTP\/1\..\s+401\s+/) {
-		return &$main::remote_error_handler("Login to RPC server as $user rejected");
-		}
+		return &$main::remote_error_handler(
+			&remote_rpc_login_error($con, $user));
+			}
 	$line || return &$main::remote_error_handler("HTTP error : No status line");
 	$line =~ /^HTTP\/1\..\s+200\s+/ || return &$main::remote_error_handler("RPC HTTP error : $line");
 	do {
@@ -8732,9 +9692,14 @@ sub help_file
 my ($mod, $file, $forcedir) = @_;
 my $dir = $forcedir || &module_root_directory($mod)."/help";
 my $auto = load_language_auto();
+my $neutral = load_language_neutral();
 foreach my $o (@lang_order_list) {
 	my $lang = "$dir/$file.$o.html";
+	my $lang_neutral = "$dir/$file.$o.neutral.html";
 	my $lang_auto = "$dir/$file.$o.auto.html";
+	if ($neutral && -r $lang_neutral) {
+		return $lang_neutral;
+		}
 	if ($auto && !-r $lang && -r $lang_auto) {
 		return $lang_auto;
 		}
@@ -8767,6 +9732,7 @@ if (-r $zip) {
 	my @files;
 	foreach my $o (@lang_order_list) {
 		next if ($o eq "en");
+		push(@files, $file.".".$o.".neutral.html");
 		push(@files, $file.".".$o.".auto.html");
 		push(@files, $file.".".$o.".html");
 		}
@@ -8880,8 +9846,23 @@ else {
 	}
 }
 
+=head2 can_use_http_ssl()
+
+Returns 1 if this Webmin process can make outbound HTTPS connections, or 0
+if the required Net::SSLeay Perl module is not available.
+
+=cut
+my $can_use_http_ssl_cache;
+sub can_use_http_ssl
+{
+return $can_use_http_ssl_cache if (defined($can_use_http_ssl_cache));
+eval "use Net::SSLeay";
+$can_use_http_ssl_cache = $@ ? 0 : 1;
+return $can_use_http_ssl_cache;
+}
+
 =head2 make_http_connection(host, port, ssl, method, page, [&headers],
-			    [&certreqs])
+			    [bind-ip], [&certreqs], [address-family])
 
 Opens a connection to some HTTP server, maybe through a proxy, and returns
 a handle object. The handle can then be used to send additional headers
@@ -8898,20 +9879,32 @@ The parameters are :
 
 =item page - Page to request on the webserver, like /foo/index.html
 
-=item headers - Array ref of additional HTTP headers, each of which is a 2-element array ref.
+=item headers - Array ref of additional HTTP headers, each of which is a 2-element array ref,
+		or a hash ref of header names to values.
 
 =item bindip - IP address to bind to for outgoing HTTP connection
 
 =item certreqs - A hash ref containing options for remote cert verification
 
+=item address-family - If set to 4 or 6, connects only using that IP family.
+
 =cut
 sub make_http_connection
 {
-my ($host, $port, $ssl, $method, $page, $headers, $bindip, $certreqs) = @_;
+my ($host, $port, $ssl, $method, $page, $headers, $bindip, $certreqs,
+    $family) = @_;
 my $htxt;
-if ($headers) {
+if (ref($headers) eq 'ARRAY') {
+	# Headers are name-value pairs
 	foreach my $h (@$headers) {
 		$htxt .= $h->[0].": ".$h->[1]."\r\n";
+		}
+	$htxt .= "\r\n";
+	}
+elsif (ref($headers) eq 'HASH') {
+	# Headers are a hash ref
+	foreach my $h (keys %$headers) {
+		$htxt .= $h.": ".$headers->{$h}."\r\n";
 		}
 	$htxt .= "\r\n";
 	}
@@ -8921,8 +9914,7 @@ if (&is_readonly_mode()) {
 my $rv = { 'fh' => time().$$ };
 if ($ssl) {
 	# Connect using SSL
-	eval "use Net::SSLeay";
-	$@ && return $text{'link_essl'};
+	&can_use_http_ssl() || return $text{'link_essl'};
 	eval "Net::SSLeay::SSLeay_add_ssl_algorithms()";
 	eval "Net::SSLeay::OpenSSL_add_all_algorithms()";
 	eval "Net::SSLeay::load_error_strings()";
@@ -8931,13 +9923,15 @@ if ($ssl) {
 	if ($certreqs && $certreqs->{'capath'}) {
 		# Require that remote cert be signed by a valid CA
 		$main::last_set_verify_err = undef;
-		if (-d $certreqs->{'capath'}) {
-			Net::SSLeay::CTX_load_verify_locations(
-				$rv->{'ssl_ctx'}, "", $certreqs->{'capath'});
-			}
-		else {
-			Net::SSLeay::CTX_load_verify_locations(
-				$rv->{'ssl_ctx'}, $certreqs->{'capath'}, "");
+		foreach my $capath (split(/\s+/, $certreqs->{'capath'})) {
+			if (-d $capath) {
+				Net::SSLeay::CTX_load_verify_locations(
+					$rv->{'ssl_ctx'}, "", $capath);
+				}
+			else {
+				Net::SSLeay::CTX_load_verify_locations(
+					$rv->{'ssl_ctx'}, $capath, "");
+				}
 			}
 		Net::SSLeay::CTX_set_verify(
 			$rv->{'ssl_ctx'}, &Net::SSLeay::VERIFY_PEER,
@@ -8982,7 +9976,7 @@ if ($ssl) {
 	    !&no_proxy($host)) {
 		# Via proxy
 		my $error;
-		&open_socket($1, $2, $rv->{'fh'}, \$error, $bindip);
+		&open_socket($1, $2, $rv->{'fh'}, \$error, $bindip, $family);
 		if (!$error) {
 			# Connected OK
 			my $fh = $rv->{'fh'};
@@ -9013,8 +10007,10 @@ if ($ssl) {
 	if (!$connected) {
 		# Direct connection
 		my $error;
-		&open_socket($host, $port, $rv->{'fh'}, \$error, $bindip);
+		my $ip = &open_socket($host, $port, $rv->{'fh'}, \$error, $bindip,
+				      $family);
 		return $error if ($error);
+		$rv->{'ip'} = $ip;
 		}
 	Net::SSLeay::set_fd($rv->{'ssl_con'}, fileno($rv->{'fh'}));
 	eval {
@@ -9042,7 +10038,7 @@ else {
 	    !&no_proxy($host)) {
 		# Via a proxy
 		my $error;
-		&open_socket($1, $2, $rv->{'fh'}, \$error, $bindip);
+		&open_socket($1, $2, $rv->{'fh'}, \$error, $bindip, $family);
 		if (!$error) {
 			# Connected OK
 			$connected = 1;
@@ -9066,9 +10062,11 @@ else {
 	if (!$connected) {
 		# Connecting directly
 		my $error;
-		&open_socket($host, $port, $rv->{'fh'}, \$error, $bindip);
+		my $ip = &open_socket($host, $port, $rv->{'fh'}, \$error, $bindip,
+				      $family);
 		return $error if ($error);
 		my $fh = $rv->{'fh'};
+		$rv->{'ip'} = $ip;
 		my $rtxt = "$method $page HTTP/1.0\r\n".$htxt;
 		print $fh $rtxt;
 		}
@@ -9200,9 +10198,21 @@ my $h = shift(@_);
 my $fh = $h->{'fh'};
 my $allok = 1;
 if ($h->{'ssl_ctx'}) {
+	# Net::SSLeay::write returns a byte count, but regular length/substr may
+	# count characters for UTF-8-flagged strings. Mixing those units could
+	# end the retry loop early or skip data, so track lengths and offsets in
+	# bytes.
 	foreach my $s (@_) {
-		my $ok = Net::SSLeay::write($h->{'ssl_con'}, $s);
-		$allok = 0 if (!$ok);
+		my $len = bytes::length($s);
+		my $got = 0;
+		while($got < $len) {
+			my $ok = Net::SSLeay::write(
+				$h->{'ssl_con'}, bytes::substr($s, $got));
+			if (!defined($ok) || $ok <= 0) {
+				return 0;
+				}
+			$got += $ok;
+			}
 		}
 	}
 else {
@@ -9223,6 +10233,51 @@ my ($h) = @_;
 return close($h->{'fh'});
 }
 
+=head2 read_http_headers(&handle)
+
+Reads HTTP response headers from the connection until the blank line after
+them. In list context returns a hashref of lower-cased header names, the raw
+header text, and an optional offending header line. If an invalid header line
+is encountered, the headers and raw text are undef and the third return value
+contains the offending line.
+
+=cut
+sub read_http_headers
+{
+my ($h) = @_;
+my (%headers, $raw);
+while(defined(my $line = &read_http_connection($h))) {
+	$line =~ tr/\r\n//d;
+	last if ($line eq '');
+	if ($line =~ /^(\S+):\s*(.*)$/) {
+		$headers{lc($1)} = $2;
+		$raw .= $line."\n";
+		}
+	else {
+		return wantarray ? (undef, undef, $line) : undef;
+		}
+	}
+return wantarray ? (\%headers, $raw, undef) : \%headers;
+}
+
+=head2 get_http_auth_reason(&headers)
+
+Returns the Webmin-specific authentication reason from a parsed HTTP headers
+hash, if present.
+
+=cut
+sub get_http_auth_reason
+{
+my ($headers) = @_;
+my $reason = $headers->{'x-webmin-auth-reason'} ||
+	     $headers->{'x-webmin-auth-error'};
+if ($reason) {
+	$reason =~ s/\s+/ /g;
+	$reason =~ s/^\s+|\s+$//g;
+	}
+return $reason;
+}
+
 =head2 clean_environment
 
 Deletes any environment variables inherited from miniserv so that they
@@ -9230,10 +10285,14 @@ won't be passed to programs started by webmin. This is useful when calling
 programs that check for CGI-related environment variables and modify their
 behaviour, and to avoid passing sensitive variables to un-trusted programs.
 
+Calls can be nested, with each reset_environment undoing the most recent call.
+
 =cut
 sub clean_environment
 {
-%UNCLEAN_ENV = %ENV;
+# Save each environment separately so nested calls restore in order
+push(@main::clean_environment_stack, { %ENV });
+%UNCLEAN_ENV = %ENV if (@main::clean_environment_stack == 1);
 foreach my $k (keys %ENV) {
 	if ($k =~ /^(HTTP|VIRTUALSERVER|QUOTA|USERADMIN)_/) {
 		delete($ENV{$k});
@@ -9255,17 +10314,17 @@ foreach my $e ('WEBMIN_CONFIG', 'SERVER_NAME', 'CONTENT_TYPE', 'REQUEST_URI',
 
 =head2 reset_environment
 
-Puts the environment back how it was before clean_environment was callled.
+Puts the environment back how it was before the matching cleanup call.
+A reset with no cleanup to match does nothing.
 
 =cut
 sub reset_environment
 {
-if (%UNCLEAN_ENV) {
-	foreach my $k (keys %UNCLEAN_ENV) {
-		$ENV{$k} = $UNCLEAN_ENV{$k};
-		}
-	undef(%UNCLEAN_ENV);
+my $saved = pop(@main::clean_environment_stack);
+if ($saved) {
+	%ENV = %$saved;
 	}
+undef(%UNCLEAN_ENV) if (!@main::clean_environment_stack);
 }
 
 =head2 clean_language
@@ -9277,7 +10336,9 @@ reset_environment.
 =cut
 sub clean_language
 {
-if (!%UNCLEAN_ENV) {
+# Share the snapshot from a preceding clean_environment call
+if (!@main::clean_environment_stack) {
+	push(@main::clean_environment_stack, { %ENV });
 	%UNCLEAN_ENV = %ENV;
 	}
 $ENV{'LANG'} = '';
@@ -9294,16 +10355,17 @@ out progress of an HTTP request.
 =cut
 sub progress_callback
 {
+my ($mode, $arg) = @_;
 if (defined(&theme_progress_callback)) {
 	# Call the theme override
 	return &theme_progress_callback(@_);
 	}
-if ($_[0] == 2) {
+if ($mode == 2) {
 	# Got size
 	print $progress_callback_prefix;
-	if ($_[1]) {
-		$progress_size = $_[1];
-		$progress_step = int($_[1] / 10);
+	if ($arg) {
+		$progress_size = $arg;
+		$progress_step = int($arg / 10);
 		print &text('progress_size2',
 			    &html_escape($progress_callback_url),
 			    &nice_size($progress_size)),"<br>\n";
@@ -9315,42 +10377,42 @@ if ($_[0] == 2) {
 		}
 	$last_progress_time = $last_progress_size = undef;
 	}
-elsif ($_[0] == 3) {
+elsif ($mode == 3) {
 	# Got data update
 	my $sp = $progress_callback_prefix.("&nbsp;" x 5);
 	if ($progress_size) {
 		# And we have a size to compare against
-		my $st = int(($_[1] * 10) / $progress_size);
+		my $st = int(($arg * 10) / $progress_size);
 		my $time_now = time();
 		if ($st != $progress_step ||
 		    $time_now - $last_progress_time > 60) {
 			# Show progress every 10% or 60 seconds
-			print $sp,&text('progress_datan', &nice_size($_[1]),
-				        int($_[1]*100/$progress_size)),"<br>\n";
+			print $sp,&text('progress_datan', &nice_size($arg),
+				        int($arg*100/$progress_size)),"<br>\n";
 			$last_progress_time = $time_now;
 			}
 		$progress_step = $st;
 		}
 	else {
 		# No total size .. so only show in 1M jumps
-		if ($_[1] > $last_progress_size+1024*1024) {
+		if ($arg > $last_progress_size+1024*1024) {
 			print $sp,&text('progress_data2n',
-					&nice_size($_[1])),"<br>\n";
-			$last_progress_size = $_[1];
+					&nice_size($arg)),"<br>\n";
+			$last_progress_size = $arg;
 			}
 		}
 	}
-elsif ($_[0] == 4) {
+elsif ($mode == 4) {
 	# All done downloading
 	print $progress_callback_prefix,&text('progress_done'),"<br>\n";
 	}
-elsif ($_[0] == 5) {
+elsif ($mode == 5) {
 	# Got new location after redirect
-	$progress_callback_url = $_[1];
+	$progress_callback_url = $arg;
 	}
-elsif ($_[0] == 6) {
+elsif ($mode == 6) {
 	# URL is in cache
-	$progress_callback_url = $_[1];
+	$progress_callback_url = $arg;
 	print &text('progress_incache',
 		    &html_escape($progress_callback_url)),"<br>\n";
 	}
@@ -9522,10 +10584,15 @@ sub filter_javascript
 my ($rv, $type) = @_;
 if (!$type || $type eq 'html') {
 	$rv =~ s/<\s*script[^>]*>([\000-\377]*?)<\s*\/script\s*>//gi;
-	$rv =~ s/(on(Abort|BeforeUnload|Blur|Change|Click|ContextMenu|Copy|Cut|DblClick|Drag|DragEnd|DragEnter|DragLeave|DragOver|DragStart|DragDrop|Drop|Error|Focus|FocusIn|FocusOut|HashChange|Input|Invalid|KeyDown|KeyPress|KeyUp|Load|MouseDown|MouseEnter|MouseLeave|MouseMove|MouseOut|MouseOver|MouseUp|Move|Paste|PageShow|PageHide|Reset|Resize|Scroll|Search|Select|Submit|Toggle|Unload)=)/x$1/gi;
 	$rv =~ s/(javascript(:|&colon;|&#58;|&#x3A;))/x$1/gi;
 	$rv =~ s/(vbscript(:|&colon;|&#58;|&#x3A;))/x$1/gi;
-	$rv =~ s/<([^>]*\s|)(on\S+=)(.*)>/<$1x$2$3>/gi;
+	my $event_attr = qr/on[a-z][a-z0-9_:-]*\s*=/i;
+	my $event_attrs;
+	do {
+		$event_attrs = 0;
+		$event_attrs += $rv =~ s{(<[^>]*?)([\s/]+)($event_attr)}{$1$2x$3}g;
+		$event_attrs += $rv =~ s{(<)($event_attr)}{$1x$2}g;
+		} while ($event_attrs);
 	}
 if ($type eq 'pdf') {
 	$rv =~ s/([\n]*)<<[\n((?:.*?|\n)*?)][\w\s\/]+[\n((?:.*?|\n)*?)][\w\s\/]+JavaScript[\w\s\/]*[\n((?:.*?|\n)*?)][\w\s\/]+\s.*?>>[\n]*/$1/gmsi;
@@ -9534,32 +10601,43 @@ if ($type eq 'pdf') {
 return $rv;
 }
 
-=head2 resolve_links(path)
+=head2 resolve_links(path, [&seen-hash])
 
 Given a path that may contain symbolic links, returns the real path.
+Stops at a cycle or after 64 link expansions, returning the unresolved path.
 
 =cut
 sub resolve_links
 {
-my ($path) = @_;
+my ($path, $seen) = @_;
+$seen ||= { };
 $path =~ s/\/+/\//g;
 $path =~ s/\/$// if ($path ne "/");
+# Growing loops never repeat a full path, so also limit link expansions.
+return $path if (keys %$seen >= 64);
 my @p = split(/\/+/, $path);
 shift(@p);
 for(my $i=0; $i<@p; $i++) {
 	my $sofar = "/".join("/", @p[0..$i]);
 	my $lnk = readlink($sofar);
+	if (defined($lnk)) {
+		# Earlier components are resolved, so only simplify this prefix.
+		# Do not collapse .. past a symlink in the remaining path.
+		my $simple = &simplify_path($sofar) || $sofar;
+		my $key = $simple."/".join("/", @p[$i+1 .. $#p]);
+		return $path if ($seen->{$key}++);
+		}
 	if ($lnk eq $sofar) {
 		# Link to itself! Cannot do anything more really ..
 		last;
 		}
 	elsif ($lnk =~ /^\//) {
 		# Link is absolute..
-		return &resolve_links($lnk."/".join("/", @p[$i+1 .. $#p]));
+		return &resolve_links($lnk."/".join("/", @p[$i+1 .. $#p]), $seen);
 		}
 	elsif ($lnk) {
 		# Link is relative
-		return &resolve_links("/".join("/", @p[0..$i-1])."/".$lnk."/".join("/", @p[$i+1 .. $#p]));
+		return &resolve_links("/".join("/", @p[0..$i-1])."/".$lnk."/".join("/", @p[$i+1 .. $#p]), $seen);
 		}
 	}
 return $path;
@@ -9758,35 +10836,17 @@ my @usermods = &list_usermods();
 @rv = sort { lc($a->{'desc'}) cmp lc($b->{'desc'}) }
 	    &available_usermods(\@rv, \@usermods);
 
-# Check RBAC restrictions
-my @rbacrv;
-foreach my $m (@rv) {
-	if (&supports_rbac($m->{'dir'}) &&
-	    &use_rbac_module_acl(undef, $m->{'dir'})) {
-		local $rbacs = &get_rbac_module_acl($remote_user,
-						    $m->{'dir'});
-		if ($rbacs) {
-			# RBAC allows
-			push(@rbacrv, $m);
-			}
-		}
-	else {
-		# Module or system doesn't support RBAC
-		push(@rbacrv, $m) if (!$gconfig{'rbacdeny_'.$base_remote_user});
-		}
-	}
-
 # Check theme vetos
 my @themerv;
 if (defined(&theme_foreign_available)) {
-	foreach my $m (@rbacrv) {
+	foreach my $m (@rv) {
 		if (&theme_foreign_available($m->{'dir'})) {
 			push(@themerv, $m);
 			}
 		}
 	}
 else {
-	@themerv = @rbacrv;
+	@themerv = @rv;
 	}
 
 # Check licence module vetos
@@ -9885,22 +10945,29 @@ $dir =~ s/\/*$/\//;
 return substr($file, 0, length($dir)) eq $dir;
 }
 
-=head2 parse_http_url(url, [basehost, baseport, basepage, basessl])
+=head2 parse_http_url(url, [basehost], [baseport], [basepage],
+                     [basessl], [baseuser], [basepass], [no-default-port])
 
 Given an absolute URL, returns the host, port, page and ssl flag components.
 If a username and password are given before the hostname, return those too.
 Relative URLs can also be parsed, if the base information is provided.
+If C<no-default-port> is set, omitted ports in absolute URLs are returned as
+undef instead of being normalized to 80/443/21.
 SSL mode 0 = HTTP, 1 = HTTPS, 2 = FTP.
 
 =cut
 sub parse_http_url
 {
-if ($_[0] =~ /^(http|https|ftp):\/\/([^\@\/]+\@)?\[([^\]]+)\](:(\d+))?(\/\S*)?$/ ||
-    $_[0] =~ /^(http|https|ftp):\/\/([^\@\/]+\@)?([^:\/]+)(:(\d+))?(\/\S*)?$/) {
+my ($url, $basehost, $baseport, $basepage, $basessl, $baseuser, $basepass,
+    $no_default_port) = @_;
+if ($url =~ /^(http|https|ftp):\/\/([^\@\/]+\@)?\[([^\]]+)\](:(\d+))?(\/\S*)?$/ ||
+    $url =~ /^(http|https|ftp):\/\/([^\@\/]+\@)?([^:\/]+)(:(\d+))?(\/\S*)?$/) {
 	# An absolute URL
 	my $ssl = $1 eq 'https' ? 1 : $1 eq 'ftp' ? 2 : 0;
+	my $port = $4 ? $5 : $no_default_port ? undef :
+		   $ssl == 1 ? 443 : $ssl == 2 ? 21 : 80;
 	my @rv = ($3,
-		  $4 ? $5 : $ssl == 1 ? 443 : $ssl == 2 ? 21 : 80,
+		  $port,
 		  $6 || "/",
 		  $ssl,
 		 );
@@ -9909,19 +10976,20 @@ if ($_[0] =~ /^(http|https|ftp):\/\/([^\@\/]+\@)?\[([^\]]+)\](:(\d+))?(\/\S*)?$/
 		}
 	return @rv;
 	}
-elsif (!$_[1]) {
+elsif (!$basehost) {
 	# Could not parse
 	return undef;
 	}
-elsif ($_[0] =~ /^\/\S*$/) {
+elsif ($url =~ /^\/\S*$/) {
 	# A relative to the server URL
-	return ($_[1], $_[2], $_[0], $_[4], $_[5], $_[6]);
+	return ($basehost, $baseport, $url, $basessl, $baseuser, $basepass);
 	}
 else {
 	# A relative to the directory URL
-	my $page = $_[3];
+	my $page = $basepage;
 	$page =~ s/[^\/]+$//;
-	return ($_[1], $_[2], $page.$_[0], $_[4], $_[5], $_[6]);
+	return ($basehost, $baseport, $page.$url, $basessl,
+		$baseuser, $basepass);
 	}
 }
 
@@ -10050,12 +11118,9 @@ file, which defaults to the current module.
 =cut
 sub save_module_config
 {
-my $c = $_[0] || { &get_module_variable('%config') };
-my $m;
-if (defined($_[1])) {
-	$m = $_[1];
-	}
-else {
+my ($c, $m) = @_;
+$c ||= { &get_module_variable('%config') };
+if (!defined($m)) {
 	$m = &get_module_name();
 	$m || &error("could not compute current module in save_module_config");
 	}
@@ -10387,7 +11452,9 @@ if (@_ == 1) {
 	if (!defined($main::open_tempfiles{$_[0]})) {
 		$_[0] =~ /^(.*)\/(.*)$/ || return $_[0];
 		my $dir = $1 || "/";
-		my $tmp = "$dir/$2.webmintmp.$$";
+		$main::open_tempfile_count ||= 0;
+		my $tmp = "$dir/$2.webmintmp.$$.".
+			  ($main::open_tempfile_count++);
 		$main::open_tempfiles{$_[0]} = $tmp;
 		push(@main::temporary_files, $tmp);
 		}
@@ -10415,7 +11482,7 @@ else {
 		&webmin_debug_log($1 eq ">" ? "WRITE" :
 			  $1 eq ">>" ? "APPEND" : "READ", "nul") if ($db);
 		}
-	elsif ($file =~ /^(>|>>)(\/dev\/.*)/ || lc($file) eq "nul") {
+	elsif ($file =~ /^(>|>>)(\/dev\/(?!shm\/).*)/ || lc($file) eq "nul") {
 		# Writes to /dev/null or TTYs don't need to be handled
 		&webmin_debug_log($1 eq ">" ? "WRITE" : "APPEND", $2) if ($db);
 		return open($fh, "<".$file);
@@ -10425,10 +11492,8 @@ else {
 		# Over-writing a file, via a temp file
 		$file = $1;
 		$file = &translate_filename($file);
-		while(-l $file) {
-			# Open the link target instead
-			$file = &resolve_links($file);
-			}
+		# Resolve file and directory links once before choosing the temp path.
+		$file = &resolve_links($file);
 		if (-d $file) {
 			# Cannot open a directory!
 			if ($noerror) { return 0; }
@@ -10437,18 +11502,18 @@ else {
 		my @oldst = stat($file);
 		my $directopen = 0;
 		my $tmp = &open_tempfile($file);
-		my $ex = open($fh, ">$tmp");
-		if (!$ex && $! =~ /permission/i) {
+		my $ok = open($fh, ">$tmp");
+		if (!$ok && $! =~ /permission/i && $> != 0) {
 			# Could not open temp file .. try opening actual file
 			# instead directly
-			$ex = open($fh, ">$file");
+			$ok = open($fh, ">$file");
 			delete($main::open_tempfiles{$file});
 			$directopen = 1;
 			}
-		else {
+		elsif ($ok) {
 			$main::open_temphandles{$fh} = $file;
 			}
-		if (!$ex && !$noerror) {
+		if (!$ok && !$noerror) {
 			&error(&text("efileopen", html_escape($file), $!));
 			}
 		binmode($fh);
@@ -10456,7 +11521,7 @@ else {
 			# Use same permissions as the file being overwritten
 			chmod($oldst[2], $tmp);
 			}
-		return $ex;
+		return $ok;
 		}
 	elsif ($file =~ /^>\s*(([a-zA-Z]:)?\/.*)$/ && $notemp) {
 		# Just writing direct to a file
@@ -10521,6 +11586,11 @@ my $notempty = $_[1];
 if (defined($file = $main::open_temphandles{$fh})) {
 	# Closing a handle
 	my $noerror = $main::open_tempfiles_noerror{$file};
+	# Flush and sync before closing the handle
+	if (defined($fh)) {
+		$fh->flush();
+		$fh->sync();
+		}
 	if (!close($fh)) {
 		if ($noerror) { return 0; }
 		else { &error(&text("efileclose", $file, $!)); }
@@ -10532,6 +11602,16 @@ elsif (defined($main::open_tempfiles{$_[0]})) {
 	# Closing a file
 	my $noerror = $main::open_tempfiles_noerror{$_[0]};
 	&webmin_debug_log("CLOSE", $_[0]) if ($gconfig{'debug_what_write'});
+	my $getfacl = &has_command("getfacl");
+	my $setfacl = &has_command("setfacl");
+	my $file_acls;
+	if ($getfacl && $setfacl) {
+		# Set original ACLs
+		my $qaclfile = quotemeta($_[0]);
+		$file_acls = &backquote_command(
+			"$getfacl --absolute-names $qaclfile 2>/dev/null");
+		}
+	# Get status info for a file
 	my @st = stat($_[0]);
 	if (&is_selinux_enabled() && &has_command("chcon")) {
 		# Set original security context
@@ -10552,6 +11632,13 @@ elsif (defined($main::open_tempfiles{$_[0]})) {
 		# Set original permissions and ownership
 		chmod($st[2], $_[0]);
 		chown($st[4], $st[5], $_[0]);
+		}
+	if ($file_acls) {
+		# Set original ACLs
+		my $restore_command = &get_setfacl_restore_command($setfacl);
+		open(my $pipe, '|-', $restore_command);
+		print($pipe $file_acls);
+		close($pipe);
 		}
 	&reset_file_attributes($_[0], \@old_attributes);
 	delete($main::open_tempfiles{$_[0]});
@@ -10612,6 +11699,27 @@ if (!defined($main::selinux_enabled_cache)) {
 		}
 	}
 return $main::selinux_enabled_cache;
+}
+
+=head2 get_setfacl_restore_command(setfacl-command)
+
+Returns a command for restoring ACLs from standard input. Uses physical
+restore when supported by setfacl, while remaining compatible with versions
+older than 2.4.0 which reject -P together with --restore.
+
+=cut
+sub get_setfacl_restore_command
+{
+my ($setfacl) = @_;
+state %physical_restore_cache;
+
+if (!exists($physical_restore_cache{$setfacl})) {
+	my $help = &backquote_command("$setfacl --help 2>&1 </dev/null");
+	$physical_restore_cache{$setfacl} =
+		$help =~ /\[-P\]\s+--restore(?:=|\b)/ ? 1 : 0;
+	}
+my $physical = $physical_restore_cache{$setfacl} ? "-P " : "";
+return "$setfacl ${physical}--restore=-";
 }
 
 =head2 get_clear_file_attributes(file)
@@ -10692,11 +11800,8 @@ $fh = &callers_package($fh);
 my $lockfile = $file;
 $lockfile =~ s/^[^\/]*//;
 if ($lockfile =~ /^\//) {
-	while(-l $lockfile) {
-		# If the file is a link, follow it so that locking is done on
-		# the same file that gets unlocked later
-		$lockfile = &resolve_links($lockfile);
-		}
+	# Resolve file and directory links so locking uses the write target.
+	$lockfile = &resolve_links($lockfile);
 	$main::open_templocks{$lockfile} = &lock_file($lockfile);
 	}
 return &open_tempfile($fh, $file, $noerror, $notemp, $safe);
@@ -10708,6 +11813,8 @@ $main::end_exit_status ||= $?;
 if ($$ == $main::initial_process_id) {
 	# Exiting from initial process ... cleanup all transient files
 	&cleanup_tempnames();
+	my $lockdir = &get_lock_links_dir();
+	rmdir($lockdir) if ($lockdir);
 
 	if ($gconfig{'debug_what_start'} && $main::debug_log_start_time) {
 		# Log the completion of this script to the debug log
@@ -10750,91 +11857,6 @@ sub number_to_month
 return ucfirst($number_to_month_map{$_[0]});
 }
 
-=head2 get_rbac_module_acl(user, module)
-
-Returns a hash reference of RBAC overrides ACLs for some user and module.
-May return undef if none exist (indicating access denied), or the string *
-if full access is granted.
-
-=cut
-sub get_rbac_module_acl
-{
-my ($user, $mod) = @_;
-eval "use Authen::SolarisRBAC";
-return undef if ($@);
-my %rv;
-my $foundany = 0;
-if (Authen::SolarisRBAC::chkauth("webmin.$mod.admin", $user)) {
-	# Automagic webmin.modulename.admin authorization exists .. allow access
-	$foundany = 1;
-	if (!Authen::SolarisRBAC::chkauth("webmin.$mod.config", $user)) {
-		%rv = ( 'noconfig' => 1 );
-		}
-	else {
-		%rv = ( );
-		}
-	}
-local $_;
-open(RBAC, "<".&module_root_directory($mod)."/rbac-mapping");
-while(<RBAC>) {
-	s/\r|\n//g;
-	s/#.*$//;
-	my ($auths, $acls) = split(/\s+/, $_);
-	my @auths = split(/,/, $auths);
-	next if (!$auths);
-	my ($merge) = ($acls =~ s/^\+//);
-	my $gotall = 1;
-	if ($auths eq "*") {
-		# These ACLs apply to all RBAC users.
-		# Only if there is some that match a specific authorization
-		# later will they be used though.
-		}
-	else {
-		# Check each of the RBAC authorizations
-		foreach my $a (@auths) {
-			if (!Authen::SolarisRBAC::chkauth($a, $user)) {
-				$gotall = 0;
-				last;
-				}
-			}
-		$foundany++ if ($gotall);
-		}
-	if ($gotall) {
-		# Found an RBAC authorization - return the ACLs
-		return "*" if ($acls eq "*");
-		my %acl = map { split(/=/, $_, 2) } split(/,/, $acls);
-		if ($merge) {
-			# Just add to current set
-			foreach my $a (keys %acl) {
-				$rv{$a} = $acl{$a};
-				}
-			}
-		else {
-			# Found final ACLs
-			return \%acl;
-			}
-		}
-	}
-close(RBAC);
-return !$foundany ? undef : %rv ? \%rv : undef;
-}
-
-=head2 supports_rbac([module])
-
-Returns 1 if RBAC client support is available, such as on Solaris.
-
-=cut
-sub supports_rbac
-{
-return 0 if ($gconfig{'os_type'} ne 'solaris');
-eval "use Authen::SolarisRBAC";
-return 0 if ($@);
-if ($_[0]) {
-	#return 0 if (!-r &module_root_directory($_[0])."/rbac-mapping");
-	}
-return 1;
-}
-
 =head2 supports_ipv6()
 
 Returns 1 if outgoing IPv6 connections can be made
@@ -10845,21 +11867,7 @@ sub supports_ipv6
 return $ipv6_module_error ? 0 : 1;
 }
 
-=head2 use_rbac_module_acl(user, module)
-
-Returns 1 if some user should use RBAC to get permissions for a module
-
-=cut
-sub use_rbac_module_acl
-{
-my $u = defined($_[0]) ? $_[0] : $base_remote_user;
-my $m = defined($_[1]) ? $_[1] : &get_module_name();
-return 1 if ($gconfig{'rbacdeny_'.$u});		# RBAC forced for user
-my %access = &get_module_acl($u, $m, 1);
-return $access{'rbac'} ? 1 : 0;
-}
-
-=head2 execute_command(command, stdin, stdout, stderr, translate-files?, safe?)
+=head2 execute_command(command, stdin, stdout, stderr, translate-files?, safe?, logged?)
 
 Runs some command, possibly feeding it input and capturing output to the
 give files or scalar references. The parameters are :
@@ -10876,16 +11884,19 @@ give files or scalar references. The parameters are :
 
 =item safe - Set to 1 if this command is safe and does not modify the state of the system.
 
+=item logged - Set to 1 if the command should be logged.
+
 =cut
 sub execute_command
 {
-my ($cmd, $stdin, $stdout, $stderr, $trans, $safe) = @_;
+my ($cmd, $stdin, $stdout, $stderr, $trans, $safe, $logged) = @_;
 if (&is_readonly_mode() && !$safe) {
 	print STDERR "Vetoing command $_[0]\n";
 	$? = 0;
 	return 0;
 	}
 $cmd = &translate_command($cmd);
+&additional_log('exec', undef, $cmd) if ($logged);
 
 # Use ` operator where possible
 &webmin_debug_log('CMD', "cmd=$cmd") if ($gconfig{'debug_what_cmd'});
@@ -10979,6 +11990,17 @@ if ($stderr && ref($stderr) && $stderr ne $stdout) {
 # Get exit status
 waitpid($pid, 0);
 return $?;
+}
+
+=head2 execute_command_logged(command, stdin, stdout, stderr, translate-files?, safe?)
+
+Like execute_command, but also logs the command run.
+
+=cut
+sub execute_command_logged
+{
+my ($cmd, $stdin, $stdout, $stderr, $trans, $safe) = @_;
+return &execute_command($cmd, $stdin, $stdout, $stderr, $trans, $safe, 1);
 }
 
 =head2 open_readfile(handle, file)
@@ -11725,6 +12747,135 @@ close(FILE);
 return $rv;
 }
 
+=head2 can_read_file_under_global_acl(file, [webmin-user])
+
+Returns 1 if the given file is allowed by the Webmin user's global file
+access ACL, using the same root and additional-directory restrictions as the
+file chooser. Webmin users with no Unix home fail closed when the root ACL is
+unset or home-relative.
+
+=cut
+sub can_read_file_under_global_acl
+{
+my ($file, $user) = @_;
+if ($gconfig{'os_type'} eq 'windows') {
+	$file =~ s/\\/\//g if (defined($file));
+	return 0 if (!defined($file) || $file !~ /^([a-z]:)?\//i);
+	}
+else {
+	return 0 if (!defined($file) || $file !~ /^\//);
+	}
+my $acluser = defined($user) ? $user : $base_remote_user || $remote_user;
+my $unixuser = defined($user) ? $user : $remote_user;
+my %gaccess = &get_module_acl($acluser, "");
+my @uinfo = getpwnam($unixuser);
+my $rootdir;
+if (!$gaccess{'root'}) {
+	# Do not turn Webmin-only users with no Unix home into unrestricted /
+	$rootdir = $uinfo[7] || "";
+	}
+else {
+	$rootdir = $gaccess{'root'};
+	if ($rootdir =~ /^\~/) {
+		if ($uinfo[7]) {
+			$rootdir =~ s/^\~/$uinfo[7]/;
+			}
+		else {
+			$rootdir = "";
+			}
+		}
+	}
+foreach my $dir ($rootdir, split(/\t+/, $gaccess{'otherdirs'})) {
+	next if ($dir eq "");
+	return 1 if (&is_under_directory($dir, $file));
+	}
+return 0;
+}
+
+=head2 global_acl_file_unix_user([webmin-user])
+
+Returns the Unix user that local file reads should run as according to the
+global file ACL, plus an error flag.
+
+=cut
+sub global_acl_file_unix_user
+{
+my ($user) = @_;
+return (undef, 0) if (!&supports_users());
+my $acluser = defined($user) ? $user : $base_remote_user || $remote_user;
+my $unixuser = defined($user) ? $user : $remote_user;
+my %gaccess = &get_module_acl($acluser, "");
+my $fileunix = $gaccess{'fileunix'} || $unixuser;
+my @uinfo = getpwnam($fileunix);
+if (!@uinfo && !$gaccess{'fileunix'}) {
+	$fileunix = "nobody";
+	@uinfo = getpwnam($fileunix);
+	}
+return @uinfo ? ($fileunix, 0) : (undef, 1);
+}
+
+=head2 read_file_under_global_acl(file, [webmin-user])
+
+Returns the contents of a file after checking the global file ACL and reading
+as the ACL's configured Unix user.
+
+=cut
+sub read_file_under_global_acl
+{
+my ($file, $user) = @_;
+return undef if (!&can_read_file_under_global_acl($file, $user));
+my ($fileunix, $fileunix_err) = &global_acl_file_unix_user($user);
+return undef if ($fileunix_err);
+if ($fileunix && &supports_users() && $< == 0) {
+	return &eval_as_unix_user($fileunix,
+		sub { return &read_file_contents($file); });
+	}
+else {
+	return &read_file_contents($file);
+	}
+}
+
+=head2 copy_file_under_global_acl(source, dest, [webmin-user], [dest-user])
+
+Copies a file after checking the global file ACL and reading the source as
+the ACL's configured Unix user. If dest-user is set and Webmin is running as
+root, the copied file is left owned by that Unix user with mode 0600.
+
+=cut
+sub copy_file_under_global_acl
+{
+my ($src, $dst, $user, $destuser) = @_;
+return 0 if (!&can_read_file_under_global_acl($src, $user));
+return 0 if (-d $src);
+my ($fileunix, $fileunix_err) = &global_acl_file_unix_user($user);
+return 0 if ($fileunix_err);
+my $ok;
+if ($fileunix && &supports_users() && $< == 0) {
+	my @uinfo = getpwnam($fileunix);
+	return 0 if (!@uinfo);
+	open(my $init, ">", $dst) || return 0;
+	close($init);
+	&set_ownership_permissions($fileunix, undef, 0600, $dst) ||
+		return 0;
+	$ok = &eval_as_unix_user($fileunix, sub {
+		return &copy_source_dest($src, $dst, 1, 1);
+		});
+	}
+else {
+	$ok = &copy_source_dest($src, $dst, 1);
+	}
+return 0 if (!$ok);
+if ($destuser && &supports_users() && $< == 0) {
+	my @duinfo = getpwnam($destuser);
+	return 0 if (!@duinfo);
+	return &set_ownership_permissions($destuser, undef, 0600, $dst);
+	}
+else {
+	chmod(0600, $dst);
+	return 1;
+	}
+}
+
 =head2 write_file_contents(file, data)
 
 Writes some data to the given file
@@ -11882,9 +13033,9 @@ sub split_quoted_string
 {
 my ($str) = @_;
 my @rv;
-while($str =~ /^"([^"]*)"\s*([\000-\377]*)$/ ||
-      $str =~ /^'([^']*)'\s*([\000-\377]*)$/ ||
-      $str =~ /^(\S+)\s*([\000-\377]*)$/) {
+while($str =~ /^\s*"([^"]*)"\s*([\000-\377]*)$/ ||
+      $str =~ /^\s*'([^']*)'\s*([\000-\377]*)$/ ||
+      $str =~ /^\s*(\S+)\s*([\000-\377]*)$/) {
 	push(@rv, $1);
 	$str = $2;
 	}
@@ -11975,6 +13126,24 @@ else {
 	}
 
 return 1;
+}
+
+=head2 clear_http_cache(url)
+
+If a URL is in the cache, remove it
+
+=cut
+sub clear_http_cache
+{
+my $cfile = $url;
+$cfile =~ s/\//_/g;
+return 0 if (!$cfile);
+$cfile = "$main::http_cache_directory/$cfile";
+if (-r $cfile) {
+	&unlink_file($cfile);
+	return 1;
+	}
+return 0;
 }
 
 =head2 check_in_http_cache(url)
@@ -12157,8 +13326,7 @@ my @rv;
 my %miniserv;
 &get_miniserv_config(\%miniserv);
 if (!$miniserv{'userdb_nocache'} && $main::connect_userdb_cache{$str}) {
-	my $timeout = defined($miniserv{'userdb_cache_timeout'}) ?
-				$miniserv{'userdb_cache_timeout'} : 60;
+	my $timeout = $miniserv{'userdb_cache_timeout'} // 60;
 	@rv = @{$main::connect_userdb_cache{$str}};
 	if (time() - $main::connect_userdb_cache_time{$str} > $timeout) {
 		# Yes, but it's already timed out. Force close it, and make a new
@@ -12372,6 +13540,7 @@ a function return to a given module call
 sub list_combined_webmin_menu
 {
 my ($data, $in, $mod) = @_;
+my @rv;
 foreach my $m (&get_available_module_infos()) {
 	my $dir = &module_root_directory($m->{'dir'});
 	my $mfile = "$dir/webmin_menu.pl";
@@ -12612,12 +13781,16 @@ if ($cmp) {
 	return &compare_version_numbers($ver1, $ver2) < 0  if ($cmp eq '<');
 	}
 
+# Default undef inputs to '' so undef args don't warn in split and
+# shorter-vs-longer comparisons don't warn on the missing-segment side.
+$ver1 = '' if (!defined($ver1));
+$ver2 = '' if (!defined($ver2));
 my @sp1 = split(/[\.\-\+\~\_]/, $ver1);
 my @sp2 = split(/[\.\-\+\~\_]/, $ver2);
 my $tmp;
 for(my $i=0; $i<@sp1 || $i<@sp2; $i++) {
-	my $v1 = $sp1[$i];
-	my $v2 = $sp2[$i];
+	my $v1 = defined($sp1[$i]) ? $sp1[$i] : '';
+	my $v2 = defined($sp2[$i]) ? $sp2[$i] : '';
 	my $comp;
 	$v1 =~ s/^ubuntu//g;
 	$v2 =~ s/^ubuntu//g;
@@ -12687,47 +13860,71 @@ for(my $i=0; $i<@sp1 || $i<@sp2; $i++) {
 return 0;
 }
 
-=head2 convert_to_json(data, [pretty])
+=head2 convert_to_json(data, [pretty], [raw-utf8], [canonical])
 
 Converts the given Perl data structure to encoded binary string
 
 =item data parameter is a hash/array reference
-=item if the output should be prettified
+=item pretty parameter enables indentation and newlines; also sorts hash keys unless canonical is supplied
+=item raw-utf8 parameter, if set to 1, encodes data using UTF-8
+
+=item canonical parameter controls hash key sorting independently of pretty printing; defaults to pretty
 
 =cut
 sub convert_to_json
 {
-eval "use JSON::PP";
-if (!$@) {
-	my ($data, $pretty) = @_;
-	my $json = JSON::PP->new;
-	$pretty = 0 if (!$pretty);
-	$json = $json->pretty($pretty);
-	$data ||= {};
-	return $json->latin1->encode($data);
+my ($data, $pretty, $raw_utf8, $canonical) = @_;
+my $json;
+
+if (eval { require JSON::XS }) {
+	$json = JSON::XS->new;
+	}
+elsif (eval { require JSON::PP }) {
+	$json = JSON::PP->new;
 	}
 else {
-	error("The JSON::PP Perl module is not available on your system : $@");
+	error("Neither JSON::XS nor JSON::PP Perl module is available on your system");
 	}
+$json->pretty(!!$pretty);
+# Preserve sorting for existing pretty calls unless explicitly overridden.
+$json->canonical(defined($canonical) ? !!$canonical : !!$pretty);
+$data ||= {};
+return $raw_utf8 ? $json->utf8->encode($data) : $json->latin1->encode($data);
 }
 
-=head2 convert_from_json(data)
+=head2 convert_from_json(data, [raw-utf8], [relaxed])
 
 Parses given JSON string
 
 =item data parameter is encoded JSON string
 
+=item raw-utf8 parameter, if set, treats the input as raw UTF-8
+
+=item relaxed parameter, if set, uses JSON::PP relaxed syntax including comments and trailing commas
+
 =cut
 sub convert_from_json
 {
-eval "use JSON::PP";
-if (!$@) {
-	my ($json_text) = @_;
-	return JSON::PP->new->utf8->decode($json_text);
+my ($json_text, $raw_utf8, $relaxed) = @_;
+
+my $json;
+if ($relaxed) {
+	eval { require JSON::PP } ||
+		error("The JSON::PP Perl module is required for relaxed JSON parsing");
+	$json = JSON::PP->new->relaxed;
+	}
+elsif (eval { require JSON::XS }) {
+	$json = JSON::XS->new;
+	}
+elsif (eval { require JSON::PP }) {
+	$json = JSON::PP->new;
 	}
 else {
-	error("The JSON::PP Perl module is not available on your system : $@");
+	error("Neither JSON::XS nor JSON::PP Perl module is available on your system");
 	}
+
+$json = $json->utf8 if (!$raw_utf8);
+return $json->decode($json_text);
 }
 
 =head2 print_json(data)
@@ -12783,14 +13980,30 @@ my ($mod, $cgi, $def, $forcehost) = @_;
 # Work out the base URL
 my $url;
 if (!$def && $gconfig{'webmin_email_url'}) {
+	# From a config option
 	$url = $gconfig{'webmin_email_url'};
 	}
+elsif ($ENV{'HTTP_HOST'} || $ENV{'SSL_CN'}) {
+	# From this HTTP request
+	my $port = $ENV{'SERVER_PORT'} || 80;
+	my $host = $ENV{'SSL_CN'}
+		? "$ENV{'SSL_CN'}:$port"
+		:  $ENV{'HTTP_HOST'};
+	if ($host =~ s/:(\d+)$//) {
+		$port = $1;        
+		}
+	my $proto = lc($ENV{'HTTPS'}) eq 'on' ? 'https' : 'http';
+	my $defport = $proto eq 'https' ? 443 : 80;
+	$url = $proto."://".$host.($port == $defport ? "" : ":".$port);
+	$url .= $gconfig{'webprefix'} if ($gconfig{'webprefix'});
+	}
 else {
+	# Work out from miniserv config
 	my %miniserv;
 	&get_miniserv_config(\%miniserv);
 	my $proto = $miniserv{'ssl'} ? 'https' : 'http';
 	my $port = $miniserv{'port'};
-	my $host = $forcehost || &get_system_hostname();
+	my $host = $forcehost || $miniserv{'musthost'} || &get_system_hostname();
 	my $defport = $proto eq 'https' ? 443 : 80;
 	$url = $proto."://".$host.($port == $defport ? "" : ":".$port);
 	$url .= $gconfig{'webprefix'} if ($gconfig{'webprefix'});
@@ -12813,25 +14026,75 @@ return $url;
 =head2 get_webmin_browser_url([module], [cgi])
 
 Returns the URL for accessing this Webmin system, based on the current browser
-connection.
+connection. Honors X-Forwarded-Proto, X-Forwarded-Host and X-Forwarded-Port
+when Webmin is behind a reverse proxy and proxy headers are trusted, so the
+returned URL is the one the user's browser actually used.
 
 =cut
 sub get_webmin_browser_url
 {
 my ($mod, $cgi) = @_;
 
-# Work out the base URL`
-my $host = $ENV{'HTTP_HOST'};
+# Pick the first comma-separated value from a (possibly proxy-chained) header
+my $first = sub {
+	my ($v) = @_;
+	return undef if (!defined($v) || $v eq '');
+	$v =~ s/\r|\n//g;
+	$v = (split(/\s*,\s*/, $v))[0];
+	$v =~ s/^\s+//; $v =~ s/\s+$//;
+	return $v ne '' ? $v : undef;
+	};
+
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+my $trust_proxy = $miniserv{'trust_real_ip'};
+
+# Pull proto/host/port from X-Forwarded-* (set by reverse proxies), with
+# RFC 7239 Forwarded as a secondary fallback, then plain request env
+my $fwd = $trust_proxy ? $ENV{'HTTP_FORWARDED'} : undef;
+my ($fwd_proto, $fwd_host);
+if ($fwd) {
+	# RFC 7239 lists outermost proxy first; only inspect the first element
+	my $first_el = (split(/\s*,\s*/, $fwd))[0];
+	if ($first_el) {
+		$fwd_proto = $1 if ($first_el =~ /(?:^|;)\s*proto="?([^";]+)"?/i);
+		$fwd_host  = $1 if ($first_el =~ /(?:^|;)\s*host="?([^";]+)"?/i);
+		}
+	}
+
+my $proto = ($trust_proxy ? $first->($ENV{'HTTP_X_FORWARDED_PROTO'}) : undef) ||
+	    $fwd_proto ||
+	    (lc($ENV{'HTTPS'}) eq 'on' ? 'https' : 'http');
+$proto = lc($proto);
+$proto = 'https' if ($proto eq 'wss');
+$proto = 'http'  if ($proto eq 'ws');
+
+my $host = ($trust_proxy ? $first->($ENV{'HTTP_X_FORWARDED_HOST'}) : undef) ||
+	   $fwd_host ||
+	   $ENV{'HTTP_HOST'};
 if (!$host) {
-	# Fall back to non-browser mode
+	# No request context at all - fall back to non-browser mode
 	return &get_webmin_email_url(@_);
 	}
-my $port = $ENV{'SERVER_PORT'} || 80;
+
+my $defport = $proto eq 'https' ? 443 : 80;
+my $port;
 if ($host =~ s/:(\d+)$//) {
+	# Host carried its own port
 	$port = $1;
 	}
-my $proto = lc($ENV{'HTTPS'}) eq 'on' ? "https" : "http";
-my $defport = $proto eq 'https' ? 443 : 80;
+else {
+	# Trust X-Forwarded-Port if the host didn't carry one; otherwise the
+	# request env port (which is the internal port behind a proxy and so
+	# only meaningful when there's no proxy in front)
+	$port = $trust_proxy ? $first->($ENV{'HTTP_X_FORWARDED_PORT'}) : undef;
+	if (!$port && !($trust_proxy && $ENV{'HTTP_X_FORWARDED_HOST'}) &&
+	    !$fwd_host) {
+		$port = $ENV{'SERVER_PORT'};
+		}
+	$port ||= $defport;
+	}
+
 my $url = $proto."://".$host.($port == $defport ? "" : ":".$port);
 $url .= $gconfig{'webprefix'} if ($gconfig{'webprefix'});
 
@@ -13081,12 +14344,14 @@ return &globals('delete', $variable, $scope);
 }
 
 # webmin_user_can_rpc()
-# Returns 1 if the given user can make remote calls
+# Returns 1 if the given user can receive remote calls, 0 if not, or 2 if the
+# user can receive remote calls but not use the UI
 sub webmin_user_can_rpc
 {
 my $u = $base_remote_user;
 my %access = &get_module_acl($u, "");
 return 1 if ($access{'rpc'} == 1);	# Can make arbitrary RPC calls
+return 2 if ($access{'rpc'} == 3);	# Can only make RPC calls
 return 0 if ($access{'rpc'} == 0);	# Cannot make RPCs
 
 # Assume that standard admin usernames
@@ -13117,10 +14382,9 @@ my $foreign_server_manager
 my %uaccess = &get_module_acl($remote_user, "");
 my %access = &get_module_acl($base_remote_user, "");
 
-# Check if mode must be restricted
+# Safe mode depends on explicit restrictions, not RPC permission
 if ($base_remote_user !~ /^(root|admin|sysadm)$/) {
-	if ($uaccess{'_safe'} == 1 || $access{'_safe'} == 1 ||
-	    $uaccess{'rpc'} == 0 || $access{'rpc'} == 0) {
+	if ($uaccess{'_safe'} == 1 || $access{'_safe'} == 1) {
 			# Safe Webmin user
 	        $mode = 'safe-user';
 	    }
@@ -13176,21 +14440,21 @@ if (!%current_theme_info || $nocache) {
 return \%current_theme_info;
 }
 
-# miniserv_using_default_cert()
-# Returns 1 if miniserv is using one of the hard-coded certs
+# miniserv_using_default_cert([certificate-file])
+# Returns 1 if miniserv is using one of the formerly bundled certificates
 sub miniserv_using_default_cert
 {
-return 0 if ($ENV{'HTTPS'} ne 'ON');
+my ($currentcertfile) = @_;
+return 0 if (!$currentcertfile && $ENV{'HTTPS'} ne 'ON');
 my $defaultcertname = 'miniserv.pem';
-my $bundledcertfile = "$root_directory/$defaultcertname";
-my $currentcertfile = $ENV{'MINISERV_KEYFILE'};
+$currentcertfile ||= $ENV{'MINISERV_KEYFILE'};
 if (!$currentcertfile) {
 	my %miniserv;
 	&get_miniserv_config(\%miniserv);
 	$currentcertfile = $miniserv{'keyfile'};
 	}
-if (   $currentcertfile =~ /$defaultcertname$/ &&
-	-r $currentcertfile && -r $bundledcertfile) {
+if ($currentcertfile && $currentcertfile =~ /\Q$defaultcertname\E$/ &&
+    -r $currentcertfile) {
 	my $out;
 	&execute_command("md5sum ".quotemeta($currentcertfile), undef, \$out);
 	return 0 if ($?);
@@ -13453,8 +14717,8 @@ while(<CONF>) {
 close(CONF);
 \$root || die "No root= line found in $config_directory/miniserv.conf";
 \$ENV{'PERLLIB'} = "\$root";
-\$ENV{'WEBMIN_CONFIG'} = "$ENV{'WEBMIN_CONFIG'}";
-\$ENV{'WEBMIN_VAR'} = "$ENV{'WEBMIN_VAR'}";
+\$ENV{'WEBMIN_CONFIG'} = "$config_directory";
+\$ENV{'WEBMIN_VAR'} = "$var_directory";
 delete(\$ENV{'MINISERV_CONFIG'});
 EOF
     );
@@ -13492,6 +14756,386 @@ return undef if ($< != 0);
 my $dir = $var_directory."/locks/".$$;
 &make_dir($dir, 0700, 1) if (!-d $dir);
 return $dir;
+}
+
+# generate_miniserv_websocket_token()
+# Returns an unguessable token for websocket URLs proxied by miniserv
+sub generate_miniserv_websocket_token
+{
+my $token;
+if (open(RANDOM, "</dev/urandom")) {
+	my $buf;
+	if (read(RANDOM, $buf, 16) == 16) {
+		$token = lc(unpack('h*', $buf));
+		}
+	close(RANDOM);
+	}
+if (!$token) {
+	&seed_random();
+	$token = &substitute_pattern('[a-f0-9]{32}');
+	}
+return $token;
+}
+
+# allocate_miniserv_websocket([module], [base-remote-user], [backend-session])
+# Allocate a new websocket and stores it miniserv.conf file
+sub allocate_miniserv_websocket
+{
+my ($module, $buser, $backend_session) = @_;
+$module ||= $module_name;
+# Find ports already in use
+&lock_file(&get_miniserv_config_file());
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+my %inuse;
+foreach my $k (keys %miniserv) {
+    if ($k =~ /^websockets_/ && $miniserv{$k} =~ /port=(\d+)/) {
+        $inuse{$1} = 1;
+        }
+    }
+
+# Pick a port and configure Webmin to proxy it
+my $port = $miniserv{'websocket_base_port'} || 555;
+while(1) {
+    if (!$inuse{$port}) {
+        &open_socket("127.0.0.1", $port, my $fh, \$err);
+        last if ($err);
+        close($fh);
+        }
+    $port++;
+    }
+my $wspath = "/$module/ws-".$port;
+my $now = time();
+my $token = &generate_miniserv_websocket_token();
+my $opt_buser = "";
+$opt_buser = " buser=$buser" if (defined($buser) && $buser eq $base_remote_user);
+my $opt_backend = "";
+# Some websocket backends are reached with Basic auth and no browser session
+# cookie. Store the one-time backend session key that the child server expects.
+$opt_backend = " backend_session=$backend_session"
+	if (defined($backend_session) && $backend_session =~ /^\S+$/);
+my $opt_basic = "";
+$opt_basic = " allow_basic_ws=1" if ($opt_backend);
+$miniserv{"websockets_$wspath"} = "host=127.0.0.1 port=$port wspath=/ ".
+	  "user=$remote_user$opt_buser$opt_backend$opt_basic token=$token time=$now";
+&put_miniserv_config(\%miniserv);
+&unlock_file(&get_miniserv_config_file());
+&reload_miniserv();
+return $port;
+}
+
+# get_miniserv_websocket_url(port, [host], [module], [path], [token])
+# Returns the browser-visible URL for a websocket. The optional path/token
+# arguments are used by linked-server websocket proxy routes, whose path does
+# not follow the normal /module/ws-port form.
+sub get_miniserv_websocket_url
+{
+my ($port, $host, $module, $path, $wstoken) = @_;
+$module ||= $module_name;
+my %miniserv;
+my $webprefix = &get_webprefix();
+&get_miniserv_config(\%miniserv);
+my $trust_proxy = $miniserv{'trust_real_ip'};
+my $linked_server_request = $ENV{'HTTP_WEBMIN_PATH'};
+my $redirect_port_conf = $miniserv{'redirect_port'};
+$redirect_port_conf = undef if ($linked_server_request);
+my $default_ws_proto = lc($ENV{'HTTPS'}) eq 'on' ? 'wss' : 'ws';
+my $ws_proto;
+# Match the canonical redirect scheme when one has been configured. Linked
+# server responses are rewritten by the parent, so they must retain the child
+# connection scheme and authority that the parent recognizes.
+if (!$linked_server_request && $miniserv{'redirect_ssl'} ne '') {
+	$ws_proto = $miniserv{'redirect_ssl'} ? 'wss' : 'ws';
+	}
+# Match the public browser scheme when Webmin is behind a trusted reverse
+# proxy, but only allow websocket schemes into the returned URL.
+if (!$ws_proto && $trust_proxy && $ENV{'HTTP_X_FORWARDED_PROTO'}) {
+	$ws_proto = (split(/\s*,\s*/, $ENV{'HTTP_X_FORWARDED_PROTO'}))[0];
+	$ws_proto =~ s/^\s+|\s+$//g;
+	}
+if (!$ws_proto && $trust_proxy && $ENV{'HTTP_FORWARDED'} &&
+    (split(/\s*,\s*/, $ENV{'HTTP_FORWARDED'}))[0] =~
+	/(?:^|;)\s*proto="?([^";]+)"?/i) {
+	$ws_proto = $1;
+	}
+$ws_proto ||= $default_ws_proto;
+$ws_proto = lc($ws_proto);
+$ws_proto = 'wss' if ($ws_proto eq 'https');
+$ws_proto = 'ws' if ($ws_proto eq 'http');
+$ws_proto = $default_ws_proto if ($ws_proto ne 'wss' && $ws_proto ne 'ws');
+# Formats a host with the configured public port, replacing any port already
+# present on a request or proxy host. Explicit WebSocket and caller hosts
+# bypass this.
+my $format_hostport = sub {
+	my ($authority, $redirect_port) = @_;
+	return $authority if (!$authority);
+	# A non-numeric configured port is treated as unset, so a malformed
+	# value can never reach the returned URL.
+	$redirect_port = undef if (defined($redirect_port) &&
+				   $redirect_port !~ /^\d+$/);
+	# check_ip6address also accepts short hexadecimal strings. An unbracketed
+	# authority needs at least two colons to have the shape of an IPv6 address.
+	my $is_ip6 = $authority =~ /:.*:/ && &check_ip6address($authority);
+	if (!$redirect_port) {
+		$authority = "[".$authority."]"
+			if ($is_ip6);
+		return $authority;
+		}
+	if ($authority =~ /^\[([^\]]+)\](?::\d+)?$/) {
+		$authority = $1;
+		$is_ip6 = 1;
+		}
+	elsif (!$is_ip6) {
+		$authority =~ s/:\d+$//;
+		}
+	$authority = "[".$authority."]"
+		if ($is_ip6);
+	my $portstr = !($redirect_port == 80 && $ws_proto eq 'ws') &&
+		!($redirect_port == 443 && $ws_proto eq 'wss') ?
+		":".$redirect_port : "";
+	return $authority.$portstr;
+	};
+my $wspath = $path || "/$module/ws-".$port;
+# If the caller already generated the token, use it directly; otherwise fall
+# back to reading the token stored for the normal allocated websocket route.
+if (!defined($wstoken) && $miniserv{'websockets_'.$wspath} &&
+    $miniserv{'websockets_'.$wspath} =~ /\btoken=(\S+)/) {
+	$wstoken = $1;
+	}
+my $http_host_conf = $linked_server_request ? undef :
+			&trim($miniserv{'websocket_host'} || $host);
+# Prefer the explicit websocket host for direct browser requests
+if ($http_host_conf) {
+	if ($http_host_conf !~ /^wss?:\/\//) {
+		$http_host_conf = "$ws_proto://$http_host_conf";
+		}
+	$http_host_conf =~ s/[\/]+$//g;
+	}
+# Otherwise use the canonical redirect host and port when configured
+if (!$http_host_conf && !$linked_server_request &&
+    $miniserv{'redirect_host'}) {
+	my $redirect_host = &$format_hostport($miniserv{'redirect_host'},
+					       $redirect_port_conf);
+	$http_host_conf = "$ws_proto://$redirect_host";
+	}
+# Otherwise use trusted proxy headers when available
+if ($trust_proxy && !defined($http_host_conf)) {
+	# A multi-proxy chain can send a comma-separated list; use the first
+	# entry, matching the X-Forwarded-Proto handling above.
+	my $forwarded_host = (split(/\s*,\s*/,
+				    $ENV{'HTTP_X_FORWARDED_HOST'}))[0];
+	if ($forwarded_host) {
+		$forwarded_host = &$format_hostport(
+			$forwarded_host, $redirect_port_conf)
+			if ($redirect_port_conf);
+		$http_host_conf = "$ws_proto://$forwarded_host";
+		$http_host_conf =~ s/[\/]+$//g;
+		}
+	}
+my $http_host = $http_host_conf;
+if (!$http_host) {
+	my $request_host = $ENV{'HTTP_HOST'};
+	$request_host = &$format_hostport(
+		$request_host, $redirect_port_conf)
+		if ($redirect_port_conf);
+	$http_host = "$ws_proto://$request_host";
+	}
+$http_host .= $webprefix if ($webprefix);
+my $url = "$http_host$wspath";
+$url .= "?token=".&urlize($wstoken) if ($wstoken);
+return $url;
+}
+
+# remove_miniserv_websocket(port, [module])
+# Remove old websocket from miniserv.conf
+sub remove_miniserv_websocket
+{
+my ($port, $module) = @_;
+$module ||= $module_name;
+my %miniserv;
+if ($port) {
+    &lock_file(&get_miniserv_config_file());
+    &get_miniserv_config(\%miniserv);
+    my $wspath = "/$module/ws-".$port;
+    if ($miniserv{'websockets_'.$wspath}) {
+        delete($miniserv{'websockets_'.$wspath});
+        &put_miniserv_config(\%miniserv);
+        &reload_miniserv();
+        }
+    &unlock_file(&get_miniserv_config_file());
+    }
+}
+
+# cleanup_miniserv_websockets([&skip-ports], [module])
+# Called by scheduled status collection to remove any
+# websockets in miniserv.conf that are no longer used
+sub cleanup_miniserv_websockets
+{
+my ($skip, $module) = @_;
+$skip ||= [ ];
+$module ||= $module_name;
+my $link_ttl = 5*60;
+&lock_file(&get_miniserv_config_file());
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+my $now = time();
+my @clean;
+foreach my $k (keys %miniserv) {
+    my $when = 0;
+    if ($miniserv{$k} =~ /time=(\d+)/) {
+        $when = $1;
+        }
+    if ($k =~ /^websockets_\/\Q$module\E\/ws-link-/) {
+        # Linked-server websocket routes carry a backend credential and are
+        # single-use. If the browser never opens them, expire them by age.
+        push(@clean, $k) if (!$when || $now - $when > $link_ttl);
+        next;
+        }
+    $k =~ /^websockets_\/\Q$module\E\/ws-(\d+)$/ || next;
+    my $port = $1;
+    next if (&indexof($port, @$skip) >= 0);
+    if ($now - $when > 60) {
+        # Has been open for a while, check if the port is still in use?
+        my $err;
+        &open_socket("127.0.0.1", $port, my $fh, \$err);
+        if ($err) {
+            # Closed now, can clean up
+            push(@clean, $k);
+            }
+        else {
+            # Still active
+            close($fh);
+            }
+        }
+    }
+if (@clean) {
+    foreach my $k (@clean) {
+        delete($miniserv{$k});
+        }
+    &put_miniserv_config(\%miniserv);
+    &reload_miniserv();
+    }
+&unlock_file(&get_miniserv_config_file());
+}
+
+# get_miniserv_websockets_modules()
+# Returns a list of modules and themes that use websockets
+sub get_miniserv_websockets_modules
+{
+my @rv;
+foreach my $i (&get_all_module_infos(), &list_themes()) {
+	push(@rv, $i->{'dir'}) if ($i->{'websockets'});
+	}
+return @rv;
+}
+
+# get_webmin_base_url()
+# Returns a link to the Webmin login page for use from Usermin
+sub get_webmin_base_url
+{
+return '' if (&get_product_name() eq 'webmin');
+my $wdir = $config_directory;
+$wdir =~ s/\/usermin$/\/webmin/;
+my $wconfig = "$wdir/config";
+my $wminiserv = "$wdir/miniserv.conf";
+my (%wconfig, %wminiserv);
+if (&read_env_file($wconfig, \%wconfig) &&
+    &read_env_file($wminiserv, \%wminiserv) && $wconfig{'forgot_pass'}) {
+	my ($whost) = split(/:/, $ENV{'HTTP_HOST'});
+	my $wurl = ($wminiserv{'ssl'} ? 'https' : 'http').'://'.$whost;
+	if ($wminiserv{'port'} &&
+	    $wminiserv{'port'} != 80 && $wminiserv{'port'} != 443) {
+		$wurl .= ":$wminiserv{'port'}";
+		}
+	$wurl .= $wminiserv{'webprefix'} if ($wminiserv{'webprefix'});
+	$wurl .= "/";
+	return $wurl;
+	}
+return '';
+}
+
+# encrypt_phrase(plain, passphrase, [run-as-user])
+# Encrypts a phrase using OpenSSL and a passphrase
+sub encrypt_phrase
+{
+my ($plain, $passphrase, $run_as) = @_;
+my $openssl = &has_command('openssl');
+# Check if parameters are defined
+unless ($plain && $passphrase) {
+	return wantarray ? (undef, 'Missing parameters') : undef;
+	}
+# Check if OpenSSL is available
+unless ($openssl) {
+	return wantarray ? (undef, 'OpenSSL command not found') : undef;
+	}
+# Temp file for plaintext
+my $src = &transname();
+&write_file_contents($src, $plain);
+# Encrypt
+$passphrase = quotemeta($passphrase);
+my @args = (
+	$openssl, 'enc', '-aes-256-cbc', '-a', '-A', '-salt',
+	'-pbkdf2', '-iter', '100000',
+	'-pass', "pass:$passphrase",
+	'-in',   $src,
+);
+my $cmd = &command_as_user($run_as || 'nobody', 0, @args) . ' 2>&1';
+my $out = &backquote_logged($cmd);
+# Return if error
+return wantarray ? (undef, $out) : undef if ($?);
+# Remove newlines
+$out =~ s/\s+\z//;
+# Check if result is valid
+if (!&is_encrypt_phrase($out)) {
+	# Encryption failed
+	return wantarray 
+		? (undef, "Encryption failed with invalid cipher result : $out")
+		: undef;
+	}
+# Return successfully created ciphertext
+return wantarray ? ($out, undef) : $out;
+}
+
+# decrypt_phrase(ciphertext, passphrase, [run-as-user])
+# Decrypts a ciphertext using OpenSSL and a passphrase
+sub decrypt_phrase
+{
+my ($cipher, $passphrase, $run_as) = @_;
+my $openssl = &has_command('openssl');
+# Check if OpenSSL is available
+if (!$openssl) {
+	return wantarray ? (undef, 'OpenSSL command not found') : undef;
+	}
+# Tempfile for ciphertext
+my $src = &transname();
+&write_file_contents($src, $cipher);
+# Decrypt
+$passphrase = quotemeta($passphrase);
+my @args = (
+	$openssl, 'enc', '-d', '-aes-256-cbc', '-a', '-A',
+	'-pbkdf2', '-iter', '100000',
+	'-pass', "pass:$passphrase",
+	'-in',   $src,
+);
+my $cmd = &command_as_user($run_as || 'nobody', 0, @args) . ' 2>&1';
+my $out = &backquote_logged($cmd);
+# Return if error
+return wantarray ? (undef, $out) : undef if ($?);
+# Return result
+return wantarray ? ($out, undef) : $out;
+}
+
+# is_encrypt_phrase(ciphertext)
+# Checks if a ciphertext is encrypted correctly
+sub is_encrypt_phrase
+{
+my ($ct) = @_;
+unless (defined($ct) && $ct =~ /^[A-Za-z0-9+\/]+=*$/ && length($ct) % 4 == 0) {
+	# Invalid ciphertext format
+	return 0;
+	}
+# Check if is OpenSSL salt header
+return &decode_base64($ct) =~ /^Salted__/ ? 1 : 0;
 }
 
 $done_web_lib_funcs = 1;

@@ -5,8 +5,59 @@ BEGIN { push(@INC, ".."); };
 use WebminCore;
 &init_config();
 
-# Load the site-specific information on the server executable
+# Check if a list of supported modules needs to be built. This is done
+# if the ProFTPd binary changes, when Webmin is upgraded
+sub refresh_site_cache
+{
+my @st = stat($config{'proftpd_path'});
+my %oldsite;
+&read_file("$module_config_directory/site", \%oldsite);
+if ($oldsite{'size'} != $st[7] ||
+    !$oldsite{'version'} ||
+    !$oldsite{'fullversion'} ||
+    $oldsite{'webmin'} != &get_webmin_version()) {
+	# Check if it really is proftpd and the right version
+	my ($ver, $fullver) = &get_proftpd_version(\$out);
+	if ($ver) {
+		# Store the detected versions
+		my %newsite;
+		$newsite{'size'} = $st[7];
+		$newsite{'version'} = $ver;
+		$newsite{'fullversion'} = $fullver;
+		$newsite{'webmin'} = &get_webmin_version();
+
+		# Get the list of modules
+		my @mods;
+		open(MODS, "$config{'proftpd_path'} -vv 2>/dev/null |");
+		while(<MODS>) {
+			s/\r|\n//g;
+			if (/^\s*(?<mod_built_in>\S+)\.c$|\s*(?<mod_loaded>mod_[a-zA-Z0-9_]+)\//) {
+				push(@mods, $+{mod_loaded} || $+{mod_built_in});
+				}
+			}
+		close(MODS);
+		if (!$? || !-r "$module_config_directory/site") {
+			$newsite{'modules'} = join(" ", @mods);
+			&write_file("$module_config_directory/site", \%newsite);
+			}
+		}
+	}
+&read_site_cache();
+}
+
+# read_site_cache()
+# Put site-specific information into the global %site hash
+sub read_site_cache
+{
+%site = ();
 &read_file("$module_config_directory/site", \%site);
+}
+
+# Load the site-specific information on the server executable
+if (!-r "$module_config_directory/site") {
+	&refresh_site_cache();
+	}
+&read_site_cache();
 @ftpaccess_files = split(/\s+/, $site{'ftpaccess'});
 opendir(DIR, ".");
 foreach $f (readdir(DIR)) {
@@ -283,6 +334,7 @@ return @rv;
 sub editable_directives
 {
 local($m, $func, @rv);
+&refresh_site_cache();
 local @mods = split(/\s+/, $site{'modules'});
 foreach $m (@module_files) {
 	if (&indexof($m, @mods) != -1) {
@@ -434,6 +486,7 @@ return &parse_choice(@_);
 sub config_icons
 {
 local($m, $func, $e, %etype, $i, $c);
+&refresh_site_cache();
 local @mods = split(/\s+/, $site{'modules'});
 local @ctx = split(/\s+/, $_[0]);
 foreach $m (sort { $a cmp $b } (@module_files)) {
@@ -639,6 +692,7 @@ else {
 # or undef.
 sub test_config
 {
+&refresh_site_cache();
 if ($site{'version'} >= 1.2) {
 	# Test the configuration with -t flag
 	local $cmd = "$config{'proftpd_path'} -t -c $config{'proftpd_conf'}";
@@ -807,6 +861,7 @@ local $st = &find_directive("ServerType", $conf);
 if ($st eq 'inetd') {
 	return $text{'stop_einetd'};
 	}
+&refresh_site_cache();
 my $ver = $site{'version'} || &get_proftpd_version();
 if ($ver > 1.22) {
 	# Stop and re-start

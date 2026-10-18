@@ -11,7 +11,7 @@ Library for editing webmin users, passwords and access rights.
 
 =cut
 
-BEGIN { push(@INC, ".."); };
+BEGIN { push(@INC, ".."); };    ## no critic
 use strict;
 use warnings;
 no warnings 'redefine';
@@ -20,7 +20,14 @@ use WebminCore;
 &init_config();
 do 'md5-lib.pl';
 our ($module_root_directory, %text, %sessiondb, %config, %gconfig,
-     $base_remote_user, %hash_session_id_cache);
+     $base_remote_user, %hash_session_id_cache, $session_hmac_key,
+     $loaded_session_keyfile, $use_hmac_sha256);
+eval {
+	require Digest::SHA;
+	Digest::SHA::hmac_sha256_hex('x', 'y');
+	1;
+	};
+$use_hmac_sha256 = 1 if (!$@);
 our %access = &get_module_acl();
 $access{'switch'} = 0 if (&is_readonly_mode());
 
@@ -88,10 +95,10 @@ while(my $l = <$fh>) {
 		$user{'modules'} = $acl{$user[0]};
 		$user{'lang'} = $gconfig{"lang_$user[0]"};
 		$user{'langauto'} = $gconfig{"langauto_$user[0]"};
+		$user{'langneutral'} = $gconfig{"langneutral_$user[0]"};
 		$user{'locale'} = $gconfig{"locale_$user[0]"};
 		$user{'dateformat'} = $gconfig{"dateformat_$user[0]"};
 		$user{'notabs'} = $gconfig{"notabs_$user[0]"};
-		$user{'rbacdeny'} = $gconfig{"rbacdeny_$user[0]"};
 		if ($gconfig{"theme_$user[0]"}) {
 			($user{'theme'}, $user{'overlay'}) =
 				split(/\s+/, $gconfig{"theme_$user[0]"});
@@ -104,6 +111,7 @@ while(my $l = <$fh>) {
 			[ split(/\s+/, $gconfig{"ownmods_$user[0]"} || "") ];
 		$user{'logouttime'} = $logout{$user[0]};
 		$user{'real'} = $gconfig{"realname_$user[0]"};
+		$user{'email'} = $user[14];
 		push(@rv, \%user);
 		}
 	}
@@ -351,7 +359,8 @@ each of which is a hash reference in the same format as their module.info files.
 sub list_module_infos
 {
 my @mods = grep { &check_os_support($_) } &get_all_module_infos();
-return sort { $a->{'desc'} cmp $b->{'desc'} } @mods;
+my @sorted = sort { $a->{'desc'} cmp $b->{'desc'} } @mods;
+return @sorted;
 }
 
 =head2 create_user(&details, [clone])
@@ -438,7 +447,11 @@ if ($miniserv{'userdb'} && !$miniserv{'userdb_addto'}) {
 	$user->{'proto'} = $proto;
 	}
 else {
-	# Adding to local files
+	# Add a single-line record to the local user file
+	foreach my $value (values %$user) {
+		$value =~ s/[\r\n].*//s
+			if (defined($value) && !ref($value));
+		}
 	&lock_file($ENV{'MINISERV_CONFIG'});
 	if ($user->{'theme'}) {
 		$miniserv{"preroot_".$user->{'name'}} =
@@ -482,7 +495,8 @@ else {
 		($user->{'temppass'} || ""),":",
 		($user->{'twofactor_provider'} || ""),":",
 		($user->{'twofactor_id'} || ""),":",
-		($user->{'twofactor_apikey'} || ""),
+		($user->{'twofactor_apikey'} || ""),":",
+		($user->{'email'} || ""),
 		"\n");
 	&close_tempfile($fh);
 	&unlock_file($miniserv{'userfile'});
@@ -498,8 +512,6 @@ else {
 	$gconfig{"lang_".$user->{'name'}} = $user->{'lang'} if ($user->{'lang'});
 	delete($gconfig{"notabs_".$user->{'name'}});
 	$gconfig{"notabs_".$user->{'name'}} = $user->{'notabs'} if ($user->{'notabs'});
-	delete($gconfig{"rbacdeny_".$user->{'name'}});
-	$gconfig{"rbacdeny_".$user->{'name'}} = $user->{'rbacdeny'} if ($user->{'rbacdeny'});
 	delete($gconfig{"ownmods_".$user->{'name'}});
 	$gconfig{"ownmods_".$user->{'name'}} = join(" ", @{$user->{'ownmods'}})
 		if ($user->{'ownmods'} && @{$user->{'ownmods'}});
@@ -620,12 +632,17 @@ if ($user->{'proto'}) {
 	&disconnect_userdb($miniserv{'userdb'}, $dbh);
 	} 
 else {
-	# In local files
+	# Update the single-line record in the local user file
+	foreach my $value (values %$user) {
+		$value =~ s/[\r\n].*//s
+			if (defined($value) && !ref($value));
+		}
 	&lock_file($ENV{'MINISERV_CONFIG'});
 	delete($miniserv{"preroot_".$username});
 	if ($user->{'theme'}) {
 		$miniserv{"preroot_".$user->{'name'}} =
-		  $user->{'theme'}.($user->{'overlay'} ? " ".$user->{'overlay'} : "");
+		  $user->{'theme'}.($user->{'overlay'} ?
+		  	" ".$user->{'overlay'} : "");
 		}
 	elsif (defined($user->{'theme'})) {
 		$miniserv{"preroot_".$user->{'name'}} = "";
@@ -672,7 +689,8 @@ else {
 				$user->{'temppass'},":",
 				$user->{'twofactor_provider'},":",
 				$user->{'twofactor_id'},":",
-				$user->{'twofactor_apikey'},
+				$user->{'twofactor_apikey'},":",
+				$user->{'email'},
 				"\n");
 			}
 		else {
@@ -703,24 +721,28 @@ else {
 	delete($gconfig{"lang_".$username});
 	$gconfig{"lang_".$user->{'name'}} = $user->{'lang'} if ($user->{'lang'});
 	delete($gconfig{"langauto_".$username});
-	$gconfig{"langauto_".$user->{'name'}} = $user->{'langauto'} if (defined($user->{'langauto'}));
+	$gconfig{"langauto_".$user->{'name'}} = $user->{'langauto'}
+		if (defined($user->{'langauto'}));
+	delete($gconfig{"langneutral_".$username});
+	$gconfig{"langneutral_".$user->{'name'}} = $user->{'langneutral'}
+		if (defined($user->{'langneutral'}));
 	delete($gconfig{"locale_".$username});
-	$gconfig{"locale_".$user->{'name'}} = $user->{'locale'} if (defined($user->{'locale'}));
+	$gconfig{"locale_".$user->{'name'}} = $user->{'locale'}
+		if (defined($user->{'locale'}));
 	delete($gconfig{"dateformat_".$username});
-	$gconfig{"dateformat_".$user->{'name'}} = $user->{'dateformat'} if (defined($user->{'dateformat'}));
+	$gconfig{"dateformat_".$user->{'name'}} = $user->{'dateformat'}
+		if (defined($user->{'dateformat'}));
 	delete($gconfig{"notabs_".$username});
 	$gconfig{"notabs_".$user->{'name'}} = $user->{'notabs'}
 		if ($user->{'notabs'});
-	delete($gconfig{"rbacdeny_".$username});
-	$gconfig{"rbacdeny_".$user->{'name'}} = $user->{'rbacdeny'}
-		if ($user->{'rbacdeny'});
 	delete($gconfig{"ownmods_".$username});
 	$gconfig{"ownmods_".$user->{'name'}} = join(" ", @{$user->{'ownmods'}})
 		if ($user->{'ownmods'} && @{$user->{'ownmods'}});
 	delete($gconfig{"theme_".$username});
 	if ($user->{'theme'}) {
 		$gconfig{"theme_".$user->{'name'}} =
-		  $user->{'theme'}.($user->{'overlay'} ? " ".$user->{'overlay'} : "");
+		  $user->{'theme'}.($user->{'overlay'} ?
+		  	" ".$user->{'overlay'} : "");
 		}
 	elsif (defined($user->{'theme'})) {
 		$gconfig{"theme_".$user->{'name'}} = '';
@@ -1299,6 +1321,19 @@ foreach my $u (split(/\s+/, $access{'users'})) {
 return 0;
 }
 
+=head2 can_module_acl(&mod)
+
+Returns 1 if the given module has ability to manage its own ACLs.
+
+=cut
+sub can_module_acl
+{
+my ($mod) = @_;
+my $mdir = &module_root_directory($mod);
+return 1 if (-f "$mdir/acl_security.pl" || -f "$mdir/config.info");
+return 0;
+}
+
 =head2 open_session_db(\%miniserv)
 
 Opens the session database, and ties it to the sessiondb hash. Parameters are :
@@ -1312,17 +1347,48 @@ my ($miniserv) = @_;
 my $sfile = $miniserv->{'sessiondb'} ? $miniserv->{'sessiondb'} :
 	    $miniserv->{'pidfile'} =~ /^(.*)\/[^\/]+$/ ? "$1/sessiondb"
 						     : return;
-eval "use SDBM_File";
+&load_session_hmac_key($miniserv);
+eval { require SDBM_File; SDBM_File->import; 1 };
 dbmopen(%sessiondb, $sfile, 0700);
 eval { $sessiondb{'1111111111'} = 'foo bar' };
 if ($@) {
 	dbmclose(%sessiondb);
-	eval "use NDBM_File";
+	eval { require NDBM_File; NDBM_File->import; 1 };
 	dbmopen(%sessiondb, $sfile, 0700);
 	}
 else {
 	delete($sessiondb{'1111111111'});
 	}
+}
+
+=head2 load_session_hmac_key(\%miniserv)
+
+Loads miniserv's existing session HMAC key, if present.
+
+=cut
+sub load_session_hmac_key
+{
+my ($miniserv) = @_;
+return if (!$use_hmac_sha256);
+if (!$miniserv) {
+	$miniserv = { };
+	&get_miniserv_config($miniserv);
+	}
+my $kf = $miniserv->{'session_keyfile'};
+if (!$kf && $miniserv->{'pidfile'} =~ /^(.*)\/[^\/]+$/) {
+	$kf = "$1/session.key";
+	}
+return if (!$kf);
+return if (defined($loaded_session_keyfile) && $loaded_session_keyfile eq $kf);
+$loaded_session_keyfile = $kf;
+$session_hmac_key = undef;
+if (open(my $fh, "<", $kf)) {
+	binmode($fh);
+	local $/;
+	$session_hmac_key = <$fh>;
+	close($fh);
+	}
+undef(%hash_session_id_cache);
 }
 
 =head2 delete_session_id(\%miniserv, id)
@@ -1395,22 +1461,166 @@ foreach my $s (keys %sessiondb) {
 dbmclose(%sessiondb);
 }
 
-=head2 create_session_user(\%miniserv, user)
+=head2 create_session_user(\%miniserv, user, [lifetime])
 
 Creates a new session ID that's already logged in as the given user
 
 =cut
 sub create_session_user
 {
-my ($miniserv, $username) = @_;
-return undef if (&is_readonly_mode());
+my ($miniserv, $username, $lifetime) = @_;
+return if (&is_readonly_mode());
 &open_session_db($miniserv);
 my $sid = &generate_random_session_id();
-return undef if (!$sid);
+return if (!$sid);
 my $t = time();
-$sessiondb{$sid} = "$username $t 127.0.0.1";
+# miniserv only looks up sessions by their hashed key
+$sessiondb{&hash_session_id($sid)} =
+	"$username $t 127.0.0.1".($lifetime ? " ".$lifetime : "");
 dbmclose(%sessiondb);
 return $sid;
+}
+
+=head2 set_module_access(&modules, enabled, [&users-groups])
+
+Grants or revokes Webmin module access for users and groups. The modules
+parameter must be an array ref of module names. The enabled flag should be
+1 to grant access, or 0 to revoke access. If the users-groups parameter is
+not given, all users and groups are updated. Otherwise, it must be an array
+ref of usernames and group names. Group names may be prefixed with @ to
+target only a group.
+
+Returns the number of directly updated user and group records.
+
+=cut
+sub set_module_access
+{
+my ($mods, $enabled, $usersgroups) = @_;
+$mods ||= [];
+return 0 if (!@$mods);
+my $set_module_access_list = sub {
+	my ($obj, $key, $addmods) = @_;
+	$addmods ||= $mods;
+	my @old = @{$obj->{$key} || []};
+	my @new;
+	if ($enabled) {
+		@new = &unique(@old, @$addmods);
+		}
+	else {
+		my %remove = map { $_, 1 } @$mods;
+		@new = grep { !$remove{$_} } @old;
+		}
+	return 0 if (join("\0", @old) eq join("\0", @new));
+	$obj->{$key} = \@new;
+	return 1;
+	};
+my $own_module_updates = sub {
+	my ($obj, $inherited) = @_;
+	return $mods if (!$enabled);
+	return [] if (!@{$obj->{'ownmods'} || []} && !@$inherited);
+	return [ grep { &indexof($_, @$inherited) < 0 } @$mods ];
+	};
+my @users = &list_users();
+my @groups = &list_groups();
+my $all = !defined($usersgroups);
+my (%target_user, %target_group);
+if (!$all) {
+	foreach my $ug (@$usersgroups) {
+		if ($ug =~ /^\@(.*)$/) {
+			$target_group{$1} = 1;
+			}
+		else {
+			$target_user{$ug} = 1;
+			$target_group{$ug} = 1;
+			}
+		}
+	}
+my $changed = 0;
+my (%user_group, %group_parent);
+foreach my $g (@groups) {
+	foreach my $m (@{$g->{'members'} || []}) {
+		if ($m =~ /^\@(.*)$/) {
+			$group_parent{$1} = $g;
+			}
+		else {
+			$user_group{$m} = $g;
+			}
+		}
+	}
+my (@ordered_groups, %ordered_group, %ordering_group);
+my $add_ordered_group;
+$add_ordered_group = sub {
+	my ($g) = @_;
+	return if (!$g || $ordered_group{$g->{'name'}});
+	return if ($ordering_group{$g->{'name'}}++);
+	$add_ordered_group->($group_parent{$g->{'name'}});
+	delete($ordering_group{$g->{'name'}});
+	push(@ordered_groups, $g);
+	$ordered_group{$g->{'name'}}++;
+	};
+foreach my $g (@groups) {
+	$add_ordered_group->($g);
+	}
+
+# Update groups first, so member users and sub-groups inherit the new set
+foreach my $g (@ordered_groups) {
+	next if (!$all && !$target_group{$g->{'name'}});
+	my $gchanged = 0;
+	my $parent = $group_parent{$g->{'name'}};
+	my $ownmods = $own_module_updates->(
+		$g, [ @{$parent ? $parent->{'modules'} || [] : []} ]);
+	$gchanged += $set_module_access_list->($g, "modules");
+	$gchanged += $set_module_access_list->($g, "ownmods", $ownmods);
+	if ($gchanged) {
+		&modify_group($g->{'name'}, $g);
+		&update_members(\@users, \@groups, $g->{'modules'},
+				$g->{'members'});
+		$changed++;
+		}
+	}
+
+# Update directly targeted users
+foreach my $u (@users) {
+	next if (!$all && !$target_user{$u->{'name'}});
+	my $uchanged = 0;
+	my $group = $user_group{$u->{'name'}};
+	my $ownmods = $own_module_updates->(
+		$u, [ @{$group ? $group->{'modules'} || [] : []} ]);
+	$uchanged += $set_module_access_list->($u, "modules");
+	$uchanged += $set_module_access_list->($u, "ownmods", $ownmods);
+	if ($uchanged) {
+		&modify_user($u->{'name'}, $u);
+		$changed++;
+		}
+	}
+
+if ($changed) {
+	undef(%main::acl_hash_cache);
+	undef(%main::acl_array_cache);
+	}
+return $changed;
+}
+
+=head2 enable_module_access(&modules, [&users-groups])
+
+Grants users and groups access to one or more modules. This is a wrapper
+around set_module_access.
+
+=cut
+sub enable_module_access
+{
+return &set_module_access($_[0], 1, $_[1]);
+}
+
+=head2 disable_module_access(&modules, [&users-groups])
+
+Revokes users and groups access to one or more modules. This is a wrapper
+around set_module_access.
+
+=cut
+sub disable_module_access
+{
+return &set_module_access($_[0], 0, $_[1]);
 }
 
 =head2 update_members(&allusers, &allgroups, &modules, &members)
@@ -1674,7 +1884,7 @@ elsif (&has_command("ssleay")) {
 	return &has_command("ssleay");
 	}
 else {
-	return undef;
+	return;
 	}
 }
 
@@ -1701,7 +1911,7 @@ elsif ($mode == 2) {
 	}
 else {
 	# Try detecting system default first
-	if (&foreign_available('useradmin')) {
+	if (&foreign_installed('useradmin')) {
 		&foreign_require('useradmin');
 		return &useradmin::encrypt_password($pass, $salt, 1);
 		}
@@ -1790,6 +2000,7 @@ foreach my $g (&list_groups()) {
 		return $g;
 		}
 	}
+return;
 }
 
 =head2 check_password_restrictions(username, password)
@@ -1834,28 +2045,33 @@ if ($miniserv{'pass_oldblock'} && $user) {
 		last if ($c++ > $miniserv{'pass_oldblock'});
 		}
 	}
-return undef;
+return;
 }
 
 =head2 hash_session_id(sid)
 
-Returns an MD5 or Unix-crypted session ID.
+Returns a session DB key for a session ID.
 
 =cut
 sub hash_session_id
 {
 my ($sid) = @_;
 my $use_md5 = &md5_perl_module();
+&load_session_hmac_key() if ($use_hmac_sha256 && !$loaded_session_keyfile);
 if (!$hash_session_id_cache{$sid}) {
-        if ($use_md5) {
-                # Take MD5 hash
-                $hash_session_id_cache{$sid} = &hash_md5_session($sid);
-                }
-        else {
-                # Unix crypt
-                $hash_session_id_cache{$sid} = &unix_crypt($sid, "XX");
-                }
-        }
+	if ($use_hmac_sha256 && length($session_hmac_key) >= 16) {
+		$hash_session_id_cache{$sid} =
+			Digest::SHA::hmac_sha256_hex($sid, $session_hmac_key);
+		}
+	elsif ($use_md5) {
+		# Take MD5 hash
+		$hash_session_id_cache{$sid} = &hash_md5_session($sid);
+		}
+	else {
+		# Unix crypt
+		$hash_session_id_cache{$sid} = &unix_crypt($sid, "XX");
+		}
+	}
 return $hash_session_id_cache{$sid};
 }
 
@@ -1871,11 +2087,11 @@ my $use_md5 = &md5_perl_module();
 $use_md5 || &error("No Perl MD5 hashing module found!");
 
 # Add the password
-my $ctx = eval "new $use_md5";
+my $ctx = $use_md5->new;
 $ctx->add($passwd);
 
 # Add some more stuff from the hash of the password and salt
-my $ctx1 = eval "new $use_md5";
+my $ctx1 = $use_md5->new;
 $ctx1->add($passwd);
 $ctx1->add($passwd);
 my $final = $ctx1->digest();
@@ -1924,12 +2140,12 @@ Returns a Perl module for MD5 hashing, or undef if none.
 sub md5_perl_module
 {
 my $use_md5;
-eval "use MD5";
+eval { require MD5; MD5->import; 1 };
 if (!$@) {
         $use_md5 = "MD5";
         }
 else {
-        eval "use Digest::MD5";
+        eval { require Digest::MD5; Digest::MD5->import; 1 };
         if (!$@) {
                 $use_md5 = "Digest::MD5";
                 }
@@ -2086,16 +2302,16 @@ my ($str, $notablecheck) = @_;
 my ($proto, $user, $pass, $host, $prefix, $args) = &split_userdb_string($str);
 if ($proto eq "mysql" || $proto eq "postgresql") {
 	# Load DBI driver
-	eval 'use DBI;';
+	eval { require DBI; DBI->import; 1 };
 	return &text('sql_emod', 'DBI') if ($@);
 	if ($proto eq "mysql") {
-		eval 'use DBD::mysql;';
+		eval { require DBD::mysql; DBD::mysql->import; 1 };
 		return &text('sql_emod', 'DBD::mysql') if ($@);
 		my $drh = DBI->install_driver("mysql");
 		return $text{'sql_emysqldriver'} if (!$drh);
 		}
 	else {
-		eval 'use DBD::Pg;';
+		eval { require DBD::Pg; DBD::Pg->import; 1 };
 		return &text('sql_emod', 'DBD::Pg') if ($@);
 		my $drh = DBI->install_driver("Pg");
 		return $text{'sql_epostgresqldriver'} if (!$drh);
@@ -2127,11 +2343,11 @@ if ($proto eq "mysql" || $proto eq "postgresql") {
 			}
 		}
 	&disconnect_userdb($str, $dbh);
-	return undef;
+	return;
 	}
 elsif ($proto eq "ldap") {
 	# Load LDAP module
-	eval 'use Net::LDAP;';
+	eval { require Net::LDAP; Net::LDAP->import; 1 };
 	return &text('sql_emod', 'Net::LDAP') if ($@);
 
 	# Try to connect
@@ -2165,7 +2381,7 @@ elsif ($proto eq "ldap") {
 		$found || return &text('sql_eldapdn', $prefix);
 		}
 	&disconnect_userdb($str, $dbh);
-	return undef;
+	return;
 	}
 else {
 	return "Unknown user database type $proto";
@@ -2259,8 +2475,8 @@ if (!$miniserv) {
 	$miniserv = { };
 	&get_miniserv_config($miniserv);
 	}
-foreach $a (split(/\s+/, $miniserv->{'anonymous'})) {
-        if ($a =~ /^([^=]+)=(\S+)$/ && $2 eq $user) {
+foreach my $tok (split(/\s+/, $miniserv->{'anonymous'})) {
+        if ($tok =~ /^([^=]+)=(\S+)$/ && $2 eq $user) {
 		push(@rv, $1);
 		}
 	}
@@ -2274,7 +2490,7 @@ sub get_safe_acl
 my ($m) = @_;
 my $mdir = &module_root_directory($m);
 my %rv;
-&read_file_cached("$mdir/safeacl", \%rv) || return undef;
+&read_file_cached("$mdir/safeacl", \%rv) || return;
 return \%rv;
 }
 
@@ -2288,17 +2504,19 @@ sub generate_random_session_id
 my $sid;
 
 # Try /dev/urandom, but with a timeout
-$SIG{ALRM} = sub { close(RANDOM) };
+my $randomfh;
+$SIG{ALRM} = sub { close($randomfh) if ($randomfh) };
 alarm(5);
-if (open(RANDOM, "/dev/urandom")) {
+if (open($randomfh, "<", "/dev/urandom")) {
 	my $tmpsid;
-	if (read(RANDOM, $tmpsid, 16) == 16) {
+	if (read($randomfh, $tmpsid, 16) == 16) {
 		$sid = lc(unpack('h*',$tmpsid));
 		if ($sid !~ /^[0-9a-fA-F]{32}$/) {
 			$sid = 'bad';
 			}
 		}
-	close(RANDOM);
+	close($randomfh);
+	undef($randomfh);
 	}
 alarm(0);
 
@@ -2312,5 +2530,36 @@ if (!$sid) {
 return $sid eq 'bad' ? undef : $sid;
 }
 
-1;
+# generate_random_id()
+# Generate an ID string that can be used for a password reset link
+sub generate_random_id
+{
+if (open(my $RANDOM, "<", "/dev/urandom")) {
+	my $sid;
+	my $tmpsid;
+	if (read($RANDOM, $tmpsid, 16) == 16) {
+		$sid = lc(unpack('h*',$tmpsid));
+		}
+	close($RANDOM);
+	return $sid;
+	}
+# Explicit undef: callers consume this in hash-literal value position,
+# where bare 'return' would yield () and shift the surrounding pairing.
+return undef;    ## no critic (ProhibitExplicitReturnUndef)
+}
 
+# obsfucate_email(email)
+# Convert an email like foo@bar.com to f**@b**.com
+sub obsfucate_email
+{
+my ($email) = @_;
+my ($mailbox, $dom) = split(/\@/, $email);
+$mailbox = substr($mailbox, 0, 1) . ("*" x (length($mailbox)-1));
+my @doms;
+foreach my $d (split(/\./, $dom)) {
+	push(@doms, substr($d, 0, 1) . ("*" x (length($d)-1)));
+	}
+return $mailbox."\@".join(".", @doms);
+}
+
+1;

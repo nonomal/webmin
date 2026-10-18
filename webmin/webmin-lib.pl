@@ -18,27 +18,237 @@ our ($module_root_directory, %text, %gconfig, $root_directory, %config,
 do "$module_root_directory/gnupg-lib.pl";
 do "$module_root_directory/letsencrypt-lib.pl";
 do "$module_root_directory/twofactor-funcs-lib.pl";
+do "$module_root_directory/os-eol-lib.pl";
 use Socket;
 
 our @cs_codes = ( 'cs_page', 'cs_text', 'cs_table', 'cs_header', 'cs_link' );
 our @cs_names = map { $text{$_} } @cs_codes;
+my $can_http_ssl = &can_use_http_ssl();
+my $http_proto = $can_http_ssl ? "https" : "http";
 
 our $osdn_host = "prdownloads.sourceforge.net";
 our $osdn_port = 80;
 
 our $update_host = "download.webmin.com";
-our $update_port = 80;
+our $update_ssl = $can_http_ssl;
+our $update_port = $update_ssl ? 443 : 80;
 our $update_page = "/updates/updates.txt";
-our $update_url = "http://$update_host:$update_port$update_page";
-our $redirect_host = "www.webmin.com";
-our $redirect_url = "http://$redirect_host/cgi-bin/redirect.cgi";
+our $update_url = "$http_proto://$update_host:$update_port$update_page";
+our $redirect_host = "webmin.com";
+our $redirect_url = "$http_proto://$redirect_host/cgi-bin/redirect.cgi";
 our $update_cache = "$module_config_directory/update-cache";
 if (!-r $update_cache) {
 	$update_cache = "$module_var_directory/update-cache";
 	}
 
-our $primary_host = "www.webmin.com";
-our $primary_port = 80;
+our $primary_host = "webmin.com";
+our $primary_ssl = $can_http_ssl;
+
+=head2 miniserv_systemd_journal_available(unit)
+
+Returns 1 if a systemd service is available for receiving Miniserv errors.
+
+=cut
+sub miniserv_systemd_journal_available
+{
+my ($unit) = @_;
+return &has_command("systemctl") &&
+       (-r "/etc/systemd/system/$unit" ||
+	-r "/usr/lib/systemd/system/$unit" ||
+	-r "/lib/systemd/system/$unit");
+}
+
+=head2 set_miniserv_error_destination(&miniserv, config, unit, journal)
+
+Selects the Miniserv error file or the systemd journal, using a local systemd
+drop-in so that the packaged service unit remains unchanged.
+
+=cut
+sub set_miniserv_error_destination
+{
+my ($miniserv, $config_file, $unit, $journal) = @_;
+$unit =~ /^(webmin|usermin)\.service$/ || return 0;
+my $dropin_dir = "/etc/systemd/system/$unit.d";
+my $dropin = "$dropin_dir/10-miniserv-error-log.conf";
+
+# The dash keeps Miniserv's stderr attached to the service manager.
+if ($journal) {
+	$miniserv->{'errorlog'} = '-';
+	&make_dir($dropin_dir, 0755) if (!-d $dropin_dir);
+	&write_file_contents($dropin,
+		"[Service]\nStandardError=journal\n");
+	}
+else {
+	my $logfile = $miniserv->{'logfile'};
+	$logfile =~ s![^/]+$!miniserv.error!;
+	$miniserv->{'errorlog'} = $logfile;
+	&unlink_file($dropin) if (-e $dropin);
+	# Take the directory too, unless other drop-ins are still using it
+	rmdir($dropin_dir) if (-d $dropin_dir);
+	}
+
+# Apply the Miniserv and service-manager settings as one UI operation.
+&write_file($config_file, $miniserv);
+&system_logged("systemctl daemon-reload >/dev/null 2>&1");
+}
+
+=head2 restart_miniserv_systemd_service(unit, [delay])
+
+Fully restarts a Miniserv systemd service so that stderr is re-attached to the
+selected destination. A delay allows the current Webmin response to finish.
+
+=cut
+sub restart_miniserv_systemd_service
+{
+my ($unit, $delay) = @_;
+$unit =~ /^(webmin|usermin)\.service$/ || return 0;
+$delay = int($delay);
+if ($delay) {
+	&system_logged("(sleep $delay; systemctl --no-block restart $unit) " .
+		">/dev/null 2>&1 </dev/null &");
+	}
+else {
+	&system_logged("systemctl restart $unit >/dev/null 2>&1 </dev/null");
+	}
+return 1;
+}
+
+=head2 miniserv_logrotate_available()
+
+Returns 1 if logrotate is installed and can be configured from Webmin.
+
+=cut
+sub miniserv_logrotate_available
+{
+return &foreign_available("logrotate") && &foreign_installed("logrotate")
+	? 1
+	: 0;
+}
+
+=head2 miniserv_log_files(&miniserv)
+
+Returns the Miniserv access and error log paths that rotation applies to.
+
+=cut
+sub miniserv_log_files
+{
+my ($miniserv) = @_;
+my $errorlog = $miniserv->{'logfile'};
+$errorlog =~ s![^/]+$!miniserv.error!;
+$errorlog = $miniserv->{'errorlog'} if ($miniserv->{'errorlog'} =~ /^\//);
+return &unique($miniserv->{'logfile'}, $errorlog);
+}
+
+=head2 get_miniserv_logrotate_section(&miniserv)
+
+Returns the logrotate section that covers the Miniserv access log, if any.
+
+=cut
+sub get_miniserv_logrotate_section
+{
+my ($miniserv) = @_;
+&foreign_require("logrotate");
+my ($logfile) = &miniserv_log_files($miniserv);
+# Global directives like weekly and rotate share the list with log sections,
+# but their name is a plain string instead of a list of log files
+foreach my $c (@{&logrotate::get_config()}) {
+	next if (ref($c->{'name'}) ne 'ARRAY');
+	return $c if (&indexof($logfile, @{$c->{'name'}}) >= 0);
+	}
+return undef;
+}
+
+=head2 setup_miniserv_logrotate(&miniserv, name, [&extra-logs])
+
+Adds any missing Miniserv and extra logs to the access-log section, or creates
+a section when none exists. Copy-truncate rotation lets Miniserv keep its open
+error log handle, as it only re-opens that log when the file disappears.
+
+=cut
+sub setup_miniserv_logrotate
+{
+my ($miniserv, $name, $extra) = @_;
+my @logs = &unique(&miniserv_log_files($miniserv), @{$extra || [ ]});
+my $lconf = &get_miniserv_logrotate_section($miniserv);
+
+# Skip any log that some other section already rotates
+my %covered;
+foreach my $c (@{&logrotate::get_config()}) {
+	next if (ref($c->{'name'}) ne 'ARRAY');
+	foreach my $log (@{$c->{'name'}}) {
+		$covered{$log} = 1;
+		}
+	}
+my @missing = grep { !$covered{$_} } @logs;
+return 0 if ($lconf && !@missing);
+
+# Vendor files cannot be edited in place, so copy first on systems that
+# keep their logrotate config under /usr
+my $file = $lconf ? $lconf->{'file'} : &logrotate::get_add_file($name);
+&logrotate::ensure_writable_config_file($file);
+my $parent = &logrotate::get_config_parent();
+if ($lconf) {
+	# Copying re-reads the config, so look the section up again
+	$lconf = &get_miniserv_logrotate_section($miniserv);
+	push(@{$lconf->{'name'}}, @missing);
+	}
+else {
+	$lconf = { 'file' => &logrotate::get_add_file($name),
+		   'name' => [ grep { !$covered{$_} } @logs ],
+		   'members' => [ { 'name' => 'weekly' },
+				  { 'name' => 'rotate', 'value' => 7 },
+				  { 'name' => 'missingok' },
+				  { 'name' => 'notifempty' },
+				  { 'name' => 'compress' },
+				  { 'name' => 'copytruncate' } ] };
+	}
+&lock_file($lconf->{'file'});
+&logrotate::save_directive($parent,
+	defined($lconf->{'index'}) ? $lconf : undef,
+	$lconf);
+&flush_file_lines($lconf->{'file'});
+&unlock_file($lconf->{'file'});
+&logrotate::flush_logrotate_config_cache();
+return 1;
+}
+
+=head2 remove_miniserv_logrotate(&miniserv, [&extra-logs])
+
+Removes the Miniserv logs and any extra logs from their logrotate section. The
+section and its file are deleted when they cover nothing else.
+
+=cut
+sub remove_miniserv_logrotate
+{
+my ($miniserv, $extra) = @_;
+my $lconf = &get_miniserv_logrotate_section($miniserv);
+return 0 if (!$lconf);
+&logrotate::ensure_writable_config_file($lconf->{'file'});
+
+# Copying re-reads the config, so look the section up again
+$lconf = &get_miniserv_logrotate_section($miniserv);
+my %logs = map { $_, 1 } (&miniserv_log_files($miniserv), @{$extra || [ ]});
+my @leftover = grep { !$logs{$_} } @{$lconf->{'name'}};
+my $parent = &logrotate::get_config_parent();
+&lock_file($lconf->{'file'});
+if (@leftover) {
+	# Other logs share the section, so only drop ours
+	$lconf->{'name'} = \@leftover;
+	&logrotate::save_directive($parent, $lconf, $lconf);
+	&flush_file_lines($lconf->{'file'});
+	&unlock_file($lconf->{'file'});
+	&logrotate::flush_logrotate_config_cache();
+	}
+else {
+	&logrotate::save_directive($parent, $lconf, undef);
+	&flush_file_lines($lconf->{'file'});
+	&unlock_file($lconf->{'file'});
+	&logrotate::flush_logrotate_config_cache();
+	&logrotate::delete_if_empty($lconf->{'file'});
+	}
+return 1;
+}
+our $primary_port = $primary_ssl ? 443 : 80;
 
 our $webmin_key_email = "jcameron\@webmin.com";
 our $webmin_key_fingerprint = "1719 003A CE3E 5A41 E2DE  70DF D97A 3AE9 11F6 3C51";
@@ -52,14 +262,14 @@ our $authentic_key_fingerprint = "EC60 F3DA 9CB7 9ADC CF56  0D1F 121E 166D D9C8 
 our $standard_host = $primary_host;
 our $standard_port = $primary_port;
 our $standard_page = "/download/modules/standard.txt";
-our $standard_ssl = 0;
+our $standard_ssl = $primary_ssl;
 
 our $third_host = $primary_host;
 our $third_port = $primary_port;
 our $third_page = "/cgi-bin/third.cgi";
-our $third_ssl = 0;
+our $third_ssl = $primary_ssl;
 
-our $default_key_size = "2048";
+our $default_key_size = "4096";
 
 our $webmin_yum_repo_file = "/etc/yum.repos.d/webmin.repo";
 our $webmin_yum_repo_url = "https://download.webmin.com/download/newkey/yum";
@@ -106,6 +316,68 @@ our $realos_cache_file = "$module_var_directory/realos-cache";
 
 our $password_change_mod = "passwd";
 our $password_change_path = "/".$password_change_mod."/change_passwd.cgi";
+
+if (!defined($gconfig{'noselfwebminup'})) {
+	&has_repos();
+	}
+
+=head2 has_repos
+
+Checks if package manager repositories are
+available for Webmin and Usermin updates.
+
+=cut
+sub has_repos
+{
+my ($force) = @_;
+my $has_repos = 0;
+my @paths = (
+    '/etc/apt/sources.list',
+    '/etc/apt/sources.list.d',
+    '/etc/yum.repos.d'
+);
+my $pattern =
+	qr/webmin\.com|webmin\.dev|virtualmin\.com|virtualmin\.dev/i;
+my $process_file = sub {
+	my $file = shift;
+	return unless -f $file;
+	return unless $file =~ /\.list$|\.repo$/i;
+	open(my $fh, '<', $file) || return;
+	while (my $line = <$fh>) {
+		if ($line =~ /$pattern/) {
+			$has_repos = 1;
+			last;
+			}
+		}
+	close $fh;
+};
+# Check given repos paths
+foreach my $path (@paths) {
+	if (-d $path) {
+		# It's a directory, open and read each file
+		opendir(my $dh, $path) || next;
+		my @files = readdir($dh);
+		closedir($dh);
+		foreach my $file (@files) {
+			next if $file eq '.' or $file eq '..';
+			$process_file->("$path/$file");
+			}
+		}
+	elsif (-f $path) {
+		# It's a file
+		$process_file->($path);
+		}
+	}
+# Store the result in the config
+if ($force || !defined($gconfig{'noselfwebminup'}) ||
+    $gconfig{'noselfwebminup'} ne $has_repos) {
+	&lock_file("$config_directory/config");
+	$gconfig{'noselfwebminup'} = $has_repos;
+	&write_file("$config_directory/config", \%gconfig);
+	&unlock_file("$config_directory/config");
+	}
+return $has_repos;
+}
 
 =head2 setup_ca
 
@@ -243,7 +515,7 @@ if ($type eq 'rpm' && $file =~ /\.rpm$/i &&
 		return $text{'install_erpm'};
 		}
 	$redirect_to = $name = $3;
-	$out = &backquote_logged("rpm -Uv \"$file\" 2>&1");
+	$out = &backquote_logged("rpm -Uv ".&quote_path($file)." 2>&1");
 	if ($?) {
 		unlink($file) if ($need_unlink);
 		return &text('install_eirpm', "<tt>$out</tt>");
@@ -314,7 +586,9 @@ else {
 			 !$hasfile{$m,"theme.info"});
 		push(@realmods, $m);
 		my %minfo;
-		system("cd $tmpdir ; tar xf \"$file\" $m/module.info ./$m/module.info $m/theme.info ./$m/theme.info >/dev/null 2>&1");
+		system("cd ".&quote_path($tmpdir)." && tar xf ".&quote_path($file)." ".
+		       &quote_path("$m/module.info")." ".&quote_path("./$m/module.info")." ".
+		       &quote_path("$m/theme.info")." ".&quote_path("./$m/theme.info")." >/dev/null 2>&1");
 		if (!&read_file("$tmpdir/$m/module.info", \%minfo) &&
 		    !&read_file("$tmpdir/$m/theme.info", \%minfo)) {
 			$err = &text('install_einfo', "<tt>$m</tt>");
@@ -384,7 +658,7 @@ else {
 	foreach $m (@realmods) {
 		push(@grantmods, $m) if (!&foreign_exists($m));
 		if ($m ne "webmin") {
-			system("rm -rf ".quotemeta("$install_root_directory/$m")." 2>&1 >/dev/null");
+			system("rm -rf ".&quote_path("$install_root_directory/$m")." 2>&1 >/dev/null");
 			}
 		}
 
@@ -579,7 +853,11 @@ else {
 			   "<tt>$mdir</tt>", $size);
 	if ($type eq 'rpm') {
 		# This module was installed from an RPM .. rpm -e it
-		&system_logged("rpm -e wbm-$m");
+		&system_logged("rpm -e ".quotemeta("wbm-$m"));
+		}
+	elsif ($type eq 'deb') {
+		# Installed from a Debian package
+		&system_logged("dpkg --remove ".quotemeta("webmin-$m"));
 		}
 	else {
 		# Module was installed from a .wbm file .. just rm it
@@ -709,7 +987,7 @@ return (0);
 =head2 list_standard_modules
 
 Returns a list containing the short names, URLs and descriptions of the
-standard Webmin modules from www.webmin.com. If an error occurs, returns the
+standard Webmin modules from webmin.com. If an error occurs, returns the
 message instead.
 
 =cut
@@ -1094,19 +1372,20 @@ my $key = &read_file_contents($keyfile);
 $key =~ /BEGIN (RSA |EC )?PRIVATE KEY/i ||  
 	&error(&text('ssl_ekey2', $keyfile));
 if (!$certfile) {
-	$key =~ /BEGIN CERTIFICATE/ || &error(&text('ssl_ecert2', $keyfile));
+	$key =~ /BEGIN (CERTIFICATE|PUBLIC KEY)/ || &error(&text('ssl_ecert2', $keyfile));
 	}
 else {
 	-r $certfile || return &error(&text('ssl_ecert', $certfile));
 	my $cert = &read_file_contents($certfile);
-	$cert =~ /BEGIN CERTIFICATE/ || &error(&text('ssl_ecert2', $certfile));
+	$cert =~ /BEGIN (CERTIFICATE|PUBLIC KEY)/ || &error(&text('ssl_ecert2', $certfile));
 	}
 }
 
 =head2 detect_operating_system([os-list-file], [with-cache])
 
-Returns a hash containing os_type, os_version, real_os_type and
-real_os_version, suitable for the current system.
+Returns a hash containing os_type, os_version, real_os_type, real_os_version
+and real_os_version_full for the current system. The full version includes
+the point release for display without changing configuration version matching.
 
 =cut
 sub detect_operating_system
@@ -1115,13 +1394,14 @@ my $file = $_[0] || "$root_directory/os_list.txt";
 my $cache = $_[1];
 if ($cache) {
 	# Check the cache file, and only re-check the OS if older than
-	# 1 day, or if we have rebooted recently
+	# 1 day, if we have rebooted recently, or if the full version is missing
 	my %cache;
 	my $uptime = &get_system_uptime();
 	my $lastreboot = $uptime ? time()-$uptime : undef;
 	if (&read_file($detect_operating_system_cache, \%cache) &&
 	    $cache{'os_type'} && $cache{'os_version'} &&
-	    $cache{'real_os_type'} && $cache{'real_os_version'}) {
+	    $cache{'real_os_type'} && $cache{'real_os_version'} &&
+	    $cache{'real_os_version_full'}) {
 		if ($cache{'time'} > time()-24*60*60 &&
 		    $cache{'time'} > $lastreboot) {
 			return %cache;
@@ -1130,11 +1410,13 @@ if ($cache) {
 	}
 my $temp = &transname();
 my $perl = &get_perl_path();
-system("$root_directory/oschooser.pl $file $temp 1");
+system("$perl $root_directory/oschooser.pl ".
+       quotemeta($file)." ".quotemeta($temp)." 1");
 my %rv;
 &read_env_file($temp, \%rv);
 $rv{'time'} = time();
 &write_file($detect_operating_system_cache, \%rv);
+&unlink_file($temp);
 return %rv;
 }
 
@@ -1169,19 +1451,36 @@ my %miniserv;
 &get_miniserv_config(\%miniserv);
 &load_theme_library();	# So that UI functions work
 
-# Need OS upgrade, but only once per day or if the system was rebooted
+# Refresh OS details daily, after a reboot, or when the full version is missing
 my $now = time();
 my $uptime = &get_system_uptime();
 if (&foreign_available("webmin")) {
 	my %realos;
 	my @st = stat($realos_cache_file);
-	if (!@st || $now - $st[9] > 24*60*60 ||
+	&read_file($realos_cache_file, \%realos);
+	if (!@st || !$realos{'real_os_version_full'} ||
+	    $now - $st[9] > 24*60*60 ||
 	    $uptime && $now - $st[9] > $uptime) {
 		%realos = &detect_operating_system(undef, 1);
 		&write_file($realos_cache_file, \%realos);
 		}
-	else {
-		&read_file($realos_cache_file, \%realos);
+	my $new_real = $realos{'real_os_version'};
+	my $old_real = $gconfig{'real_os_version'};
+	$new_real =~ s/\.\d+$//;
+	$old_real =~ s/\.\d+$//;
+	if ($realos{'real_os_type'} eq $gconfig{'real_os_type'} &&
+	    $new_real eq $old_real &&
+	    ($realos{'real_os_version'} ne $gconfig{'real_os_version'} ||
+	     $realos{'real_os_version_full'} &&
+	     $realos{'real_os_version_full'} ne $gconfig{'real_os_version_full'})) {
+		# Save minor and display version changes without an OS upgrade prompt
+		&lock_file("$config_directory/config");
+		$gconfig{'real_os_version'} = $realos{'real_os_version'};
+		$gconfig{'real_os_version_full'} = $realos{'real_os_version_full'} ||
+						 $realos{'real_os_version'};
+		$gconfig{'os_version'} = $realos{'os_version'};
+		&write_file("$config_directory/config", \%gconfig);
+		&unlock_file("$config_directory/config");
 		}
 	if (($realos{'os_version'} ne $gconfig{'os_version'} ||
 	     $realos{'real_os_version'} ne $gconfig{'real_os_version'} ||
@@ -1263,14 +1562,12 @@ if (&foreign_check("acl")) {
 	}
 
 # New Webmin version is available, but only once per day
-my %raccess = &get_module_acl('root');
-my %rdisallow = map { $_, 1 } split(/\s+/, $raccess{'disallow'} || "");
 my %access = &get_module_acl();
 my %disallow = map { $_, 1 } split(/\s+/, $access{'disallow'} || "");
 my %allow = map { $_, 1 } split(/\s+/, $access{'allow'} || "");
-if (&foreign_available($module_name) && !$gconfig{'nowebminup'} &&
-    !$noupdates && ($allow{'upgrade'} ||
-		    (!$disallow{'upgrade'} && !$rdisallow{'upgrade'}))) {
+if (&foreign_available($module_name) && !$gconfig{'nowebminup'} && 
+    !$gconfig{'noselfwebminup'} && !$noupdates &&
+    ($allow{'upgrade'} || !$disallow{'upgrade'})) {
 	if (!$config{'last_version_check'} ||
 	    $now - $config{'last_version_check'} > 24*60*60) {
 		# Cached last version has expired .. re-fetch
@@ -1368,7 +1665,8 @@ if (&foreign_check("package-updates") && &foreign_available("init")) {
 				}
 			}
 		}
-	if ($allow_reboot_required && &package_updates::check_reboot_required()) {
+	if ($allow_reboot_required &&
+	    &package_updates::check_reboot_required()) {
 		push(@notifs,
 			&ui_form_start("@{[&get_webprefix()]}/init/reboot.cgi").
 			$text{'notif_reboot'}."<p>\n".
@@ -1546,7 +1844,10 @@ my @io = &check_ip6address($_[0]) ? split(/:/, $_[0])
 # Resolve to hostname and check that it forward resolves again
 my $hn = &to_hostname($_[0]);
 if (&check_ip6address($_[0])) {
-	$hn = "" if (&to_ip6address($hn) ne $_[0]);
+	my $ip6 = &to_ip6address($hn);
+	$hn = "" if (!$ip6 ||
+		     &canonicalize_ip6($ip6) ne
+		     	&canonicalize_ip6($_[0]));
 	}
 else {
 	$hn = "" if (&to_ipaddress($hn) ne $_[0]);
@@ -1610,18 +1911,19 @@ for(my $i=1; $i<@_; $i++) {
 		# Compare with an IPv6 network
 		my $v6size = $2;
 		my $v6addr = &canonicalize_ip6($1);
-		my $bytes = $v6size / 8;
-		my @mo = &expand_ipv6_bytes($v6addr);
-		my @io = &expand_ipv6_bytes(&canonicalize_ip6($_[0]));
-		for(my $j=0; $j<$bytes; $j++) {
-			if ($mo[$j] ne $io[$j]) {
-				$mismatch = 1;
-				}
-			}
+		$mismatch = 1 if (!&ip6_prefix_match($_[0], $v6addr, $v6size));
 		}
 	elsif ($_[$i] !~ /^[0-9\.]+$/) {
 		# Compare with hostname
-		$mismatch = 1 if ($_[0] ne &to_ipaddress($_[$i]));
+		if (&check_ip6address($_[0])) {
+			my $ip6 = &to_ip6address($_[$i]);
+			$mismatch = 1 if (!$ip6 ||
+					  &canonicalize_ip6($ip6) ne
+					  	&canonicalize_ip6($_[0]));
+			}
+		else {
+			$mismatch = 1 if ($_[0] ne &to_ipaddress($_[$i]));
+			}
 		}
 	return 1 if (!$mismatch);
 	}
@@ -1642,6 +1944,29 @@ foreach my $w (split(/:/, $addr)) {
 	push(@rv, hex($1), hex($2));
 	}
 return @rv;
+}
+
+=head2 ip6_prefix_match(address, network, prefix)
+
+Returns 1 if an IPv6 address is in a network prefix.
+
+=cut
+sub ip6_prefix_match
+{
+my ($addr, $network, $prefix) = @_;
+my @addr = &expand_ipv6_bytes(&canonicalize_ip6($addr));
+my @network = &expand_ipv6_bytes(&canonicalize_ip6($network));
+return 0 if (@addr != 16 || @network != 16 || $prefix < 0 || $prefix > 128);
+my $bytes = int($prefix / 8);
+my $bits = $prefix % 8;
+for(my $i=0; $i<$bytes; $i++) {
+	return 0 if ($addr[$i] != $network[$i]);
+	}
+if ($bits) {
+	my $mask = (0xff << (8 - $bits)) & 0xff;
+	return 0 if (($addr[$bytes] & $mask) != ($network[$bytes] & $mask));
+	}
+return 1;
 }
 
 
@@ -1700,8 +2025,6 @@ elsif ($h =~ /^([a-f0-9:]+)\/(\d+)$/) {
 		return &text('access_eip6', $1);
 	$2 >= 0 && $2 <= 128 ||
 		return &text('access_ecidr6', "$2");
-	$2 % 8 == 0 ||
-		return &text('access_ecidr8', "$2");
 	}
 elsif ($h =~ /^[a-f0-9:]+$/) {
 	# IPv6 address
@@ -1861,12 +2184,22 @@ Output a page with header and footer about Webmin needing to restart.
 =cut
 sub show_restart_page
 {
+my ($title, $msg) = @_;
 if (!$gconfig{'restart_async'}) {
 	&restart_miniserv();
-	&redirect("");
+	my $msg_redir = "";
+	if ($msg) {
+		$title = defined($title) ? &html_strip($title, " ") : "";
+		$msg = &html_strip($msg, " ");
+		$title =~ s/\s+/ /g;
+		$title =~ s/^\s+|\s+$//g;
+		$msg =~ s/\s+/ /g;
+		$msg =~ s/^\s+|\s+$//g;
+		$msg_redir = "?title=".&urlize($title)."&message=".&urlize($msg);
+		}
+	&redirect($msg_redir);
 	return;
 	}
-my ($title, $msg) = @_;
 $title ||= $text{'restart_title'};
 $msg ||= $text{'restart_done'};
 &ui_print_header(undef, $title, "");
@@ -2393,7 +2726,7 @@ return wantarray ? (\%installed, \@changed) : \%installed;
 
 =head2 get_latest_webmin_version
 
-Returns 1 and the latest version of Webmin available on www.webmin.com, or
+Returns 1 and the latest version of Webmin available on webmin.com, or
 0 and an error message
 
 =cut
@@ -2401,7 +2734,8 @@ sub get_latest_webmin_version
 {
 my $file = &transname();
 my ($error, $version, $release);
-&http_download($primary_host, $primary_port, '/', $file, \$error, undef, 0,
+&http_download($primary_host, $primary_port, '/', $file, \$error, undef,
+	       $primary_ssl,
 	       undef, undef, 5);
 return (0, $error) if ($error);
 open(FILE, "<".$file);
@@ -2527,16 +2861,20 @@ sub canonicalize_ip6
 {
 my ($addr) = @_;
 return $addr if (!&check_ip6address($addr));
-my @w = split(/:/, $addr);
+my @w = split(/:/, $addr, -1);
 my $idx = &indexof("", @w);
 if ($idx >= 0) {
 	# Expand ::
-	my $mis = 8 - scalar(@w);
-	my @nw = @w[0..$idx];
+	my $endidx = $idx;
+	while($endidx+1 < @w && $w[$endidx+1] eq "") {
+		$endidx++;
+		}
+	my $mis = 8 - (scalar(@w) - ($endidx - $idx + 1));
+	my @nw = @w[0..$idx-1];
 	for(my $i=0; $i<$mis; $i++) {
 		push(@nw, 0);
 		}
-	push(@nw, @w[$idx+1 .. $#w]);
+	push(@nw, @w[$endidx+1 .. $#w]);
 	@w = @nw;
 	}
 foreach my $w (@w) {
@@ -2575,8 +2913,14 @@ my %osinfo = %{$_[0]};
 &lock_file("$config_directory/config");
 $gconfig{'real_os_type'} = $osinfo{'real_os_type'};
 $gconfig{'real_os_version'} = $osinfo{'real_os_version'};
+$gconfig{'real_os_version_full'} = $osinfo{'real_os_version_full'} ||
+				 $osinfo{'real_os_version'};
 $gconfig{'os_type'} = $osinfo{'os_type'};
 $gconfig{'os_version'} = $osinfo{'os_version'};
+foreach my $key ('os_eol_db', 'os_eol_expired',
+		 'os_eol_expiring') {
+	delete($gconfig{$key});
+	}
 &write_file("$config_directory/config", \%gconfig);
 &unlock_file("$config_directory/config");
 
@@ -2585,21 +2929,17 @@ if (&foreign_installed("usermin")) {
 	&foreign_require("usermin");
 	my %miniserv;
 	&usermin::get_usermin_miniserv_config(\%miniserv);
-	my @ust = stat("$miniserv{'root'}/os_list.txt");
-	my @wst = stat("$root_directory/os_list.txt");
-	if ($ust[7] == $wst[7]) {
-		# os_list.txt is the same, so we can assume the same OS codes
-		# are supported
-		my %uconfig;
-		&lock_file($usermin::usermin_config);
-		&usermin::get_usermin_config(\%uconfig);
-		$uconfig{'real_os_type'} = $osinfo{'real_os_type'};
-		$uconfig{'real_os_version'} = $osinfo{'real_os_version'};
-		$uconfig{'os_type'} = $osinfo{'os_type'};
-		$uconfig{'os_version'} = $osinfo{'os_version'};
-		&usermin::put_usermin_config(\%uconfig);
-		&unlock_file($usermin::usermin_config);
-		}
+	my %uconfig;
+	&lock_file($usermin::usermin_config);
+	&usermin::get_usermin_config(\%uconfig);
+	$uconfig{'real_os_type'} = $osinfo{'real_os_type'};
+	$uconfig{'real_os_version'} = $osinfo{'real_os_version'};
+	$uconfig{'real_os_version_full'} = $osinfo{'real_os_version_full'} ||
+					 $osinfo{'real_os_version'};
+	$uconfig{'os_type'} = $osinfo{'os_type'};
+	$uconfig{'os_version'} = $osinfo{'os_version'};
+	&usermin::put_usermin_config(\%uconfig);
+	&unlock_file($usermin::usermin_config);
 	}
 }
 
@@ -2621,24 +2961,34 @@ my @doms = split(/\s+/, $config{'letsencrypt_doms'});
 my $webroot = $config{'letsencrypt_webroot'};
 my $mode = $config{'letsencrypt_mode'} || "web";
 my $size = $config{'letsencrypt_size'};
+my $usewebmin = !$config{'letsencrypt_nouse'};
+my $directory_url = $config{'letsencrypt_directory_url'};
+my $eab_kid = $config{'letsencrypt_eab_kid'};
+my $eab_hmac = $config{'letsencrypt_eab_hmac'};
 if (!@doms) {
 	print "No domains saved to renew cert for!\n";
 	return;
 	}
-if (!$webroot) {
+if ($mode eq "web" && !$webroot) {
 	print "No webroot saved to renew cert for!\n";
 	return;
 	}
-elsif (!-d $webroot) {
+elsif ($mode eq "web" && !-d $webroot) {
 	print "Webroot $webroot does not exist!\n";
 	return;
 	}
 my ($ok, $cert, $key, $chain) = &request_letsencrypt_cert(\@doms, $webroot,
-							  undef, $size, $mode);
+							  undef, $size, $mode,
+							  undef, undef, undef,
+							  undef, $directory_url,
+							  $eab_kid, $eab_hmac);
 if (!$ok) {
 	print "Failed to renew certificate : $cert\n";
 	return;
 	}
+
+# If we don't want to update the Webmin SSL certificate, then just return
+return if (!$usewebmin);
 
 # Copy into place
 my %miniserv;
@@ -2770,51 +3120,6 @@ foreach my $pid (readdir(DIR)) {
 	}
 closedir(DIR);
 return @rv;
-}
-
-# can_generate_qr()
-# Returns 1 if QR codes can be generated on this system
-sub can_generate_qr
-{
-if (&has_command("qrencode")) {
-	return 1;
-	}
-eval "use Image::PNG::QRCode";
-if (!$@) {
-	return 1;
-	}
-return 0;
-}
-
-# generate_qr_code(string, [block-size])
-# Turn a string into a QR code image, and returns the data and MIME type
-sub generate_qr_code
-{
-my ($str, $size) = @_;
-if (&has_command("qrencode")) {
-	# Use the qrencode shell command
-	my $cmd = "qrencode -o - -t PNG ".quotemeta($str);
-	$cmd .= " -s ".quotemeta($size) if ($size);
-	my ($out, $err);
-	my $ex = &execute_command($cmd, undef, \$out, \$err);
-	if ($ex) {
-		return (undef, $err);
-		}
-	return ($out, "image/png");
-	}
-eval "use Image::PNG::QRCode";
-if (!$@) {
-	# Use a Perl module
-	my $out;
-	Image::PNG::QRCode::qrpng(
-		text => $str,
-		scale => $size || 3,
-		out => \$out,
-		);
-	return ($out, "image/png");
-	}
-return (undef, "QR code generation requires either the qrencode command or ".
-	       "Image::PNG::QRCode Perl module");
 }
 
 1;

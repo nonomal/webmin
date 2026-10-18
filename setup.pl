@@ -66,7 +66,7 @@ if ($ENV{'perllib'}) {
 # Validate source directory
 @allmods = map { s/\/module.info$//; $_ } glob("*/module.info");
 if (!@allmods) {
-	&errorexit("ERROR: Failed to get module list");
+	&errorexit("Failed to get module list");
 	}
 $allmods = join(" ", @allmods);
 print "\n";
@@ -248,10 +248,12 @@ else {
 	$os_version = $osinfo{'os_version'};
 	$real_os_type = $osinfo{'real_os_type'};
 	$real_os_version = $osinfo{'real_os_version'};
+	$real_os_version_full = $osinfo{'real_os_version_full'} || $real_os_version;
 	$gconfig{'os_type'} = $os_type;
 	$gconfig{'os_version'} = $os_version;
 	$gconfig{'real_os_type'} = $real_os_type;
 	$gconfig{'real_os_version'} = $real_os_version;
+	$gconfig{'real_os_version_full'} = $real_os_version_full;
 	$path_separator = $gconfig{'os_type'} eq 'windows' ? ';' : ':';
 	$null_file = $gconfig{'os_type'} eq 'windows' ? "NUL" : "/dev/null";
 	unlink($temp);
@@ -341,6 +343,7 @@ else {
 	# Ask the user if SSL should be used
 	if ($ENV{'ssl'} ne '') {
 		$ssl = $ENV{'ssl'};
+		$no_ssl_warn = 1 if (!$ssl);
 		}
 	else {
 		$ssl = 0;
@@ -350,6 +353,9 @@ else {
 			chop($sslyn = <STDIN>);
 			if ($sslyn =~ /^y/i) {
 				$ssl = 1;
+				}
+			else {
+				$no_ssl_warn = 1;
 				}
 			}
 		else {
@@ -406,6 +412,7 @@ else {
 			'errorlog' => "$var_dir/miniserv.error",
 			'pidfile' => "$var_dir/miniserv.pid",
 			'logtime' => 168,
+			'logclear' => 1,
 			'ppath' => $ppath,
 			'ssl' => $ssl,
 			'no_ssl2' => 1,
@@ -419,6 +426,7 @@ else {
 			'listen' => 10000,
 			'denyfile' => "\\.pl\$",
 			'log' => 1,
+			'nolistdir' => 1,
 			'blockhost_failures' => 5,
 			'blockhost_time' => 60,
 			'syslog' => $os_type eq 'windows' ? 0 : 1,
@@ -429,6 +437,7 @@ else {
 	if ($ENV{'allow'}) {
 		$miniserv{'allow'} = $ENV{'allow'};
 		}
+	$miniserv{'no_ssl_warn'} = 1 if ($no_ssl_warn);
 	if ($ENV{'session'} eq '') {
 		$miniserv{'session'} = $os_type eq 'windows' ? 0 : 1;
 		}
@@ -486,13 +495,14 @@ else {
 	chmod(0600, $ufile);
 
 	# Generate cert
-	if (system("openssl version >/dev/null 2>&1") == 0) {
+	$openssl_available = system("openssl version >/dev/null 2>&1") == 0;
+	if ($openssl_available) {
 		# We can generate a new SSL key for this host
 		$host = &get_system_hostname();
 		$cert = &tempname();
 		$key = &tempname();
 		$addtextsup = &get_openssl_version() >= 1.1 ? "-addext subjectAltName=DNS:$host,DNS:localhost -addext extendedKeyUsage=serverAuth" : "";
-		open(SSL, "| openssl req -newkey rsa:2048 -x509 -nodes -out $cert -keyout $key -days 1825 -sha256 -subj '/CN=$host/C=US/L=Santa Clara' $addtextsup >/dev/null 2>&1");
+		open(SSL, "| openssl req -newkey rsa:4096 -x509 -nodes -out $cert -keyout $key -days 1825 -sha256 -subj '/CN=$host/C=US/L=Santa Clara' $addtextsup >/dev/null 2>&1");
 		print SSL ".\n";
 		print SSL ".\n";
 		print SSL ".\n";
@@ -517,11 +527,27 @@ else {
 			}
 		unlink($cert, $key);
 		}
-	if (!-r $kfile) {
-		# Fall back to the built-in key
-		&copy_source_dest("$wadir/miniserv.pem", $kfile);
+	if (-r $kfile) {
+		chmod(0600, $kfile);
 		}
-	chmod(0600, $kfile);
+	else {
+		delete($miniserv{'keyfile'});
+		if ($ssl) {
+			print "\n";
+			if ($openssl_available) {
+				print "ERROR: Failed to generate or install a unique TLS certificate for this host.\n";
+				}
+			else {
+				print "ERROR: OpenSSL is not available, so a unique TLS certificate could not be generated.\n";
+				}
+			print "WARNING: Webmin will be configured to use HTTP only.\n";
+			print "Login credentials and sessions will not be encrypted until SSL is enabled\n";
+			print "with a valid certificate. See https://webmin.com/docs/modules/webmin-configuration/#ssl-encryption for help.\n\n";
+			$ssl = 0;
+			$miniserv{'ssl'} = 0;
+			}
+		&put_miniserv_config(\%miniserv);
+		}
 	print ".. done\n";
 	print "\n";
 
@@ -614,6 +640,19 @@ else {
 	print STOP "  echo Force stopping Webmin server in $wadir\n";
 	print STOP "else\n";
 	print STOP "  echo Stopping Webmin server in $wadir\n";
+	print STOP "fi\n";
+	print STOP "targets=\"stats.pl shellserver.pl\"\n";
+	print STOP "collect_pids() {\n";
+	print STOP "  for s in \$targets; do\n";
+	print STOP "    ps axww | grep \"$wadir/\" | grep \"/\$s\" | grep -v grep\n";
+	print STOP "  done | awk '{print \$1}' | sort -u\n";
+	print STOP "}\n";
+	print STOP "pids=\$(collect_pids)\n";
+	print STOP "[ -n \"\$pids\" ] && kill \$pids 2>/dev/null || true\n";
+	print STOP "if [ \"\$1\" = \"--kill\" ]; then\n";
+	print STOP "  sleep 1\n";
+	print STOP "  pids=\$(collect_pids)\n";
+	print STOP "  [ -n \"\$pids\" ] && kill -KILL \$pids 2>/dev/null || true\n";
 	print STOP "fi\n";
 	print STOP "pidfile=\`grep \"^pidfile=\" $config_directory/miniserv.conf | sed -e 's/pidfile=//g'\`\n";
 	print STOP "pid=\`cat \$pidfile 2>/dev/null\`\n";
@@ -765,15 +804,6 @@ else {
 		chmod(0755, "$config_directory/reload");
 		chmod(0755, "$config_directory/.pre-install");
 		chmod(0755, "$config_directory/.post-install");
-
-		# Fix existing systemd webmin.service file to update start and stop commands
-		chdir("$wadir/init");
-		system("$perl ".&quote_path("$wadir/init/updateboot.pl")." $bootscript");
-		}
-	else {
-		# Try to install init script to init.d
-		chdir("$wadir/init");
-		system("$perl ".&quote_path("$wadir/init/updateboot.pl")." $bootscript");
 		}
 }
 print ".. done\n";
@@ -787,12 +817,14 @@ else {
 	}
 system("$perl ".&quote_path("$wadir/copyconfig.pl")." ".&quote_path("$os_type/$real_os_type")." ".&quote_path("$os_version/$real_os_version")." ".&quote_path($wadir)." ".$config_directory." \"\" ".$allmods . " >/dev/null 2>&1");
 if (!$upgrading) {
-	# Store the OS and version
+	# Store the OS and version, and enable log and log clearing
 	&read_file("$config_directory/config", \%gconfig);
 	$gconfig{'os_type'} = $os_type;
 	$gconfig{'os_version'} = $os_version;
 	$gconfig{'real_os_type'} = $real_os_type;
 	$gconfig{'real_os_version'} = $real_os_version;
+	$gconfig{'real_os_version_full'} = $real_os_version_full;
+	$gconfig{'logclear'} = 1;
 	$gconfig{'log'} = 1;
 	&write_file("$config_directory/config", \%gconfig);
 	}
@@ -837,6 +869,7 @@ if ($theme && -d "$wadir/$theme") {
 # Set the product field in the global config
 $gconfig{'product'} ||= "webmin";
 
+# Add boot script if needed
 if ($makeboot) {
 	print "Configuring Webmin to start at boot time ..\n";
 	chdir("$wadir/init");
@@ -845,6 +878,9 @@ if ($makeboot) {
 	print "\n";
 	}
 
+# Update boot script if needed
+chdir("$wadir/init");
+system("$perl ".&quote_path("$wadir/init/updateboot.pl")." $bootscript");
 
 # If password delays are not specifically disabled, enable them
 if (!defined($miniserv{'passdelay'}) && $os_type ne 'windows') {
@@ -971,10 +1007,10 @@ if (!$ENV{'nostart'}) {
 		print "Since Webmin was installed outside the package manager, ensure the\n";
 		print "following recommended Perl modules and packages are present:\n";
 		print " Perl modules:\n";
-		print "  - DateTime, DateTime::Locale, DateTime::TimeZone, Data::Dumper\n";
-		print "  - Digest::MD5, Digest::SHA, Encode::Detect, File::Basename\n";
-		print "  - File::Path, Net::SSLeay, Time::HiRes, Time::Local, Time::Piece\n";
-		print "  - lib, open\n";
+		print "  - DateTime, DateTime::Locale, DateTime::TimeZone, Data::Dumper,\n";
+		print "  - Digest::MD5, Digest::SHA, Encode::Detect, File::Basename,\n";
+		print "  - File::Path, Net::SSLeay, Time::HiRes, Time::Local, Time::Piece,\n";
+		print "  - Socket6, Sys::Syslog, JSON::XS, lib, open\n";
 		print " Packages:\n";
 		print "  - openssl - Cryptography library with TLS implementation\n";
 		print "  - shared-mime-info - Shared MIME information database\n";

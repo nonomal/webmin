@@ -13,6 +13,7 @@ if ($in{'new'}) {
 	}
 else {
 	$oldjob = $jobs[$in{'idx'}];
+	$oldjob && !$oldjob->{'name'} || &error($text{'edit_egone'});
 	$job->{'type'} = $oldjob->{'type'};
 	$job->{'file'} = $oldjob->{'file'};
 	$job->{'line'} = $oldjob->{'line'};
@@ -36,6 +37,10 @@ foreach $f (@files) { &lock_file($f); }
 # Check and parse inputs
 if ($in{"cmd"} !~ /\S/ && $access{'command'}) {
 	&error($text{'save_ecmd'});
+	}
+# A line break would add extra lines to the crontab
+if ($in{'cmd'} =~ /[\r\n]/ || $in{'comment'} =~ /[\r\n]/) {
+	&error($text{'save_enewline'});
 	}
 if (&supports_users()) {
 	if (!$in{'user'}) {
@@ -70,6 +75,7 @@ if (defined($in{'range_def'})) {
 	&unconvert_range($job);
 	}
 
+$in{'comment'} =~ /\r|\n/ && &error($text{'save_ecomment'});
 $job->{'comment'} = $in{'comment'};
 &unconvert_comment($job);
 

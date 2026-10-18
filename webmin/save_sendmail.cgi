@@ -63,6 +63,18 @@ else {
 	$in{'from'} =~ /^\S+$/ || &error($text{'sendmail_efrom'});
 	$mconfig{'webmin_from'} = $in{'from'};
 	}
+$mconfig{'webmin_from_name'} = $in{'from_name'};
+
+# Save to address
+if ($in{'to_def'}) {
+	delete($gconfig{'webmin_email_to'});
+	}
+else {
+	$in{'to'} =~ /^\S+$/ ||
+		&error($text{'sendmail_etoaddr'});
+	$gconfig{'webmin_email_to'} = $in{'to'};
+	}
+$gconfig{'webmin_email_to_name'} = $in{'to_name'};
 
 # Save URL for use in email
 if ($in{'url_def'}) {

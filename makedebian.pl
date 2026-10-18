@@ -22,6 +22,8 @@ else {
 	$baseproduct = "webmin";
 	$port = 10000;
 	}
+$deb_maintainer = $ENV{'DEB_MAINTAINER'} ||
+		  "Jamie Cameron <jcameron\@webmin.com>";
 $ucproduct = ucfirst($baseproduct);
 $tmp_dir = "/tmp/debian";
 $debian_dir = "$tmp_dir/DEBIAN";
@@ -79,7 +81,7 @@ system("cd $usr_dir && rm -f mount/freebsd-mounts*");
 system("cd $usr_dir && rm -f mount/openbsd-mounts*");
 if ($product eq "webmin") {
 	system("cd $usr_dir && rm -f mount/macos-mounts*");
-	system("cd $usr_dir && rm -f webmin-gentoo-init");
+	system("cd $usr_dir && rm -f webmin-openrc-init");
 	system("cd $usr_dir && rm -rf format bsdexports hpuxexports sgiexports zones rbac bsdfdisk");
 	system("cd $usr_dir && rm -rf acl/Authen-SolarisRBAC-0.1*");
 	}
@@ -107,7 +109,7 @@ if ($product eq "webmin") {
 $size = int(`du -sk $tmp_dir`);
 @deps = ( "perl", "libnet-ssleay-perl", "openssl", "libauthen-pam-perl", "libpam-runtime", "libio-pty-perl", "unzip", "shared-mime-info", "tar", "libdigest-sha-perl", "libdigest-md5-perl", "gzip" );
 $deps = join(", ", @deps);
-@recommends = ( "libdatetime-perl", "libdatetime-timezone-perl", "libdatetime-locale-perl", "libtime-piece-perl", "libencode-detect-perl", "libtime-hires-perl", "libsocket6-perl", "lynx", "qrencode" );
+@recommends = ( "libdatetime-perl", "libdatetime-timezone-perl", "libdatetime-locale-perl", "libtime-piece-perl", "libencode-detect-perl", "libtime-hires-perl", "libsocket6-perl", "html2text", "libdbi-perl", "libdbd-mysql-perl", "libdbd-mariadb-perl", "libjson-xs-perl", "libsys-syslog-perl" );
 $recommends = join(", ", @recommends);
 open(CONTROL, ">$control_file");
 print CONTROL <<EOF;
@@ -120,25 +122,25 @@ Depends: $deps
 Recommends: $recommends
 Pre-Depends: perl
 Installed-Size: $size
-Maintainer: Jamie Cameron <jcameron\@webmin.com>
+Maintainer: $deb_maintainer
 Provides: $baseproduct
 EOF
 if ($product eq "webmin") {
 	print CONTROL <<EOF;
-Replaces: webmin-adsl, webmin-apache, webmin-bandwidth, webmin-bind, webmin-burner, webmin-cfengine, webmin-cluster, webmin-core, webmin-cpan, webmin-dhcpd, webmin-exim, webmin-exports, webmin-fetchmail, webmin-firewall, webmin-freeswan, webmin-frox, webmin-fsdump, webmin-grub, webmin-heartbeat, webmin-htaccess, webmin-inetd, webmin-jabber, webmin-ldap-netgroups, webmin-ldap-user-simple, webmin-ldap-useradmin, webmin-lilo, webmin-logrotate, webmin-lpadmin, webmin-lvm, webmin-mailboxes, webmin-mon, webmin-mysql, webmin-nis, webmin-openslp, webmin-postfix, webmin-postgresql, webmin-ppp, webmin-pptp-client, webmin-pptp-server, webmin-procmail, webmin-proftpd, webmin-pserver, webmin-quota, webmin-samba, webmin-sarg, webmin-sendmail, webmin-shorewall, webmin-slbackup, webmin-smart-status, webmin-snort, webmin-software, webmin-spamassassin, webmin-squid, webmin-sshd, webmin-status, webmin-stunnel, webmin-updown, webmin-usermin, webmin-vgetty, webmin-webalizer, webmin-wuftpd, webmin-wvdial, webmin-xinetd, webmin-filemin, webmin-authentic-theme
+Replaces: webmin-adsl, webmin-apache, webmin-bandwidth, webmin-bind, webmin-burner, webmin-cfengine, webmin-cluster, webmin-core, webmin-cpan, webmin-custom, webmin-dhcpd, webmin-exim, webmin-exports, webmin-fetchmail, webmin-firewall, webmin-freeswan, webmin-frox, webmin-fsdump, webmin-grub, webmin-heartbeat, webmin-htaccess, webmin-inetd, webmin-jabber, webmin-ldap-netgroups, webmin-ldap-user-simple, webmin-ldap-useradmin, webmin-lilo, webmin-logrotate, webmin-lpadmin, webmin-lvm, webmin-mailboxes, webmin-mon, webmin-mysql, webmin-nftables, webmin-nis, webmin-openslp, webmin-postfix, webmin-postgresql, webmin-ppp, webmin-pptp-client, webmin-pptp-server, webmin-procmail, webmin-proftpd, webmin-pserver, webmin-quota, webmin-samba, webmin-sarg, webmin-sendmail, webmin-shorewall, webmin-slbackup, webmin-smart-status, webmin-snort, webmin-software, webmin-spamassassin, webmin-squid, webmin-sshd, webmin-status, webmin-stunnel, webmin-updown, webmin-usermin, webmin-vgetty, webmin-webalizer, webmin-wuftpd, webmin-wvdial, webmin-xinetd, webmin-filemin, webmin-authentic-theme
 Description: web-based administration interface for Unix systems
-  Using Webmin you can configure DNS, Samba, NFS, local/remote filesystems
-  and more using your web browser.  After installation, enter the URL
-  https://localhost:10000/ into your browser and login as root with your root
-  password.
+ Using Webmin you can configure DNS, Samba, NFS, local/remote filesystems
+ and more using your web browser. After installation, enter the URL
+ https://localhost:10000/ into your browser and login as root with your root
+ password.
 EOF
 	}
 else {
 	print CONTROL <<EOF;
 Replaces: usermin-at, usermin-changepass, usermin-chfn, usermin-commands, usermin-cron, usermin-cshrc, usermin-fetchmail, usermin-forward, usermin-gnupg, usermin-htaccess, usermin-htpasswd, usermin-mailbox, usermin-man, usermin-mysql, usermin-plan, usermin-postgresql, usermin-proc, usermin-procmail, usermin-quota, usermin-schedule, usermin-shell, usermin-spamassassin, usermin-ssh, usermin-tunnel, usermin-updown, usermin-usermount, usermin-filemin, usermin-authentic-theme
 Description: web-based user account administration interface for Unix systems
-  After installation, enter the URL http://localhost:20000/ into your browser
-  and login as any user on your system.
+ After installation, enter the URL http://localhost:20000/ into your browser
+ and login as any user on your system.
 EOF
 	}
 close(CONTROL);
@@ -150,7 +152,7 @@ print COPY <<EOF;
 This package was debianized by Jamie Cameron <jcameron\@webmin.com> on
 $nowstr.
 
-It was downloaded from: http://www.webmin.com/
+It was downloaded from: https://webmin.com
 
 Upstream author: Jamie Cameron <jcameron\@webmin.com>
 
@@ -359,10 +361,10 @@ if [ "\$inetd" != "1" ]; then
 		else
 			if [ "\$productrunning" = "1" ]; then
 				/etc/$baseproduct/restart >/dev/null 2>&1 </dev/null
+				if [ "\$?" != "0" ]; then
+					echo "W: \${productucf} server cannot be restarted. It is advised to restart it manually by\n   running \\"/etc/$baseproduct/restart-by-force-kill\\" command when upgrade process is finished"
+				fi
 			fi
-		fi
-		if [ "\$?" != "0" ]; then
-			echo "W: \${productucf} server cannot be restarted. It is advised to restart it manually by\n   running \\"/etc/$baseproduct/restart-by-force-kill\\" command when upgrade process is finished"
 		fi
 	fi
 fi
@@ -482,11 +484,11 @@ Format: 1.0
 Source: $product
 Version: $ver$rel
 Binary: $product
-Maintainer: Jamie Cameron <jcameron\@webmin.com>
 Architecture: all
 Standards-Version: 3.6.1
 Build-Depends-Indep: debhelper (>= 4.1.16), debconf (>= 0.5.00), perl
-Uploaders: Jamie Cameron <jcameron\@webmin.com>
+Maintainer: $deb_maintainer
+Uploaders: $deb_maintainer
 Files:
  $md5 $st[7] ${product}-${ver}.tar.gz
  $diffmd5 $diffst[7] ${product}_${ver}.diff

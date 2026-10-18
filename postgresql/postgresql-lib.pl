@@ -70,6 +70,7 @@ EOF
 # message too.
 sub is_postgresql_running
 {
+local $out;
 local $temp = &transname();
 local $cmd = &quote_path($config{'psql'}).
 	     &host_port_flags().
@@ -402,9 +403,10 @@ else {
 	# Call the psql program
 	local $cmd = &quote_path($config{'psql'})." --html".
 		     &host_port_flags().
-		     (!&supports_pgpass() ? " -u" : " -U $postgres_login").
-		     " -c ".&quote_path($sql).
-		     " ".$_[0];
+		     (!&supports_pgpass() ? " -u" :
+			" -U ".quotemeta($postgres_login)).
+		     " -c ".quotemeta($sql).
+		     " ".quotemeta($_[0]);
 	if ($postgres_sameunix && defined(getpwnam($postgres_login))) {
 		$cmd = &command_as_user($postgres_login, 0, $cmd);
 		}
@@ -776,15 +778,58 @@ if (!-d $dir) {
 	}
 }
 
+# quote_table(table)
+# Quotes a table name, including any schema
 sub quote_table
 {
 local @tn = split(/\./, $_[0]);
-return join(".", map { "\"$_\"" } @tn);
+return join(".", map { &pg_quote_ident($_) } @tn);
 }
 
+# quotestr(string)
+# Quotes a string for use in SQL statements
 sub quotestr
 {
-return "\"$_[0]\"";
+return &pg_quote_ident($_[0]);
+}
+
+# pg_quote_ident(name)
+# Quotes an identifier for use in SQL statements
+sub pg_quote_ident
+{
+my ($name) = @_;
+$name =~ s/"/""/g;
+return "\"$name\"";
+}
+
+# pg_quote_lit(string)
+# Quotes a literal for use in SQL statements
+sub pg_quote_lit
+{
+my ($value) = @_;
+$value =~ s/'/''/g;
+return "'$value'";
+}
+
+# postgresql_command_unix_user([login])
+# Returns the Unix user that PostgreSQL commands will run as.
+sub postgresql_command_unix_user
+{
+my ($login) = @_;
+$login ||= $postgres_login;
+return undef if (!$login || !$postgres_sameunix || $< != 0);
+my @uinfo = getpwnam($login);
+return @uinfo ? $login : undef;
+}
+
+# set_postgresql_command_file_permissions(file, [login])
+# Makes a temp file readable by the Unix user that will run PostgreSQL commands.
+sub set_postgresql_command_file_permissions
+{
+my ($file, $login) = @_;
+my $user = &postgresql_command_unix_user($login);
+return 1 if (!$user);
+return &set_ownership_permissions($user, undef, 0600, $file);
 }
 
 # execute_sql_file(database, file, [user, pass], [unix-user])
@@ -943,6 +988,11 @@ return undef;
 sub setup_postgresql
 {
 return undef if (!$config{'setup_cmd'});
+# Use SCRAM defaults for new clusters when supported by the EL setup wrapper
+local $ENV{'PGSETUP_INITDB_OPTIONS'} = '--auth-host=scram-sha-256'
+	if ($config{'setup_cmd'} =~ /\bpostgresql-setup\b/ &&
+	    &get_postgresql_version(1) >= 10 &&
+	    !$ENV{'PGSETUP_INITDB_OPTIONS'});
 local $temp = &transname();
 local $rv = &system_logged("($config{'setup_cmd'}) >$temp 2>&1");
 local $out = `cat $temp`;
@@ -1146,10 +1196,10 @@ elsif ($compress == 2) {
 my $cmd = &quote_path($config{'dump_cmd'}).
 	     &host_port_flags().
 	     (!$postgres_login ? "" :
-	      &supports_pgpass() ? " -U $postgres_login" : " -u").
+	      &supports_pgpass() ? " -U ".quotemeta($postgres_login) : " -u").
 	     ($format eq 'p' ? "" : " -b").
 	     $tablesarg.
-	     " -F$format $db | $writer";
+	     " -F".quotemeta($format)." ".quotemeta($db)." | $writer";
 if ($postgres_sameunix && defined(getpwnam($postgres_login))) {
 	# Postgres connections have to be made as the 'postgres' Unix user
 	$cmd = &command_as_user($postgres_login, 0, $cmd);
@@ -1179,11 +1229,11 @@ $pass ||= $postgres_pass;
 my $cmd = &quote_path($config{'rstr_cmd'}).
 	     &host_port_flags().
 	     (!$login ? "" :
-	      &supports_pgpass() ? " -U $login" : " -u").
+	      &supports_pgpass() ? " -U ".quotemeta($login) : " -u").
 	     ($only ? " -a" : "").
 	     ($clean ? " -c" : "").
 	     $tablesarg.
-	     " -d $db ".&quote_path($path);
+	     " -d ".quotemeta($db)." ".&quote_path($path);
 if ($postgres_sameunix && defined(getpwnam($login))) {
 	$cmd = &command_as_user($login, 0, $cmd);
 	}
@@ -1234,7 +1284,7 @@ if (&supports_pgpass()) {
 		push(@main::temporary_files, $pgpass);
 		$cmd = "HOME=$temphome $cmd";
 		}
-	$ENV{'PGPASSFILE'} = $pgpass;
+	$cmd = "PGPASSFILE=$pgpass $cmd";
 	open(PGPASS, ">$pgpass");
 	print PGPASS "*:*:*:$user:$pass\n";
 	close(PGPASS);

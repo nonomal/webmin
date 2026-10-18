@@ -5,7 +5,9 @@ sub list_processes
 {
 local($pcmd, $line, $i, %pidmap, @plist);
 if (@_) {
-	open(PS, "ps xlwwwwp $_[0] |");
+	$_[0] =~ /^\d+$/ || return ( );
+	my $pid = quotemeta($_[0]);
+	open(PS, "ps xlwwwwp $pid |");
 	}
 else {
 	open(PS, "ps axlwwww |");
@@ -46,7 +48,7 @@ for($i=0; $line=<PS>; $i++) {
 		}
 	}
 close(PS);
-open(PS, "ps auxwwww $_[0] |");
+open(PS, "ps auxwwww ".(@_ ? quotemeta($_[0]) : "")." |");
 while($line = <PS>) {
 	chop($line);
 	$line =~ /^(\S+)\s+(\d+)\s+(\S+)\s+(\S+)/ || next;
@@ -63,7 +65,8 @@ return @plist;
 sub renice_proc
 {
 return undef if (&is_readonly_mode());
-local $out = &backquote_logged("renice $_[1] -p $_[0] 2>&1");
+local $out = &backquote_logged("renice ".quotemeta($_[1])." -p ".
+			       quotemeta($_[0])." 2>&1");
 if ($?) { return $out; }
 return undef;
 }
@@ -108,7 +111,7 @@ if ($out =~ /Primary\s+memory\s+available:\s+([0-9\.]+)\s+g/i) {
 	$rv[0] = $1 * 1024 * 1024;
 	}
 else {
-	my $out = &backquote_command("sysctl -a hw.physmem 2>/dev/null");
+	my $out = &backquote_command("sysctl hw.physmem 2>/dev/null");
 	if ($out =~ /:\s*(\d+)/) {
 		$rv[0] = $1 / 1024;
 		}
@@ -129,7 +132,7 @@ if ($usage > $rv[0]) {
 $rv[1] = $rv[0] - $usage;
 
 # Get swap usage
-$out = &backquote_command("sysctl -a vm.swapusage 2>/dev/null");
+$out = &backquote_command("sysctl vm.swapusage 2>/dev/null");
 if ($out =~ /total\s*=\s*([0-9\.]+)([KMGT]).*free\s*=\s*([0-9\.]+)([KMGT])/) {
 	$rv[2] = $1*($2 eq "K" ? 1 :
 		     $2 eq "M" ? 1024 :
@@ -155,7 +158,7 @@ my $out = &backquote_command("uptime 2>&1");
 my @rv = $out =~ /average(s)?:\s+([0-9\.]+),?\s+([0-9\.]+),?\s+([0-9\.]+)/i ?
 	 ( $2, $3, $4 ) : ( undef, undef, undef );
 
-$out = &backquote_command("sysctl -a machdep.cpu.brand_string");
+$out = &backquote_command("sysctl machdep.cpu.brand_string");
 if ($out =~ /:\s*(\S.*)/) {
 	$rv[4] = $1;
 	if ($rv[4] =~ s/\s*\@\s*([0-9\.]+)(GHz|MHz)//i) {
@@ -163,22 +166,84 @@ if ($out =~ /:\s*(\S.*)/) {
 		}
 	}
 
-$out = &backquote_command("sysctl -a machdep.cpu.vendor");
-if ($out =~ /:\s*(\S.*)/) {
-	$rv[5] = $1;
+$out = &backquote_command("sysctl -n machdep.cpu.brand_string");
+if (!$?) {
+	chomp($out);
+	$rv[5] = $out;
+	}
+else {
+	$out = &backquote_command("sysctl machdep.cpu.vendor");
+	if ($out =~ /:\s*(\S.*)/) {
+		$rv[5] = $1;
+		}
 	}
 
-$out = &backquote_command("sysctl -a machdep.cpu.cache.size");
+$out = &backquote_command("sysctl hw.l1dcachesize");
 if ($out =~ /:\s*(\d+)/) {
 	$rv[6] = $1 * 1024;
 	}
 
-$out = &backquote_command("sysctl -a machdep.cpu.core_count");
+$out = &backquote_command("sysctl machdep.cpu.core_count");
 if ($out =~ /:\s*(\d+)/) {
 	$rv[7] = $1;
 	}
 
 return @rv;
+}
+
+# get_cpu_io_usage()
+# Returns a list containing CPU user, system, and idle time, and disk read and
+# write KB/s
+sub get_cpu_io_usage
+{
+my ($user_time, $system_time, $idle_time);
+my $out = &backquote_command("iostat -K 1 2 2>/dev/null");
+# Get CPU usage
+if (!$?) {
+	my @lines = split(/\r?\n/, $out);
+	my @last_line = split(/\s+/, $lines[$#lines]);
+	shift(@last_line) if ($last_line[0] eq '');
+	$user_time = $last_line[-6];    # us
+	$system_time = $last_line[-5];  # sy
+	$idle_time = $last_line[-4];    # id
+	}
+# Get disk I/O
+my ($bi, $bo) = (0, 0);
+my $io_out = &backquote_command("fs_usage -w -f diskio -t 1 2>&1");
+if (!$?) {
+	my ($read_bytes, $write_bytes) = (0, 0);
+	foreach my $line (split(/\n/, $io_out)) {
+		# For writes: B=0x100000 means 1MB (1048576 bytes)
+		if ($line =~ /(?:WrData|WrMeta).*?B=0x([0-9a-f]+)/) {
+			my $bytes = hex($1);
+			$write_bytes += $bytes;
+			}
+		# For reads
+		elsif ($line =~ /(?:RdData|RdMeta).*?B=0x([0-9a-f]+)/) {
+			my $bytes = hex($1);
+			$read_bytes += $bytes;
+			}
+		}
+
+	# Convert to KB/s
+	$bi = int($read_bytes / 1024);
+	$bo = int($write_bytes / 1024);
+	}
+return ($user_time, $system_time, $idle_time, 0, 0, $bi, $bo);
+}
+
+# has_disk_stats()
+# Returns 1 if disk I/O stats are available
+sub has_disk_stats
+{
+return &has_command("fs_usage") ? 1 : 0;
+}
+
+# has_network_stats()
+# Returns 1 if network I/O stats are available
+sub has_network_stats
+{
+return &has_command("netstat") ? 1 : 0;
 }
 
 1;

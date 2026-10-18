@@ -39,7 +39,7 @@ if (!$in{'pam'} && !$wuser) {
 if ($wuser) {
 	# Update Webmin user's password
 	$ok = &acl::validate_password($in{'old'}, $wuser->{'pass'});
-	$ok || &pass_error($text{'password_eold'});
+	$ok || &pass_error($text{'password_euserpass'});
 	$perr = &acl::check_password_restrictions($in{'user'}, $in{'new1'});
 	$perr && &pass_error(&text('password_enewpass', $perr));
 	$wuser->{'pass'} = &acl::encrypt_password($in{'new1'});
@@ -58,6 +58,7 @@ elsif ($gconfig{'passwd_cmd'}) {
 	$passwd_cmd .= " ".quotemeta($in{'user'});
 	($fh, $fpid) = &proc::pty_process_exec($passwd_cmd, 0, 0);
 	&reset_environment();
+	my $sent_old = 0;
 	while(1) {
 		local $rv = &wait_for($fh,
 			   '(new|re-enter).*:',
@@ -70,11 +71,13 @@ elsif ($gconfig{'passwd_cmd'}) {
 		sleep(1);
 		if ($rv == 0) {
 			# Prompt for the new password
+			$sent_old || &error($text{'password_enotold'});
 			syswrite($fh, $in{'new1'}."\n", length($in{'new1'})+1);
 			}
 		elsif ($rv == 1) {
 			# Prompt for the old password
 			syswrite($fh, $in{'old'}."\n", length($in{'old'})+1);
+			$sent_old = 1;
 			}
 		elsif ($rv == 2) {
 			# Request for a menu option (SCO?)
@@ -117,7 +120,7 @@ elsif ($in{'pam'}) {
 	$pamh = new Authen::PAM($service, $in{'user'}, \&pam_check_func);
 	$rv = $pamh->pam_authenticate();
 	$rv == PAM_SUCCESS() ||
-		&pass_error($text{'password_eold'});
+		&pass_error($text{'password_euserpass'});
 	$pamh = undef;
 
 	# Change the password with PAM, in a sub-process. This is needed because
@@ -159,12 +162,12 @@ else {
 			last;
 			}
 		}
-	defined($idx) || &pass_error($text{'password_euser'});
+	defined($idx) || &pass_error($text{'password_euserpass'});
 
 	# Validate old password
 	&unix_crypt($in{'old'}, $line[$miniserv{'passwd_pindex'}]) eq
 		$line[$miniserv{'passwd_pindex'}] ||
-			&pass_error($text{'password_eold'});
+			&pass_error($text{'password_euserpass'});
 
 	# Make sure new password meets restrictions
 	if (&foreign_check("changepass")) {

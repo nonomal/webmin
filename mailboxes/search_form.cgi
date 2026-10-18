@@ -11,6 +11,27 @@ require './mailboxes-lib.pl';
 &ui_print_header(undef, $text{'sform_title'}, "", undef, 0, 0, undef,
 	&folder_link($in{'user'}, $folder));
 
+# Escape localized labels before inserting them into JavaScript strings.
+my $sform_larger_js = &quote_javascript($text{'sform_larger'});
+my $sform_smaller_js = &quote_javascript($text{'sform_smaller'});
+my $sform_neg0_js = &quote_javascript($text{'sform_neg0'});
+my $sform_neg1_js = &quote_javascript($text{'sform_neg1'});
+print <<EOF;
+<script>
+function set_neg(mode, negfield)
+{
+if (mode == "size") {
+	negfield.options[0].text = "$sform_larger_js";
+	negfield.options[1].text = "$sform_smaller_js";
+	}
+else {
+	negfield.options[0].text = "$sform_neg0_js";
+	negfield.options[1].text = "$sform_neg1_js";
+	}
+}
+</script>
+EOF
+
 # Start of form
 print &ui_form_start("mail_search.cgi");
 print &ui_hidden("user", $in{'user'});
@@ -33,7 +54,8 @@ for($i=0; $i<=4; $i++) {
 			  map { [ $_, $_ eq 'all' ? $text{'sform_allmsg'}
 						  : $text{"sform_".$_} ] }
 			      ( 'from', 'subject', 'to', 'cc', 'date',
-				'body', 'headers', 'all', 'size') ]));
+				'body', 'headers', 'all', 'size') ],
+			1, 0, 0, undef, "onChange='set_neg(value, form.neg_$i)'"));
 
 	push(@cols, &ui_select("neg_$i", 0,
 			[ [ 0, $text{'sform_neg0'} ],

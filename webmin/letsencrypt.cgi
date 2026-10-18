@@ -13,7 +13,10 @@ our %in;
 our $config_directory;
 our %config;
 our $module_name;
+our $letsencrypt_cmd;
 &error_setup($text{'letsencrypt_err'});
+
+my $letsencrypt_ip_cert_renewal_max_days = 5;
 
 # Re-check if let's encrypt is available
 my $err = &check_letsencrypt();
@@ -23,10 +26,41 @@ my $err = &check_letsencrypt();
 &ReadParse();
 my @doms = split(/\s+/, $in{'dom'});
 foreach my $dom (@doms) {
-	$dom =~ /^(\*\.)?[a-z0-9\-\.\_]+$/i || &error($text{'letsencrypt_edom'});
+	$dom =~ /^(\*\.)?[a-z0-9\-\.\_]+$/i ||
+	    &letsencrypt_is_ip_cert_identifier($dom) ||
+		&error($text{'letsencrypt_edom'});
 	}
-$in{'renew_def'} || $in{'renew'} =~ /^[1-9][0-9]*$/ ||
-	&error($text{'letsencrypt_erenew'});
+my $has_ip_doms = &letsencrypt_doms_have_ips(\@doms);
+# Ignore unused EAB fields, even if a password manager filled them in
+if ($in{'eab_kid_def'}) {
+	$in{'eab_kid'} = $in{'eab_hmac'} = '';
+	}
+$in{'directory_url'} = &trim($in{'directory_url'});
+$in{'eab_kid'} = &trim($in{'eab_kid'});
+$in{'eab_hmac'} = &trim($in{'eab_hmac'});
+if ($in{'directory_url'}) {
+	my ($host, $port, $page, $ssl) = &parse_http_url($in{'directory_url'});
+	$host && $ssl < 2 || &error($text{'letsencrypt_eacmedir'});
+	}
+if ($in{'eab_kid'} || $in{'eab_hmac'}) {
+	$in{'directory_url'} || &error($text{'letsencrypt_eeabdir'});
+	$in{'eab_kid'} && $in{'eab_hmac'} ||
+		&error($text{'letsencrypt_eeabpair'});
+	$letsencrypt_cmd || &error($text{'letsencrypt_eeabnative'});
+	}
+if (!$in{'renew_def'}) {
+	$in{'renew'} =~ /^[1-9][0-9]*$/ ||
+		&error($text{'letsencrypt_erenew'});
+	$in{'renew_unit'} ||= $has_ip_doms ? "days" : "months";
+	$in{'renew_unit'} =~ /^(days|months)$/ ||
+		&error($text{'letsencrypt_erenewunit'});
+	my $ip_max_days = $letsencrypt_ip_cert_renewal_max_days;
+	if ($has_ip_doms && ($in{'renew_unit'} ne "days" ||
+			     $in{'renew'} > $ip_max_days)) {
+		&error(&text('letsencrypt_erenewipauto',
+			     $ip_max_days));
+		}
+	}
 $in{'size_def'} || $in{'size'} =~ /^\d+$/ ||
 	&error($text{'newkey_esize'});
 my $size = $in{'size_def'} ? undef : $in{'size'};
@@ -54,8 +88,11 @@ else {
 				"VirtualHost", $conf)) {
 		my $sn = &apache::find_directive(
 			"ServerName", $virt->{'members'});
+		my @sa = &apache::find_directive(
+			"ServerAlias", $virt->{'members'});
 		my $match = 0;
-		if ($in{'webroot_mode'} == 0 && $sn eq $doms[0]) {
+		if ($in{'webroot_mode'} == 0 &&
+		    &indexof($doms[0], $sn, @sa) >= 0) {
 			# Based on domain name
 			$match = 1;
 			}
@@ -63,7 +100,16 @@ else {
 			# Specifically selected domain
 			$match = 1;
 			}
-		if ($match) {
+		my @ports;
+		foreach my $w (@{$virt->{'words'}}) {
+			if ($w =~ /:(\d+)$/) {
+				push(@ports, $1);
+				}
+			else {
+				push(@ports, 80);
+				}
+			}
+		if ($match && &indexof(80, @ports) >= 0) {
 			# Get document root
 			$webroot = &apache::find_directive(
 				"DocumentRoot", $virt->{'members'}, 1);
@@ -76,8 +122,11 @@ else {
 
 if ($in{'save'}) {
 	# Just update renewal
-	&save_renewal_only(\@doms, $webroot, $mode);
-	&redirect("edit_ssl.cgi");
+	&save_renewal_only(\@doms, $webroot, $mode, $size,
+			   $in{'subset'}, $in{'use'},
+			   $in{'directory_url'},
+			   $in{'eab_kid'}, $in{'eab_hmac'});
+	&redirect("edit_ssl.cgi?mode=lets");
 	}
 else {
 	# Request the cert
@@ -87,17 +136,39 @@ else {
 		    $mode eq 'certbot' ? 'letsencrypt_doingcertbot' :
 					 'letsencrypt_doing',
 		    "<tt>".&html_escape(join(", ", @doms))."</tt>",
-		    "<tt>".&html_escape($webroot)."</tt>"),"<p>\n";
-	my ($ok, $cert, $key, $chain) = &request_letsencrypt_cert(\@doms, $webroot, undef, $size, $mode, $in{'staging'});
+		    "<tt>".&html_escape($webroot)."</tt>"),"<br>\n";
+	my ($ok, $cert, $key, $chain) = &request_letsencrypt_cert(
+		\@doms, $webroot, undef, $size, $mode, $in{'staging'},
+		undef, undef, undef, $in{'directory_url'},
+		$in{'eab_kid'}, $in{'eab_hmac'}, $in{'subset'});
 	if (!$ok) {
-		print &text('letsencrypt_failed', $cert),"<p>\n";
+		print &text('letsencrypt_failed', $cert),"\n";
 		}
 	else {
 		# Worked, now copy to Webmin
-		print $text{'letsencrypt_done'},"<p>\n";
+		my @grid = ( $text{'letsencrypt_cert'}, $cert,
+			     $text{'letsencrypt_key'}, $key );
+		push(@grid, $text{'letsencrypt_chain'}, $chain) if ($chain);
+		my $details = &html_escape($text{'letsencrypt_show'})."<p>\n".
+			      &ui_grid_table(\@grid, 2);
+		print &ui_details({
+			'html' => 1,
+			'title' => &ui_tag('span',
+					   &html_escape($text{'letsencrypt_done'}),
+					   { 'data-second-print' => undef }),
+			'content' => $details,
+			'class' => 'inline inlined',
+			});
+		print "<div data-x-br=\"\"></div>\n";
 
+		# Save the renewal schedule
+		&save_renewal_only(\@doms, $webroot, $mode,
+				   $size, $in{'subset'}, $in{'use'},
+				   $in{'directory_url'},
+				   $in{'eab_kid'}, $in{'eab_hmac'}, 1);
+
+		# Copy cert, key and chain to Webmin
 		if ($in{'use'}) {
-			# Copy cert, key and chain to Webmin
 			print $text{'letsencrypt_webmin'},"<br>\n";
 			&lock_file($ENV{'MINISERV_CONFIG'});
 			&get_miniserv_config(\%miniserv);
@@ -127,36 +198,54 @@ else {
 			&put_miniserv_config(\%miniserv);
 			&unlock_file($ENV{'MINISERV_CONFIG'});
 
-			&save_renewal_only(\@doms, $webroot, $mode);
-
 			&webmin_log("letsencrypt");
 			&restart_miniserv(1);
-			print $text{'letsencrypt_wdone'},"<p>\n";
-			}
-		else {
-			# Just tell the user
-			print $text{'letsencrypt_show'},"<p>\n";
-			my @grid = ( $text{'letsencrypt_cert'}, $cert,
-				     $text{'letsencrypt_key'}, $key );
-			if ($chain) {
-				push(@grid, $text{'letsencrypt_chain'}, $chain);
-				}
-			print &ui_grid_table(\@grid, 2);
+			print &ui_tag('span',
+				      &html_escape($text{'letsencrypt_wdone'}),
+				      { 'data-second-print' => undef });
+			print "<br><div data-x-br=\"\"></div>\n";
 			}
 		}
 
 	&ui_print_footer("", $text{'index_return'});
 	}
 
-# save_renewal_only(&doms, webroot, mode)
+# save_renewal_only(&doms, webroot, mode, size, subset-mode, used-by-webmin,
+#		    directory-url, eab-kid, eab-hmac, [reset-renewal-time])
 # Save for future renewals
 sub save_renewal_only
 {
-my ($doms, $webroot, $mode) = @_;
+my ($doms, $webroot, $mode, $size, $subset, $usewebmin, $directory_url,
+    $eab_kid, $eab_hmac, $reset_renewal_time) = @_;
 $config{'letsencrypt_doms'} = join(" ", @$doms);
 $config{'letsencrypt_webroot'} = $webroot;
 $config{'letsencrypt_mode'} = $mode;
 $config{'letsencrypt_size'} = $size;
+$config{'letsencrypt_subset'} = $subset;
+$config{'letsencrypt_nouse'} = $usewebmin ? 0 : 1;
+my $renew_has_ip_doms = &letsencrypt_doms_have_ips($doms);
+my $renew_unit = $in{'renew_unit'} =~ /^(days|months)$/ ?
+		 $in{'renew_unit'} :
+		 ($renew_has_ip_doms ? "days" : "months");
+$config{'letsencrypt_renew_unit'} = $renew_unit;
+if ($directory_url) {
+	$config{'letsencrypt_directory_url'} = $directory_url;
+	}
+else {
+	delete($config{'letsencrypt_directory_url'});
+	}
+if ($directory_url && $eab_kid) {
+	$config{'letsencrypt_eab_kid'} = $eab_kid;
+	}
+else {
+	delete($config{'letsencrypt_eab_kid'});
+	}
+if ($directory_url && $eab_hmac) {
+	$config{'letsencrypt_eab_hmac'} = $eab_hmac;
+	}
+else {
+	delete($config{'letsencrypt_eab_hmac'});
+	}
 &save_module_config();
 if (&foreign_check("webmincron")) {
 	my $job = &find_letsencrypt_cron_job();
@@ -164,14 +253,28 @@ if (&foreign_check("webmincron")) {
 		&webmincron::delete_webmin_cron($job) if ($job);
 		}
 	else {
-		my @tm = localtime(time() - 60);
+		# A manual cert request does not update Webmin cron's last-run
+		# state, so re-create the job to start the elapsed renewal
+		# interval from now instead of immediately running an overdue
+		# job with the old ID
+		if ($job && $reset_renewal_time) {
+			&webmincron::delete_webmin_cron($job);
+			$job = undef;
+			}
 		$job ||= { 'module' => $module_name,
 			   'func' => 'renew_letsencrypt_cert' };
-		$job->{'mins'} ||= $tm[1];
-		$job->{'hours'} ||= $tm[2];
-		$job->{'days'} ||= $tm[3];
-		$job->{'months'} = '*/'.$in{'renew'};
-		$job->{'weekdays'} = '*';
+		# Scheduling is driven by 'interval' (elapsed seconds).
+		# 'months' is retained only for month-based schedules so
+		# edit_ssl.cgi can show the renewal interval.
+		$job->{'mins'} = '';
+		$job->{'hours'} = '';
+		$job->{'days'} = '';
+		$job->{'months'} = $renew_unit eq "months" ?
+				    '*/'.$in{'renew'} : '';
+		$job->{'weekdays'} = '';
+		$job->{'interval'} = $renew_unit eq "days" ?
+				      $in{'renew'}*24*60*60 :
+				      $in{'renew'}*30*24*60*60;
 		&webmincron::create_webmin_cron($job);
 		}
 	}

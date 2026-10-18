@@ -125,9 +125,13 @@ smtpd_nomap2=尚未輸入限制發件人地址的地圖。
 smtpd_map=允許中繼的地址
 smtpd_map2=發件人地址限制
 
-opts_smtp_use_tls=使用TLS進行SMTP連接
 opts_smtp_sasl_security_options=SASL安全選項
 opts_smtp_tls_security_level=SMTP TLS 客戶端安全級別
+opts_inet_protocols=網際網路協定
+opts_inet_protocols_all=全部可用
+opts_smtp_address_preference=首選 SMTP 用戶端協定
+opts_smtp_address_preference_any=任何一個
+opts_smtp_balance_inet_protocols=驗證 SMTP 用戶端協定
 
 opts_edebug=詳細記錄級別缺失或無效-必須是大於零的數字
 
@@ -149,10 +153,13 @@ mapping_find=顯示匹配的映射：
 mapping_search=搜索
 mapping_match=匹配<tt>$1</tt>的映射文件條目。
 
-opts_virtual_alias_maps=域映射查找表
+virtual_title=虛擬別名映射
+virtual_ecannot=您無權編輯虛擬別名映射配置
+opts_virtual_maps=虛擬別名查找表
+opts_virtual_alias_maps=虛擬別名查找表
 opts_virtual_alias_domains=要為其執行虛擬映射的域
-virtual_same=來自域映射表
-virtual_return=虛擬域
+virtual_same=來自虛擬別名查找表
+virtual_return=虛擬別名映射
 
 transport_return=運輸地圖
 
@@ -169,6 +176,7 @@ opts_content_filter=電子郵件內容過濾器
 start_efailed=無法啟動Postfix
 start_ecannot=您無權啟動Postfix
 
+acl_virtual=可以編輯虛擬別名嗎？
 acl_sni=可以編輯證書嗎？
 acl_header=可以編輯標題檢查嗎？
 acl_sasl=可以編輯SMTP身份驗證嗎？
@@ -180,9 +188,20 @@ acl_postfinger=可以檢查後綴配置嗎？
 acl_manual=可以編輯配置文件嗎？
 acl_dir=地圖文件的允許目錄
 acl_bcc=可以編輯密件抄送映射嗎？
+acl_body=可以編輯身體檢查嗎？
+acl_dependent=可以編輯發送方相關傳輸圖嗎？
 
 mail_move=搬去：
 mail_eexists=訊息已不存在！
+mail_qfile=郵件佇列文件
+mail_qlast=上次重試時間
+mail_qdir=郵件佇列狀態
+mail_qdir_active=積極的
+mail_qdir_incoming=傳入
+mail_qdir_deferred=延期
+mail_qdir_corrupt=腐敗
+mail_qdir_hold=等候接聽
+mail_qdir_maildrop=郵件投遞
 
 view_flush=沖洗
 view_body=訊息文字
@@ -225,9 +244,11 @@ mailq_active=活性
 mailq_deferred=遞延
 mailq_hold=保留選定
 mailq_unhold=取消選擇
+mailq_dir=佇列狀態
 
 flushq_title=沖洗隊列
 flushq_desc=使用命令$1強制嘗試發送郵件。
+flushq_desc2=.. 檢查郵件日誌以了解結果
 
 qview_title=排隊的消息
 qview_desc=來自文件$1
@@ -247,6 +268,7 @@ opts_mime_header_checks=MIME 標頭檢查表
 opts_header_checks_no_map=（目前沒有定義頭部檢查映射。先定義一個映射，然後才能編輯它）
 
 opts_mime_header_checks_no_map=（當前未定義 MIME 標頭檢查映射。先定義映射，然後才能編輯它）
+opts_mime_header_checks_same_map=（MIME 標頭檢查與常規標頭檢查相同。請先定義一個不同的映射，然後才能對其進行編輯。）
 header_name=正則表達式
 header_value=比賽動作
 header_discard=丟棄（帶有日誌消息..）
@@ -345,7 +367,7 @@ log_misc=更改的常規選項
 log_opts=更改地址重寫和偽裝
 log_aliases=別名更改
 log_canonical=更改規範映射選項
-log_virtual=更改的虛擬域選項
+log_virtual=更改了虛擬別名映射選項
 log_bcc=更改的密件抄送地圖選項
 log_transport=更改了傳輸映射選項
 log_sni=更改證書映射選項
@@ -435,6 +457,10 @@ opts_broken_sasl_auth_clients=處理不兼容的SMTP客戶端？
 sasl_opts=SMTP安全選項
 sasl_noanonymous=拒絕匿名登錄
 sasl_noplaintext=拒絕純文本登錄
+sasl_noactive=拒絕 不允許 受到主動（非字典）攻擊
+sasl_nodictionary=拒絕受到被動（字典）攻擊的方法
+sasl_forward_secrecy=僅允許支持前向保密的方法
+sasl_mutual_auth=僅允許提供相互身份驗證的方法
 opts_smtpd_delay_reject=延遲客戶端登錄失敗？
 sasl_recip=SMTP收件人限制
 sasl_relay=SMTP中繼限制
@@ -456,6 +482,7 @@ opts_smtpd_tls_key_file=TLS私鑰文件
 opts_smtpd_tls_CAfile=TLS證書授權文件
 opts_smtpd_use_tls=啟用TLS加密？
 opts_smtp_enforce_tls=需要TLS加密嗎？
+opts_smtputf8_enable=啟用SMTPUTF8支援？
 sasl_err=保存SMTP身份驗證和加密失敗
 sasl_ecert=缺少或無效的TLS證書文件
 sasl_ekey=缺少或無效的TLS密鑰文件

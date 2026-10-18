@@ -3,6 +3,7 @@
 
 use strict;
 use warnings;
+use POSIX qw(strftime);
 no warnings 'redefine';
 no warnings 'uninitialized';
 require './backup-config-lib.pl';
@@ -14,6 +15,7 @@ my @mods = &list_backup_modules();
 if (!@mods) {
 	&ui_print_endpage($text{'index_emods'});
 	}
+print &ui_page_start();
 my %mods = map { $_->{'dir'}, $_ } @mods;
 
 # Show tabs
@@ -29,7 +31,7 @@ my $using_strftime = 0;
 if (@backups) {
 	# Show all scheduled backups
 	print &ui_link("edit.cgi?new=1", $text{'index_add'});
-    print "<br>\n";
+	print "<br>\n";
 	print &ui_columns_start([ $text{'index_dest'},
 			    	  $text{'index_mods'},
 			    	  $text{'index_sched'} ], 100);
@@ -59,7 +61,14 @@ print &ui_tabs_end_tab();
 
 # Show immediate form
 print &ui_tabs_start_tab("tab", "backup");
-print &ui_form_start("backup.cgi/backup.tgz", "post");
+my $hostname = &get_system_hostname() || "localhost";
+$hostname =~ s/\./-/g;
+my $filename = $hostname."+configuration_backup-webmin-".
+	       strftime("%Y-%m-%d-%H-%M", localtime);
+# Let themes bypass AJAX when the current destination is a browser download
+print &ui_form_start("backup.cgi/$filename.tar.gz", "post", undef,
+	"onsubmit=\"this.dataset.download = ".
+	"this.elements.dest_mode.value == '4' ? 'true' : 'false'\"");
 print &ui_table_start($text{'index_header'}, undef, 2);
 
 my @dmods = split(/\s+/, $config{'mods'} || "");
@@ -109,5 +118,6 @@ print &ui_form_end([ [ 'restore', $text{'index_now2'} ] ]);
 print &ui_tabs_end_tab();
 print &ui_tabs_end(1);
 
+print &ui_page_end();
 &ui_print_footer("/", $text{'index'});
 

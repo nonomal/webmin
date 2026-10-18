@@ -6,7 +6,7 @@ use strict;
 use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
-require './acl-lib.pl';
+require './acl-lib.pl';    ## no critic
 our (%in, %text, %config, %gconfig, %access, $config_directory, $base_remote_user, $remote_user);
 &foreign_require("webmin", "webmin-lib.pl");
 
@@ -42,6 +42,15 @@ else {
 				      : $text{'edit_title2'}, "");
 	}
 my $me = &get_user($base_remote_user);
+my %uaccess = &get_module_acl($in{'user'} || "", "", 1);
+if (!$in{'user'} && $uaccess{'rpc'} == 2) {
+	# Don't offer the confusing 'root' or 'admin' RPC option by default
+	$uaccess{'rpc'} = 0;
+	}
+if (!$in{'user'} && $safe) {
+	# Safe users should not inherit new permissions by default
+	$uaccess{'negative'} = 1;
+	}
 
 # Give up if readonly
 if ($user{'readonly'} && !$in{'readwrite'}) {
@@ -159,6 +168,10 @@ print &ui_table_row($text{'edit_pass'},
 print &ui_table_row($text{'edit_real'},
 	&ui_textbox("real", $user{'real'}, 60));
 
+# Contact email for recovery
+print &ui_table_row($text{'edit_email'},
+	&ui_textbox("email", $user{'email'}, 60));
+
 # Storage type
 if ($in{'user'}) {
 	print &ui_table_row($text{'edit_proto'},
@@ -206,7 +219,10 @@ if ($access{'lang'}) {
 
 if ($access{'locale'}) {
 	# Current locale
-	eval "use DateTime; use DateTime::Locale; use DateTime::TimeZone;";
+	eval { require DateTime; DateTime->import;
+	       require DateTime::Locale; DateTime::Locale->import;
+	       require DateTime::TimeZone; DateTime::TimeZone->import;
+	       1 };
 	if (!$@ && $] > 5.011) {
 		my $locales = &list_locales();
 		my %localesrev = reverse %{$locales};
@@ -234,6 +250,18 @@ my @themes = grep { !$_->{'overlay'} } @all;
 my @overlays = grep { $_->{'overlay'} } @all;
 
 if ($access{'theme'}) {
+	my $tconf_link;
+	my %tinfo = &webmin::get_theme_info($user{'theme'});
+	if ($user{'theme'} && $user{'theme'} eq $tinfo{'dir'} &&
+	    $user{'name'} eq $remote_user &&
+	    $tinfo{'config_link'}) {
+		$tconf_link = &ui_tag('span', &ui_link(
+			"@{[&get_webprefix()]}/$tinfo{'config_link'}",
+			&ui_tag('span', '⚙', 
+				{ class => 'theme-config-char',
+				  title => $text{'themes_configure'} }),
+			'text-link'), { style => 'position: relative;' });
+		}
 	# Current theme
 	my @topts = ( );
 	push(@topts, !$user{'theme'} ? [ '', $text{'edit_themedef'} ] : ());
@@ -243,7 +271,8 @@ if ($access{'theme'}) {
 	print &ui_table_row($text{'edit_theme'},
 		&ui_radio("theme_def", defined($user{'theme'}) ? 0 : 1,
 		  [ [ 1, $text{'edit_themeglobal'} ],
-		    [ 0, &ui_select("theme", $user{'theme'}, \@topts) ] ]));
+		    [ 0, &ui_select("theme", $user{'theme'}, \@topts).
+		    	 $tconf_link ] ]));
 	}
 
 if ($access{'theme'} && @overlays) {
@@ -263,7 +292,7 @@ if ($showui) {
 # Start of security options section
 my $showsecurity = $access{'logouttime'} || $access{'ips'} ||
 		   $access{'minsize'} ||
-		   &supports_rbac() && $access{'mode'} == 0 || $access{'times'};
+		   $access{'times'};
 if ($showsecurity) {
 	print &ui_hidden_table_start($text{'edit_security'}, "width=100%", 2,
 				     "security", 0, [ "width=30%" ]);
@@ -302,14 +331,6 @@ if ($access{'ips'}) {
 		    join("\n", split(/\s+/, $user{'allow'} ||
 					    $user{'deny'} || "")),
 		    4, 30));
-	}
-
-if (&supports_rbac() && $access{'mode'} == 0) {
-	# Deny access to modules not managed by RBAC?
-	print &ui_table_row($text{'edit_rbacdeny'},
-		&ui_radio("rbacdeny", $user{'rbacdeny'} ? 1 : 0,
-			  [ [ 0, $text{'edit_rbacdeny0'} ],
-			    [ 1, $text{'edit_rbacdeny1'} ] ]));
 	}
 
 if ($access{'times'}) {
@@ -354,6 +375,16 @@ elsif ($miniserv{'twofactor_provider'}) {
 		&ui_submit($text{'edit_twofactoradd'}, "twofactor"));
 	}
 
+# Can accept RPC calls?
+if ($access{'acl'} && !$safe) {
+	print &ui_table_row(&hlink($text{'acl_rpc'}, 'rpc'),
+		&ui_radio("rpc", int($uaccess{'rpc'}),
+			  [ [ 1, $text{'acl_rpc1'} ],
+			    $uaccess{'rpc'} == 2 ? ( [ 2, $text{'acl_rpc2'} ] ) : ( ),
+			    [ 3, $text{'acl_rpc3'} ],
+			    [ 0, $text{'acl_rpc0'} ] ]));
+	}
+
 print &ui_hidden_table_end("security");
 
 # Work out which modules can be selected
@@ -392,6 +423,7 @@ foreach my $c (sort { $b cmp $a } @cats) {
 	my @grid = ( );
 	my $sw = 0;
 	foreach my $m (@cmlist) {
+		next if ($m->{'noacl'});
 		my $md = $m->{'dir'};
 		my $fromgroup = $memg &&
 				&indexof($md, @{$memg->{'modules'}}) >= 0;
@@ -403,7 +435,8 @@ foreach my $c (sort { $b cmp $a } @cats) {
 			}
 		elsif ($mcan{$md}) {
 			my $label;
-			if ($access{'acl'} && $in{'user'} && !$safe) {
+			if ($access{'acl'} && $in{'user'} && !$safe &&
+			    &can_module_acl($m)) {
 				# Show link for editing ACL
 				$label = ui_link("edit_acl.cgi?" .
 				     "mod=" . urlize($m->{'dir'}) .
@@ -431,11 +464,9 @@ print &ui_hidden_table_end("mods");
 
 # Add global ACL section, but only if not set from the group
 my $groupglobal = $memg && -r "$config_directory/$memg->{'name'}.acl";
-if ($access{'acl'} && !$groupglobal && $in{'user'} && !$safe) {
+if ($access{'acl'} && !$groupglobal && !$safe) {
 	print &ui_hidden_table_start($text{'edit_global'}, "width=100%", 2,
 				     "global", 0, [ "width=30%" ]);
-	my %uaccess;
-	%uaccess = &get_module_acl($in{'user'}, "", 1);
 	print &ui_hidden("acl_security_form", 1);
 	&foreign_require("", "acl_security.pl");
 	&foreign_call("", "acl_security_form", \%uaccess);
@@ -454,6 +485,9 @@ if ($in{'user'}) {
 		}
 	if ($access{'switch'} && $main::session_id && $in{'user'} ne $remote_user) {
 		push(@buts, [ "but_switch", $text{'edit_switch'} ]);
+		}
+	if ($gconfig{'forgot_pass'}) {
+		push(@buts, [ "but_forgot", $text{'edit_forgot'} ]);
 		}
 	if ($access{'delete'}) {
 		push(@buts, [ "but_delete", $text{'delete'} ]);

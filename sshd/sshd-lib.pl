@@ -114,11 +114,11 @@ local $id = ("\t" x $_[1]->[0]->{'indent'});
 local $i;
 local $before = $_[3] && ref($_[2]) ? &find($_[3], $_[1]) : undef;
 for($i=0; $i<@o || $i<@n; $i++) {
-	if ($o[$i] && $n[$i]) {
+	if (defined($o[$i]) && defined($n[$i])) {
 		# Replacing a line
 		$lref->[$o[$i]->{'line'}] = "$id$_[0] $n[$i]";
 		}
-	elsif ($o[$i]) {
+	elsif (defined($o[$i])) {
 		# Removing a line
 		splice(@$lref, $o[$i]->{'line'}, 1);
 		foreach $c (@{$_[1]}) {
@@ -127,7 +127,7 @@ for($i=0; $i<@o || $i<@n; $i++) {
 				}
 			}
 		}
-	elsif ($n[$i] && !$before) {
+	elsif (defined($n[$i]) && !$before) {
 		# Adding a line at the end, but before the first Match directive
 		local $ll = $_[1]->[@{$_[1]}-1]->{'line'};
 		foreach my $m (&find("Match", $_[1])) {
@@ -136,7 +136,7 @@ for($i=0; $i<@o || $i<@n; $i++) {
 			}
 		splice(@$lref, $ll+1, 0, "$id$_[0] $n[$i]");
 		}
-	elsif ($n[$i] && $before) {
+	elsif (defined($n[$i]) && $before) {
 		# Adding a line before the first instance of some directive
 		splice(@$lref, $before->{'line'}, 0, "$id$_[0] $n[$i]");
 		foreach $c (@{$_[1]}) {
@@ -146,6 +146,101 @@ for($i=0; $i<@o || $i<@n; $i++) {
 			}
 		}
 	}
+}
+
+# save_socket(ports, listens)
+sub save_socket
+{
+my ($ports, $listens) = @_;
+return if ($version{'number'} < 6.7);
+return if (!&foreign_available('init'));
+&foreign_require('init');
+my $default_port = 22;
+my $socket_unit = &get_ssh_socket();
+return if (!$socket_unit);
+
+# Extend listens with IPs from default socket configuration if set
+my $socket_details = &init::cat_systemd($socket_unit, 'ListenStream');
+my ($socket_conf_file, $socket_conf_dir);
+my @default_streams;
+foreach my $entry (@$socket_details) {
+	next if ($entry->{'file'} =~ m{^/run}); # Skip runtime files
+	my $streams = $entry->{'sections'}{'Socket'}{'ListenStream'};
+	if ($entry->{'file'} =~ m{^/etc}) {
+		if (defined($streams)) {
+			# Determine the socket configuration file and
+			# directory from the custom config that defines
+			# ListenStream to support multiple socket
+			# override files (edge case)
+			($socket_conf_dir, $socket_conf_file) =
+				$entry->{'file'} =~ m|^(.*/)([^/]+)$|;
+			$socket_conf_dir =~ s|/$|| if ($socket_conf_dir);
+			}
+		next;
+		}
+	if ($streams) {
+		foreach my $stream (@$streams) {
+			if ($stream =~ /^(?:\[(.+?)\]|([^:]+)):\d+$/) {
+				my $address = defined($1) ? "[$1]" : $2;
+				push(@default_streams, $address)
+				}
+			}
+		}
+	}
+
+my @result;
+
+# Set default port if empty
+$ports = [$default_port] if (!@$ports);
+
+# Check if port is different from default
+my $port = @$ports == 1 && $ports->[0] == $default_port;
+
+if (@$listens) {
+	# Process listens
+	foreach my $listen (@$listens) {
+		if ($listen =~ /:\d+$/) {
+			# If listen already contains a port, keep it as is
+			push(@result, $listen);
+			}
+		elsif ($listen =~ /^\[.*\]$/) {
+			# IPv6 address without a port
+			push(@result, map { "$listen:$_" } @$ports);
+			}
+		else {
+			# IPv4 address or hostname without a port
+			push(@result, map { "$listen:$_" } @$ports);
+			}
+		}
+	}
+
+# Add ports not already in @result
+if (!$port || @result) {
+	foreach my $port (@$ports) {
+		unless (grep { /:$port$/ } @result) {
+			if (@default_streams) {
+				push(@result, map { "$_:$port" }
+					@default_streams);
+				}
+			else {
+				push(@result, $port);
+				}
+			}
+		}
+	}
+
+# Update socket if @results not empty
+my $socket_conf = { 'Socket' => {} };
+if (@result) {
+	unshift(@result, '');
+	$socket_conf = {
+		'Socket' => {
+			'ListenStream' => \@result,
+			},
+		};
+	}
+&init::edit_systemd($socket_unit, $socket_conf,
+	$socket_conf_file, $socket_conf_dir);
 }
 
 # scmd(double)
@@ -241,12 +336,34 @@ local $lref = &read_file_lines($config{'client_config'});
 splice(@$lref, $_[0]->{'line'}, $_[0]->{'eline'} - $_[0]->{'line'} + 1);
 }
 
+# get_ssh_socket()
+sub get_ssh_socket
+{
+return undef if ($version{'number'} < 6.7); 
+return undef if (!&foreign_available('init'));
+&foreign_require('init');
+return undef if ($init::init_mode ne 'systemd');
+my @socket_units = ('ssh.socket', 'sshd.socket');
+my $socket_unit;
+foreach (@socket_units) {
+	if (&init::action_status($_) == 2) {
+		$socket_unit = $_;
+		last;
+		}
+	}
+return $socket_unit if ($socket_unit);
+return undef;
+}
+
 # restart_sshd()
 # Re-starts the SSH server, and returns an error message on failure or
 # undef on success
 sub restart_sshd
 {
-if ($config{'restart_cmd'}) {
+if (my $ssh_socket = &get_ssh_socket()) {
+	&init::restart_action($ssh_socket);
+	}
+elsif ($config{'restart_cmd'}) {
 	local $out = `$config{'restart_cmd'} 2>&1 </dev/null`;
 	return "<pre>$out</pre>" if ($?);
 	}
@@ -263,7 +380,10 @@ return undef;
 # undef on success
 sub stop_sshd
 {
-if ($config{'stop_cmd'}) {
+if (my $ssh_socket = &get_ssh_socket()) {
+	&init::stop_action($ssh_socket);
+	}
+elsif ($config{'stop_cmd'}) {
 	local $out = `$config{'stop_cmd'} 2>&1 </dev/null`;
 	return "<pre>$out</pre>" if ($?);
 	}
@@ -284,8 +404,10 @@ sub start_sshd
 if (-f $config{'pid_file'} && !&check_pid_file($config{'pid_file'})) {
 	&unlink_file($config{'pid_file'});
 	}
-
-if ($config{'start_cmd'}) {
+if (my $ssh_socket = &get_ssh_socket()) {
+	&init::start_action($ssh_socket);
+	}
+elsif ($config{'start_cmd'}) {
 	$out = &backquote_logged("$config{'start_cmd'} 2>&1 </dev/null");
 	if ($?) { return "<pre>$out</pre>"; }
 	}
@@ -370,9 +492,9 @@ return ('QUIET', 'FATAL', 'ERROR', 'INFO', 'VERBOSE', 'DEBUG');
 
 sub yes_no_default_radio
 {
-local ($name, $value) = @_;
-return &ui_radio($name, lc($value) eq 'yes' ? 1 :
-			lc($value) eq 'no' ? 0 : 2,
+local ($name, $val) = @_;
+return &ui_radio($name, (lc($val) eq 'yes' || $val =~ /^\d+$/ && $val > 0) ? 1 :
+			(lc($val) eq 'no' || $val =~ /^\d+$/) ? 0 : 2,
 		 [ [ 1, $text{'yes'} ], [ 0, $text{'no'} ],
 		   [ 2, $text{'default'} ] ]);
 }
@@ -383,7 +505,7 @@ if ($version{'type'} eq 'openssh' && $version{'number'} >= 6.5) {
 	return "ed25519";
 	}
 if ($version{'type'} eq 'openssh' && $version{'number'} >= 3.2) {
-	return "rsa1";
+	return "rsa";
 	}
 return undef;
 }

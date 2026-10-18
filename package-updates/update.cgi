@@ -15,11 +15,42 @@ else {
 	$redir = "index.cgi?mode=".&urlize($in{'mode'}).
 		 "&search=".&urlize($in{'search'});
 	$redirdesc = $text{'index_return'};
+	$redir = $redir =~ /tab=/ ? $redir :
+		$redir =~ /\?/ ? "$redir&tab=pkgs" : "$redir?tab=pkgs";
 	}
 
-$redir = ($redir =~ /\?/) ? "$redir&tab=install" : "$redir?tab=install";
-
-if ($in{'refresh'} || $in{'refresh_top'}) {
+$hold_action = $in{'hold'} ? 1 : $in{'unhold'} ? 0 : undef;
+if (defined($hold_action)) {
+	# Hold or unhold selected packages
+	&supports_package_holds() || &error($text{'hold_enotsupported'});
+	@holdpkgs = split(/\0/, $in{'u'});
+	@holdpkgs || &error($text{'hold_enone'});
+	@current = &list_current(1);
+	%current = map { $_->{'name'}."/".$_->{'system'}, 1 } @current;
+	@held = &list_package_holds();
+	@holdnames = ( );
+	foreach $ps (@holdpkgs) {
+		($p, $s) = split(/\//, $ps, 2);
+		$current{$p."/".$s} || &error(&text('hold_enotinstalled', $p));
+		$s eq $software::update_system ||
+			&error(&text('hold_esystem', $p));
+		if (!$hold_action && !&package_is_held($p, \@held)) {
+			&error(&text('hold_enotheld', $p));
+			}
+		push(@holdnames, $p);
+		}
+	@holdnames = &unique(@holdnames);
+	$err = &update_package_holds(\@holdnames, $hold_action);
+	&error(&text($hold_action ? 'hold_efailed' : 'unhold_efailed', $err))
+		if ($err);
+	&flush_package_caches();
+	$logaction = $hold_action ? 'hold' : 'unhold';
+	&webmin_log($logaction, "packages", scalar(@holdnames),
+		    { 'packages' => \@holdnames });
+	&redirect("index.cgi?mode=".&urlize($in{'mode'}).
+		  "&search=".&urlize($in{'search'}));
+	}
+elsif ($in{'refresh'} || $in{'refresh_top'}) {
 	&ui_print_unbuffered_header(undef, $text{'refresh_title'}, "");
 
 	# Clear all caches
@@ -31,7 +62,16 @@ if ($in{'refresh'} || $in{'refresh_top'}) {
 	# Force re-fetch
 	print $text{'refresh_available'},"<br>\n";
 	@avail = &list_possible_updates();
-	print &text('refresh_done3', scalar(@avail)),"<p>\n";
+	$err = &get_updates_error();
+	if ($err) {
+		# The check failed, so show the error instead of the count
+		print $text{'refresh_failed'},"<br>\n";
+		print "<pre>",&html_escape($err),"</pre>\n";
+		}
+	else {
+		# The check worked, so show how many updates were found
+		print &text('refresh_done3', scalar(@avail)),"<p>\n";
+		}
 
 	&webmin_log("refresh");
 	&ui_print_footer($redir, $redirdesc);
@@ -40,6 +80,21 @@ else {
 	# Upgrade some packages
 	my @pkgs = split(/\0/, $in{'u'});
 	@pkgs || &error($text{'update_enone'});
+	$allow_held = 0;
+	if ($in{'mode'} eq 'held') {
+		# Only Held updates can override a hold for one transaction.
+		&supports_package_holds() || &error($text{'hold_enotsupported'});
+		@held = &list_package_holds();
+		foreach $ps (@pkgs) {
+			($p, $s) = split(/\//, $ps, 2);
+			$s eq $software::update_system &&
+				&package_is_held($p, \@held) ||
+				&error(&text('update_enotheld', $p));
+			}
+		$allow_held = 1;
+		}
+	$install_flags = $allow_held ? &software::update_system_hold_flags() :
+					$in{'flags'};
 	&ui_print_unbuffered_header(undef,
 	    $in{'mode'} eq 'new' ? $text{'update_title2'} : $text{'update_title'}, "");
 
@@ -56,7 +111,9 @@ else {
 			($p, $s) = split(/\//, $ps);
 			push(@pkgnames, $p);
 			}
-		@ops = &list_package_operations(join(" ", @pkgnames), $s);
+		@ops = &list_package_operations(join(" ", @pkgnames), $s,
+					       $install_flags);
+		&error($text{'update_enoheldops'}) if (!@ops && $allow_held);
 		}
 
 	if (@ops) {
@@ -74,9 +131,14 @@ else {
 			foreach $ps (@pkgs) {
 				$confform .= &ui_hidden("u", $ps);
 				}
+			$confform .= &ui_alert_box($text{'update_heldnote'}, 
+						   'warn', undef, undef, '')
+					if ($allow_held && !$bottom);
 			$confform .= &text('update_rusure', scalar(@ops)),"<p>\n"
 				if (!$bottom);
-			$confform .= &ui_form_end([ [ "confirm", $text{'update_confirm'} ] ]);
+			$confform .= &ui_form_end([ [ "confirm",
+				$allow_held ? $text{'update_confirmheld'} :
+					      $text{'update_confirm'} ] ]);
 			};
 		print &$getconfform();
 
@@ -127,7 +189,7 @@ else {
 			      "<br>\n";
 			print "<ul data-package-updates='1'>\n";
 			@got = &package_install_multiple(
-				\@pkgnames, $pkgsystem, $in{'mode'} eq 'new', $in{'flags'});
+				\@pkgnames, $pkgsystem, $in{'mode'} eq 'new', $install_flags);
 			print "</ul><br>\n";
 			}
 		else {
@@ -138,7 +200,7 @@ else {
 				print &text($msg, "<tt>@{[&html_escape($p)]}</tt>"),"<br>\n";
 				print "<ul data-package-updates='2'>\n";
 				@pgot = &package_install(
-					$p, $s, $in{'mode'} eq 'new', $in{'flags'});
+					$p, $s, $in{'mode'} eq 'new', $install_flags);
 				foreach $g (@pgot) {
 					$donedep{$g}++;
 					}
@@ -155,6 +217,7 @@ else {
 		&end_update_progress(\@pkgs);
 
 		# Refresh collected package info
+		print $text{'refresh_available'},"<br>\n";
 		if (&foreign_check("system-status")) {
 			&foreign_require("system-status");
 			&system_status::refresh_possible_packages(\@got);
@@ -165,7 +228,7 @@ else {
 			&foreign_require("virtual-server");
 			&virtual_server::refresh_possible_packages(\@got);
 			}
-
+		print $text{'refresh_done'},"<p>\n";
 		# Check if a reboot is required now
 		if (!$reboot_before && &check_reboot_required() &&
 		    &foreign_check("init")) {

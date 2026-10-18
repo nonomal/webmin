@@ -18,18 +18,30 @@ $access{'upgrade'} = 0 if (&is_readonly_mode());	# too hard to fake
 &foreign_require("acl");
 %text = ( %webmin::text, %text );
 
+if (!defined($gconfig{'noselfwebminup'})) {
+	$access{'upgrade'} = 0
+		if (&webmin::has_repos());
+	}
+else {
+	$access{'upgrade'} = !$gconfig{'noselfwebminup'};
+	}
+my $can_http_ssl = &can_use_http_ssl();
+my $http_proto = $can_http_ssl ? "https" : "http";
+
 $usermin_miniserv_config = "$config{'usermin_dir'}/miniserv.conf";
 $usermin_config = "$config{'usermin_dir'}/config";
 
-$update_host = "www.webmin.com";
-$update_port = 80;
+$update_host = "webmin.com";
+$update_ssl = $can_http_ssl;
+$update_port = $update_ssl ? 443 : 80;
 $update_page = "/uupdates/uupdates.txt";
 
 $standard_usermin_dir = "/etc/usermin";
-$latest_rpm = "http://www.webmin.com/download/usermin-latest.noarch.rpm";
-$latest_tgz = "http://www.webmin.com/download/usermin-latest.tar.gz";
+$latest_page_url = "$http_proto://$update_host/index6.html";
+$latest_rpm = "$http_proto://$update_host/download/usermin-latest.noarch.rpm";
+$latest_tgz = "$http_proto://$update_host/download/usermin-latest.tar.gz";
 
-$default_key_size = 2048;
+$default_key_size = 4096;
 
 $cron_cmd = "$module_config_directory/update.pl";
 
@@ -412,6 +424,7 @@ if (&is_readonly_mode()) {
 open(MFILE, "<".$file);
 read(MFILE, $two, 2);
 close(MFILE);
+local $qfile = quotemeta($file);
 if ($two eq "\037\235") {
 	if (!&has_command("uncompress")) {
 		unlink($file) if ($need_unlink);
@@ -419,13 +432,15 @@ if ($two eq "\037\235") {
 		}
 	local $temp = $file =~ /\/([^\/]+)\.Z/i ? &transname("$1")
 						: &transname();
-	local $out = `uncompress -c "$file" 2>&1 >$temp`;
+	local $qtemp = quotemeta($temp);
+	local $out = `uncompress -c $qfile 2>&1 >$qtemp`;
 	unlink($file) if ($need_unlink);
 	if ($?) {
 		unlink($temp);
 		return &text('install_ecomp2', $out);
 		}
 	$file = $temp;
+	$qfile = quotemeta($file);
 	$need_unlink = 1;
 	}
 elsif ($two eq "\037\213") {
@@ -435,13 +450,15 @@ elsif ($two eq "\037\213") {
 		}
 	local $temp = $file =~ /\/([^\/]+)\.gz/i ? &transname("$1")
 						 : &transname();
-	local $out = `gunzip -c "$file" 2>&1 >$temp`;
+	local $qtemp = quotemeta($temp);
+	local $out = `gunzip -c $qfile 2>&1 >$qtemp`;
 	unlink($file) if ($need_unlink);
 	if ($?) {
 		unlink($temp);
 		return &text('install_egzip2', $out);
 		}
 	$file = $temp;
+	$qfile = quotemeta($file);
 	$need_unlink = 1;
 	}
 
@@ -454,7 +471,7 @@ open(TYPE, "<../install-type");
 chop($type = <TYPE>);
 close(TYPE);
 if ($type eq 'rpm' && $file =~ /\.rpm$/i &&
-    ($out = `rpm -qp $file 2>/dev/null`)) {
+    ($out = `rpm -qp $qfile 2>/dev/null`)) {
 	# Looks like an RPM of some kind, hopefully an RPM usermin module
 	# or theme
 	local ($out, %minfo, %tinfo);
@@ -463,7 +480,7 @@ if ($type eq 'rpm' && $file =~ /\.rpm$/i &&
 		return $text{'install_erpm'};
 		}
 	$redirect_to = $name = $2;
-	$out = &backquote_logged("rpm -Uv \"$file\" 2>&1");
+	$out = &backquote_logged("rpm -Uv $qfile 2>&1");
 	if ($?) {
 		unlink($file) if ($need_unlink);
 		return &text('install_eirpm', "<tt>$out</tt>");
@@ -507,7 +524,7 @@ else {
 	# Check if this is a valid module (a tar file of multiple module or
 	# theme directories)
 	local (%mods, %hasfile);
-	local $tar = `tar tf "$file" 2>&1`;
+	local $tar = `tar tf $qfile 2>&1`;
 	if ($?) {
 		unlink($file) if ($need_unlink);
 		return &text('install_etar', $tar);
@@ -540,7 +557,7 @@ else {
 		next if (!$hasfile{$m,"module.info"});
 		push(@realmods, $m);
 		local %minfo;
-		system("cd $tmpdir ; tar xf \"$file\" $m/module.info ./$m/module.info >/dev/null 2>&1");
+		system("cd $tmpdir ; tar xf $qfile $m/module.info ./$m/module.info >/dev/null 2>&1");
 		if (!&read_file("$tmpdir/$m/module.info", \%minfo)) {
 			$err = &text('install_einfo', "<tt>$m</tt>");
 			}
@@ -592,7 +609,7 @@ else {
 		}
 
 	# Extract all the modules and update perl path and ownership
-	local $out = `cd $miniserv{'root'} ; tar xf "$file" 2>&1 >/dev/null`;
+	local $out = `cd $miniserv{'root'} ; tar xf $qfile 2>&1 >/dev/null`;
 	if ($?) {
 		unlink($file) if ($need_unlink);
 		return &text('install_eextract', $out);
@@ -792,6 +809,7 @@ sub delete_usermin_module
 {
 local $m = $_[0];
 return undef if (!$m);
+local $qm = quotemeta($m);
 local %minfo = &get_usermin_module_info($m);
 %minfo = &get_usermin_theme_info($m) if (!%minfo);
 return undef if (!%minfo);
@@ -824,7 +842,7 @@ else {
 		@lst = stat("$miniserv{'root'}/$l");
 		if (-l "$miniserv{'root'}/$l" && $lst[1] == $mst[1]) {
 			&unlink_logged("$miniserv{'root'}/$l");
-			&system_logged("rm -rf $config{'usermin_dir'}/$l");
+			&system_logged("rm -rf ".quotemeta("$config{'usermin_dir'}/$l"));
 			push(@clones, $l);
 			}
 		}
@@ -840,7 +858,7 @@ else {
 			   "<tt>$mdir</tt>", $size);
 	if ($type eq 'rpm') {
 		# This module was installed from an RPM .. rpm -e it
-		&system_logged("rpm -e ubm-$m");
+		&system_logged("rpm -e ubm-$qm");
 		}
 	else {
 		# Module was installed from a .wbm file .. just rm it
@@ -912,47 +930,86 @@ else {
 return $mode;
 }
 
-=head2 switch_to_usermin_user(username)
+=head2 can_create_usermin_login_url(&miniserv)
 
-Returns a set-cookie header and redirect URL for auto-logging into Usermin
-as some user.
+Returns 1 if Usermin can accept a one-time login URL.
 
 =cut
-sub switch_to_usermin_user
+sub can_create_usermin_login_url
 {
-my ($user) = @_;
+my ($miniserv) = @_;
+return $miniserv->{'session'} &&
+       &check_pid_file($miniserv->{'pidfile'}) &&
+       defined(&acl::open_session_db) &&
+       defined(&acl::generate_random_session_id) &&
+       defined(&reload_usermin_miniserv);
+}
 
-# Stop Usermin first, so that the DBM can be safely written
+=head2 create_usermin_login_url(username, [lifetime])
+
+Creates a one-time URL that logs into Usermin as some user.
+
+=cut
+sub create_usermin_login_url
+{
+my ($user, $lifetime) = @_;
 my %miniserv;
 &get_usermin_miniserv_config(\%miniserv);
-my $stopped;
-if (&check_pid_file($miniserv{'pidfile'})) {
-	&stop_usermin();
-	$stopped = 1;
-	}
+&can_create_usermin_login_url(\%miniserv) ||
+	&error($text{'switch_esession'});
+&check_pid_file($miniserv{'pidfile'}) ||
+	&error($text{'switch_esession'});
+$lifetime ||= 5*60;
+my $sid = &create_usermin_login_session(\%miniserv, "-".$user,
+					   $lifetime);
+$sid || &error($text{'switch_esession'});
 
-# Generate a session ID and set it in the DB
-&acl::open_session_db(\%miniserv);
-&seed_random();
-my $now = time();
-my $sid = int(rand()*$now);
-$acl::sessiondb{$sid} = "$user $now $ENV{'REMOTE_ADDR'}";
-dbmclose(%acl::sessiondb);
-if ($stopped) {
-	&start_usermin();
-	}
+# Make sure the running Usermin process re-opens the session DBM, without
+# stopping the service or racing its PID file re-creation.
 &reload_usermin_miniserv();
+my $url = &get_usermin_login_base_url(\%miniserv);
+$url =~ s/\/+$//;
+return $url."/session_login.cgi?session=".&urlize($sid);
+}
+
+=head2 create_usermin_login_session(&miniserv, username, lifetime)
+
+Creates a one-time Usermin session token for the current browser.
+
+=cut
+sub create_usermin_login_session
+{
+my ($miniserv, $user, $lifetime) = @_;
+return if (&is_readonly_mode());
+my $sid = &acl::generate_random_session_id();
+return if (!$sid);
+my $ip = $ENV{'REMOTE_ADDR'} || "127.0.0.1";
+my $now = time();
+&acl::open_session_db($miniserv);
+$acl::sessiondb{&acl::hash_session_id($sid)} =
+	"$user $now $ip".($lifetime ? " ".$lifetime : "");
+dbmclose(%acl::sessiondb);
+return $sid;
+}
+
+=head2 get_usermin_login_base_url(&miniserv)
+
+Returns the base URL to use for browser handoff to Usermin.
+
+=cut
+sub get_usermin_login_base_url
+{
+my ($miniserv) = @_;
+return $miniserv->{'redirect_url'} if ($miniserv->{'redirect_url'});
+
 eval "use Net::SSLeay";
 if ($@) {
-	$miniserv{'ssl'} = 0;
+	$miniserv->{'ssl'} = 0;
 	}
-my $ssl = $miniserv{'ssl'} || $miniserv{'inetd_ssl'};
-my $sec = $ssl ? "; secure" : "";
-my $sidname = $miniserv{'sidname'} || 'sid';
-my $cookie = "$sidname=$sid; path=/$sec";
+my $ssl = $miniserv->{'ssl'} || $miniserv->{'inetd_ssl'};
 
 # Work out redirect host
-my @sockets = &webmin::get_miniserv_sockets(\%miniserv);
+my @sockets = &webmin::get_miniserv_sockets($miniserv);
 my ($host, $port, $url);
 my %uconfig;
 &get_usermin_config(\%uconfig);
@@ -972,11 +1029,21 @@ else {
 		$host =~ s/:.*//;
 		}
 	}
-$port ||= $uconfig{'port'} || $miniserv{'port'};
+$port ||= $uconfig{'port'} || $miniserv->{'port'};
 $url = ($ssl ? "https://" : "http://").$host.":".$port."/";
-$url = $miniserv{'redirect_url'}
-    if ($miniserv{'redirect_url'});
-return ($cookie, $url);
+return $url;
+}
+
+=head2 switch_to_usermin_user(username)
+
+Returns a redirect URL for auto-logging into Usermin as some user.
+
+=cut
+sub switch_to_usermin_user
+{
+my ($user) = @_;
+my $url = &create_usermin_login_url($user);
+return wantarray ? ("", $url) : $url;
 }
 
 =head2 get_usermin_email_url([module], [cgi], [force-default], [force-host])
@@ -1063,4 +1130,3 @@ chmod(0755, $wrapper);
 }
 
 1;
-

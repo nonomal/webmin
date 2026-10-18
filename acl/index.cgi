@@ -6,8 +6,8 @@ use strict;
 use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
-require './acl-lib.pl';
-our (%in, %text, %config, %access, $base_remote_user);
+require './acl-lib.pl';    ## no critic
+our (%in, %text, %config, %gconfig, %access, $base_remote_user);
 &ReadParse();
 &ui_print_header(undef, $text{'index_title'}, "", undef, 1, 1);
 
@@ -206,11 +206,6 @@ if (uc($ENV{'HTTPS'}) eq "ON" && $miniserv{'ca'}) {
 push(@icons, "images/twofactor.gif");
 push(@links, "twofactor_form.cgi");
 push(@titles, $text{'index_twofactor'});
-if ($access{'rbacenable'}) {
-	push(@icons, "images/rbac.gif");
-	push(@links, "edit_rbac.cgi");
-	push(@titles, $text{'index_rbac'});
-	}
 if ($access{'pass'}) {
 	push(@icons, "images/pass.gif");
 	push(@links, "edit_pass.cgi");
@@ -280,16 +275,24 @@ print &ui_links_row(\@rowlinks);
 }
 
 # user_link(user, cgi, param)
+# Return HTML for a link to edit one user
 sub user_link
 {
-my $lck = $_[0]->{'pass'} =~ /^\!/ ? 1 : 0;
-my $ro = $_[0]->{'readonly'};
-return &ui_checkbox("d", $_[0]->{'name'}, "", 0).
+my ($user, $cgi, $param) = @_;
+my $lck = $user->{'pass'} =~ /^\!/ ? 1 : 0;
+my $ro = $user->{'readonly'};
+return &ui_checkbox("d", $user->{'name'}, "", 0).
        ($lck ? "<i>" : "").
        ($ro ? "<b>" : "").
-       ui_link("$_[1]?$_[2]=".&urlize($_[0]->{'name'}),
-	           $_[0]->{'name'}).
-       ($_[0]->{'twofactor_id'} ? "*" : "").
+       &ui_link("$cgi?$param=".&urlize($user->{'name'}),
+	        $user->{'name'}).
+       ($user->{'twofactor_id'}
+       	? &ui_tag('sup', '⚷', 
+            { title => $text{'index_twofactor_enabled'},
+	      class => 'twofactor-enabled-icon',
+	      style => 'font-size: 11px; margin-left: 5px; cursor: default;'.
+                       'display: inline-block; transform: rotate(90deg);' } )
+	: "").
        ($ro ? "</b>" : "").
        ($lck ? "</i>" : "");
 }

@@ -7,7 +7,7 @@ no warnings 'redefine';
 no warnings 'uninitialized';
 our (%access, %text, %config);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 my $type = ($0 =~ /slave_form/);
 $access{'slave'} || &error($type ? $text{'screate_ecannot1'}
 				 : $text{'screate_ecannot2'});
@@ -58,6 +58,15 @@ print &ui_table_row($text{'slave_masters'},
 print &ui_table_row($text{'slave_masterport'},
 	&ui_opt_textbox("port", undef, 5, $text{'default'},
 		        $text{'slave_master_port'}), 3);
+
+# Master key
+my @keys = &find("key", $conf);
+if (@keys) {
+	print &ui_table_row($text{'slave_masterkey'},
+		&ui_select("key", undef, 
+			[ [ undef, $text{'slave_nokey'} ],
+			  (map { $_->{'value'} } @keys) ]));
+	}
 
 # Create on slave servers?
 my @servers = grep { $_->{'sec'} } &list_slave_servers();

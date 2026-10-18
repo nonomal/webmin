@@ -7,7 +7,7 @@ no warnings 'uninitialized';
 our (%access, %text, %in, %config);
 our $module_config_file;
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 
 &ReadParse();
 &error_setup($text{'dt_conf_err'});
@@ -48,8 +48,10 @@ $in{'dt_zsklife'} =~ /(\b[0-9]+\b)/  ||
 	&error($text{'dt_conf_ezsklife'});
 $nv{'zsklife'} = $1;
 
-&save_dnssectools_directive($conf, \%nv);
+$in{'period'} =~ /^[1-9]\d*$/ || &error($text{'dnssec_eperiod'});
+$in{'period'} < 30 || &error($text{'dnssec_eperiod30'});
 
+&save_dnssectools_directive($conf, \%nv);
 
 &lock_file($module_config_file);
 $config{'dnssec_period'} = $in{'period'};

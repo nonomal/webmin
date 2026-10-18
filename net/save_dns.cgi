@@ -21,9 +21,12 @@ for($i=0; defined($ns = $in{"nameserver_$i"}); $i++) {
 	$ns = $in{"nameserver_$i"};
 	$ns =~ s/^\s+//; $ns =~ s/\s+$//;
 	if ($ns) {
-		&check_ipaddress_any($ns) ||
+		my $nns = $ns;
+		# Just remove scope identifier (%interface) for simplicity
+		$nns =~ s/\%.*$//;
+		&check_ipaddress_any($nns) ||
 			&error(&text('dns_ens', &html_escape($ns)));
-		push(@{$dns->{'nameserver'}}, $ns);
+		push(@{$dns->{'nameserver'}}, $nns);
 		}
 	}
 if ($in{'name0'}) {
@@ -120,6 +123,19 @@ if (&foreign_installed("postfix") && $in{'hostname'} ne $old_hostname) {
 		$mydests[$idx] = $new_pqdn;
 		&postfix::set_current_value("mydestination",
 					    join(", ", @mydests));
+		}
+	$old_domain = $old_hostname =~ /^[^\.]+\.(.*)$/ ? $1 :
+		      $old_fqdn =~ /^[^\.]+\.(.*)$/ ? $1 : undef;
+	$new_domain = $in{'hostname'} =~ /^[^\.]+\.(.*)$/ ? $1 :
+		      $new_fqdn =~ /^[^\.]+\.(.*)$/ ? $1 : undef;
+	if ($old_domain && $new_domain &&
+	    lc($old_domain) ne lc($new_domain)) {
+		$idx = &indexoflc("localhost.$old_domain", @mydests);
+		if ($idx >= 0) {
+			$mydests[$idx] = "localhost.$new_domain";
+			&postfix::set_current_value("mydestination",
+						    join(", ", @mydests));
+			}
 		}
 
 	# Update postfix myorigin

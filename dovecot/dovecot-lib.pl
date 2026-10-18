@@ -4,7 +4,10 @@ BEGIN { push(@INC, ".."); };
 use WebminCore;
 &init_config();
 
-@supported_auths = ( "anonymous", "plain", "digest-md5", "cram-md5", "apop" );
+@supported_auths = ( "anonymous", "plain", "login", "digest-md5", "cram-md5",
+		     "apop", "scram-sha-1", "scram-sha-256", "ntlm",
+		     "gss-spnego", "gssapi", "rpa", "otp", "skey", "external",
+		     "oauthbearer", "xoauth2" );
 @mail_envs = ( undef, "maildir:~/Maildir", "mbox:~/mail/:INBOX=/var/mail/%u",
 	       "maildir:~/Maildir:mbox:~/mail/" );
 
@@ -23,7 +26,9 @@ return undef;
 # directives
 sub get_add_config_file
 {
-foreach my $f (split(/\s+/, $config{'add_config'})) {
+my $f = $config{'add_config'} || "";
+$f =~ s/^\s+|\s+$//g;
+if ($f) {
 	return $f if (-r $f);
 	}
 return &get_config_file();
@@ -92,7 +97,7 @@ foreach (@lines) {
 			}
 		}
 	elsif (/^(\s*)(#?)([a-z0-9\_]+)\s+=\s*(.*)/) {
-		# A directive inside a section
+		# A directive which may or may not be inside a section
 		local $dir = { 'name' => $3,
 			       'value' => $4,
 			       'enabled' => !$2,
@@ -361,7 +366,7 @@ if ($parent) {
 	}
 else {
 	# Add to the global config file
-	$file = &get_config_file();
+	$file = $before ? $before->{'file'} : &get_add_config_file();
 	$lref = &read_file_lines($file);
 	if ($before) {
 		# Add before another block
@@ -373,9 +378,9 @@ else {
 		}
 	}
 splice(@$lref, $section->{'line'}, 0, @newlines);
+$section->{'eline'} = $section->{'line'} + scalar(@newlines) - 1;
 &renumber($conf, $section->{'eline'}, $section->{'file'},
 	  scalar(@newlines)-$oldlen);
-$section->{'eline'} = $section->{'line'} + scalar(@newlines) - 1;
 $section->{'file'} = $file;
 my $i = 1;
 foreach my $m (@{$section->{'members'}}) {
@@ -386,6 +391,17 @@ foreach my $m (@{$section->{'members'}}) {
 	$m->{'sectionname'} = $section->{'name'};
 	$m->{'sectionvalue'} = $section->{'value'};
 	}
+}
+
+# delete_section(&conf, &section)
+# Remove a section and all it's members from the config file
+sub delete_section
+{
+my ($conf, $section) = @_;
+my $lref = &read_file_lines($section->{'file'});
+my $len = $section->{'eline'} - $section->{'line'} + 1;
+splice(@$lref, $section->{'line'}, $len);
+&renumber($conf, $section->{'line'}, $section->{'file'}, -$len);
 }
 
 # renumber(&conf, line, file, offset)
@@ -539,6 +555,16 @@ local ($wantver) = @_;
 local $ver = &get_dovecot_version();
 return 0 if (!$ver);
 return &compare_version_numbers($ver, $wantver) >= 0;
+}
+
+# version_below(ver)
+# Returns 1 if running below some version
+sub version_below
+{
+local ($wantver) = @_;
+local $ver = &get_dovecot_version();
+return 0 if (!$ver);
+return &compare_version_numbers($ver, $wantver) < 0;
 }
 
 sub list_lock_methods

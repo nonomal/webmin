@@ -30,14 +30,14 @@ print &ui_hidden("new", $in{'new'});
 print &ui_hidden("old", $in{'name'});
 print &ui_table_start($text{'jail_header'}, undef, 2);
 
-# Jail name
-print &ui_table_row($text{'jail_name'},
-	&ui_textbox("name", $jail->{'name'}, 30));
-
 # Enabled or disabled?
 my $enabled = &find_value("enabled", $jail);
 print &ui_table_row($text{'jail_enabled'},
 	&ui_yesno_radio("enabled", $enabled =~ /true|yes|1/i));
+
+# Jail name
+print &ui_table_row($text{'jail_name'},
+	&ui_textbox("name", $jail->{'name'}, 30));
 
 # Filter to match
 my @filters = &list_filters();
@@ -48,6 +48,28 @@ print &ui_table_row($text{'jail_filter'},
 		   [ [ undef, "&lt;$text{'default'}&gt;" ],
 		     map { &filename_to_name($_->[0]->{'file'}) } @filters ],
 		   1, 0, $filter ? 1 : 0));
+
+# Backend
+my $backend = &find_value("backend", $jail);
+my @backend_options = (
+	[ "", "" ],
+	[ "auto", $text{'jail_auto'} ],
+	[ "systemd", $text{'jail_systemd'} ],
+	[ "polling", $text{'jail_polling'} ],
+	[ "gamin", $text{'jail_gamin'} ],
+	[ "pyinotify", $text{'jail_pyinotify'} ],
+);
+if ($backend && $backend =~ /^\%\(\w+\)s$/) { # placeholder for backend
+	splice(@backend_options, 2, 0, [ $backend, $backend ]);
+	}
+
+print &ui_table_row($text{'jail_backend'},
+	&ui_select("backend", $backend || "", \@backend_options));
+
+# Ports to monitor
+my $port = &find_value("port", $jail);
+print &ui_table_row($text{'jail_ports'},
+	&ui_textbox("port", $port, 35));
 
 # Actions to run
 my $actionlist = &find("action", $jail);
@@ -61,18 +83,12 @@ my $atable = &ui_columns_start([
 		]);
 my $i = 0;
 foreach my $a (@{$actionlist->{'words'}}, undef) {
-	my $action;
-	my %opts;
-	if ($a && $a =~ /^(\S.*\S)\[(.*)\]$/) {
-		$action = $1;
-		%opts = map { my ($n, $v) = split(/=/, $_);
-			      $v =~ s/^"(.*)"/$1/;
-			      ($n, $v) } split(/,\s+/, $2);
-		}
-	else {
-		$action = $a;
-		}
-	my @oopts = grep { !/^(name|port|protocol)$/ } (keys %opts);
+	my ($action, $opts) = $a ? &parse_action_definition($a) : (undef, []);
+	my %opts = map { ($_->[0], $_->[1]) } @$opts;
+	my @oopts = grep { $_->[0] !~ /^(name|port|protocol)$/ } @$opts;
+	my $others = join("", map { $_->[2] } @oopts);
+	$others =~ s/^\s*,?\s*//;
+	$others =~ s/\s*,?\s*$//;
 	$atable .= &ui_columns_row([
 		&ui_select("action_$i", $action,
 		   [ [ "", "&nbsp;" ],
@@ -85,8 +101,7 @@ foreach my $a (@{$actionlist->{'words'}}, undef) {
 			     [ 'tcp', 'TCP' ],
 			     [ 'udp', 'UDP' ],
 			     [ 'icmp', 'ICMP' ] ]),
-		&ui_textbox("others_$i",
-			join(" ", map { $_."=".$opts{$_} } @oopts), 40),
+		&ui_textbox("others_$i", $others, 40),
 		]);
 	$i++;
 	}
@@ -118,6 +133,60 @@ my $bantime = &find_value("bantime", $jail);
 print &ui_table_row($text{'jail_bantime'},
 	&ui_opt_textbox("bantime", $bantime, 6,
 			$text{'default'}." (".$def_bantime.")"));
+
+# Incremental banning options, supported since Fail2Ban 0.11.1
+if (&supports_bantime_increment()) {
+	print &ui_table_hr();
+	print &ui_table_span("<b>".$text{'jail_increment_header'}."</b><br>".
+		&ui_note($text{'jail_increment_desc'}, 0));
+
+	my $def_increment = &canonical_fail2ban_boolean(
+		&find_value("bantime.increment", $def));
+	my $increment = &canonical_fail2ban_boolean(
+		&find_value("bantime.increment", $jail));
+	my $def_increment_text = $def_increment eq "true" ? $text{'yes'} :
+								  $text{'no'};
+	print &ui_table_row($text{'jail_bantime_increment'},
+		&ui_select("bantime_increment", $increment,
+			[ [ "", $text{'default'}." (".$def_increment_text.")" ],
+			  [ "true", $text{'yes'} ],
+			  [ "false", $text{'no'} ] ], 1, 0, 1));
+
+	my $def_factor = &find_value("bantime.factor", $def) || 1;
+	my $factor = &find_value("bantime.factor", $jail);
+	print &ui_table_row($text{'jail_bantime_factor'},
+		&ui_opt_textbox("bantime_factor", $factor, 8,
+			$text{'default'}." (".&html_escape($def_factor).")"));
+
+	my $def_maxtime = &find_value("bantime.maxtime", $def);
+	my $maxtime = &find_value("bantime.maxtime", $jail);
+	my $def_maxtime_text = $def_maxtime ne "" ?
+		&html_escape($def_maxtime) : $text{'jail_nolimit'};
+	print &ui_table_row($text{'jail_bantime_maxtime'},
+		&ui_opt_textbox("bantime_maxtime", $maxtime, 8,
+			$text{'default'}." (".$def_maxtime_text.")"));
+
+	my $def_overalljails = &canonical_fail2ban_boolean(
+		&find_value("bantime.overalljails", $def));
+	my $overalljails = &canonical_fail2ban_boolean(
+		&find_value("bantime.overalljails", $jail));
+	my $def_overalljails_text = $def_overalljails eq "true" ?
+		$text{'yes'} : $text{'no'};
+	print &ui_table_row($text{'jail_bantime_overalljails'},
+		&ui_select("bantime_overalljails", $overalljails,
+			[ [ "", $text{'default'}." (".$def_overalljails_text.")" ],
+			  [ "true", $text{'yes'} ],
+			  [ "false", $text{'no'} ] ], 1, 0, 1));
+
+	my $def_rndtime = &find_value("bantime.rndtime", $def);
+	my $rndtime = &find_value("bantime.rndtime", $jail);
+	my $def_rndtime_text = $def_rndtime ne "" ?
+		&html_escape($def_rndtime) : $text{'jail_none'};
+	print &ui_table_row($text{'jail_bantime_rndtime'},
+		&ui_opt_textbox("bantime_rndtime", $rndtime, 8,
+			$text{'default'}." (".$def_rndtime_text.")"));
+	print &ui_table_hr();
+	}
 
 # IPs to ignore
 my $def_ignoreip = &find_value("ignoreip", $def) || "127.0.0.1";

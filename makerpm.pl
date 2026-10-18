@@ -11,6 +11,7 @@ else {
 	$base_dir = "/usr/src/redhat";
 	$< && die "makerpm.pl must be run as root";
 	}
+$rpm_maintainer = $ENV{'RPM_MAINTAINER'} || "Jamie Cameron";
 $spec_dir = "$base_dir/SPECS";
 $source_dir = "$base_dir/SOURCES";
 $rpms_dir = "$base_dir/RPMS/noarch";
@@ -85,14 +86,16 @@ Name: webmin
 Version: $ver
 Release: $rel
 Provides: %{name}-%{version} perl(WebminCore)
+Provides: webmin-custom webmin-nftables webmin-postgresql
+Obsoletes: webmin-custom webmin-nftables webmin-postgresql
 Requires(pre): /usr/bin/perl
-Requires: /bin/sh /usr/bin/perl perl(lib) perl(open) perl(Net::SSLeay) perl(Time::Local) perl(Data::Dumper) perl(File::Path) perl(File::Basename) perl(Digest::SHA) perl(Digest::MD5) openssl unzip tar gzip
-Recommends: perl(DateTime) perl(DateTime::TimeZone) perl(DateTime::Locale) perl(Time::Piece) perl(Encode::Detect) perl(Time::HiRes) perl(Socket6) lynx shared-mime-info perl-File-Basename perl-File-Path qrencode
+Requires: /bin/sh /usr/bin/perl perl(lib) perl(open) perl(Net::SSLeay) perl(Time::Local) perl(Data::Dumper) perl(File::Path) perl(File::Basename) perl(Digest::SHA) perl(Digest::MD5) perl(FindBin) openssl unzip tar gzip
+Recommends: perl(DateTime) perl(DateTime::TimeZone) perl(DateTime::Locale) perl(Time::Piece) perl(Encode::Detect) perl(Time::HiRes) perl(Socket6) perl(Sys::Syslog) html2text shared-mime-info lsof perl-File-Basename perl-File-Path perl-JSON-XS perl(DBI) perl(DBD::mysql) perl(DBD::MariaDB)
 AutoReq: 0
-License: BSD-3-clause
+License: BSD-3-Clause
 Group: System/Tools
-Source: http://www.webmin.com/download/$tarfile
-Vendor: Jamie Cameron
+Source: https://webmin.com/download/$tarfile
+Vendor: $rpm_maintainer
 BuildRoot: /tmp/%{name}-%{version}
 BuildArchitectures: noarch
 %description
@@ -111,7 +114,7 @@ browser and login as root with your root password.
 rm -f mount/freebsd-mounts*
 rm -f mount/openbsd-mounts*
 rm -f mount/macos-mounts*
-rm -f webmin-gentoo-init
+rm -f webmin-openrc-init
 rm -rf format bsdexports hpuxexports sgiexports zones rbac bsdfdisk
 rm -rf acl/Authen-SolarisRBAC-0.1*
 chmod -R og-w .
@@ -228,6 +231,11 @@ if [ "\$tempdir" = "" ]; then
 fi
 export config_dir var_dir perl autoos port login crypt host ssl nochown autothird noperlpath nouninstall nostart allow atboot makeboot nostop nodepsmsg
 ./setup.sh >\$tempdir/webmin-setup.out 2>&1
+grep sudo= /etc/webmin/miniserv.conf >/dev/null 2>&1
+if [ "\$?" = 1 ]; then
+	# Allow sudo-based logins
+	echo sudo=1 >>/etc/webmin/miniserv.conf
+fi
 chmod 600 \$tempdir/webmin-setup.out
 rm -f /var/lock/subsys/webmin
 cd /usr/libexec/webmin
@@ -242,13 +250,13 @@ if [ "\$inetd" != "1" ]; then
 			/etc/webmin/.post-install >/dev/null 2>&1 </dev/null
 		else
 			/etc/webmin/.reload-init >/dev/null 2>&1 </dev/null
+			if [ "\$?" != "0" ]; then
+				echo "warning: Webmin server cannot be restarted. It is advised to restart it manually by\n         running \\"/etc/webmin/restart-by-force-kill\\" when upgrade process is finished"
+			fi
 			if [ -f /etc/webmin/.reload-init-systemd ]; then
 				/etc/webmin/.reload-init-systemd >/dev/null 2>&1 </dev/null
 				rm -f /etc/webmin/.reload-init-systemd
 			fi
-		fi
-		if [ "\$?" != "0" ]; then
-			echo "warning: Webmin server cannot be restarted. It is advised to restart it manually by\n         running \\"/etc/webmin/restart-by-force-kill\\" when upgrade process is finished"
 		fi
 	fi
 fi
@@ -308,6 +316,9 @@ if [ "\$1" = 0 ]; then
 		# has taken it's place. Rename away the /etc/webmin directory
 		rm -rf /etc/webmin.rpmsave
 		mv /etc/webmin /etc/webmin.rpmsave
+		if command -v semanage >/dev/null 2>&1; then
+			semanage fcontext -d "/var/webmin(/.*)?" >/dev/null 2>&1 || true
+		fi
 		rm -rf /var/webmin
 	fi
 fi
@@ -354,4 +365,3 @@ foreach $rpm ("rpm", "newkey/rpm") {
 		system("cp $rpm/webmin-$ver-$rel.noarch.rpm /usr/local/webadmin/$rpm/yum");
 		}
 	}
-

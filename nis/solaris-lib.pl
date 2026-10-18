@@ -193,7 +193,7 @@ else {
 	&open_tempfile(DOM, ">/etc/defaultdomain");
 	&print_tempfile(DOM, "$in{'domain'}\n");
 	&close_tempfile(DOM);
-	&system_logged("domainname \"$in{'domain'}\" >/dev/null 2>&1");
+	&system_logged("domainname ".quotemeta($in{'domain'})." >/dev/null 2>&1");
 	if ($in{'boot'}) {
 		# Create the domain directory
 		mkdir("/var/yp/$in{'domain'}", 0755);
@@ -212,7 +212,7 @@ else {
 	open(TEMP, ">$temp");
 	print TEMP "n\ny\n";
 	close(TEMP);
-	$out = &backquote_logged("/usr/sbin/ypinit -s $in{'slave'} <$temp 2>&1");
+	$out = &backquote_logged("/usr/sbin/ypinit -s ".quotemeta($in{'slave'})." <$temp 2>&1");
 	unlink($temp);
 	if ($?) { &error("<tt>$out</tt>"); }
 	$config{'slave'} = $in{'slave'};

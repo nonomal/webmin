@@ -9,8 +9,8 @@ $access{'perms'} == 1 || &error($text{'perms_ecannot'});
 if ($in{'delete'}) {
 	# Delete some user
 	&execute_sql_logged($master_db,
-		     "delete from user where user = '$in{'olduser'}' ".
-		     "and host = '$in{'oldhost'}'");
+		     "delete from user where user = ? and host = ?",
+		     $in{'olduser'}, $in{'oldhost'});
 	}
 else {
 	# Validate inputs
@@ -19,7 +19,7 @@ else {
 		&error($text{'user_euser'});
 	$in{'host_def'} || $in{'host'} =~ /^\S+$/ ||
 		&error($text{'user_ehost'});
-	if ($in{'mysqlpass_mode'} eq '0' && $in{'mysqlpas'} =~ /\\/) {
+	if ($in{'mysqlpass_mode'} eq '0' && $in{'mysqlpass'} =~ /\\/) {
 		&error($text{'user_eslash'});
 		}
 
@@ -40,23 +40,22 @@ else {
 	my ($ver, $variant) = &get_remote_mysql_variant();
 	my $plugin = &get_mysql_plugin(1);
 
-	# Create a new user
 	if ($in{'new'}) {
+		# Create a new user
 		&create_user({
 			'user', $olduser,
 			'pass', $in{'mysqlpass'},
 			'host', $host,
 			'perms', \%perms,
 			'pfields', \@pfields,
+			'plugin', $in{'plugin'},
 			'ssl_field_names', \@ssl_field_names,
 			'ssl_field_values', \@ssl_field_values,
 			'other_field_names', \@other_field_names,
 			'other_field_values', \@other_field_values,
 			});
 		}
-	# Update an existing user
 	else {
-
 		# Rename user and/or host, if requested
 		my $changing_user = ($user ne $olduser);
 		my $changing_host = ($host ne $oldhost);
@@ -75,12 +74,19 @@ else {
 		# Update user password, if requested
 		if ($in{'mysqlpass_mode'} == 4) {
 			# Never used for admin accounts
-			&change_user_password(undef, $olduser, $oldhost);
+			&change_user_password(undef, $olduser, $oldhost,
+					      $in{'plugin'});
+			}
+		elsif ($in{'mysqlpass_mode'} == 1 &&
+		       $in{'plugin'} eq "unix_socket") {
+			&change_user_password('', $olduser, $oldhost,
+					      $in{'plugin'});
 			}
 		elsif ($in{'mysqlpass_mode'} != 1) {
 			($in{'mysqlpass_mode'} eq '0' && !$in{'mysqlpass'}) && &error($text{'root_epass1'});
 			my $pass = $in{'mysqlpass'} || '';
-			&change_user_password($pass, $olduser, $oldhost);
+			&change_user_password($pass, $olduser, $oldhost,
+					      $in{'plugin'});
 			}
 
 		&update_privileges({

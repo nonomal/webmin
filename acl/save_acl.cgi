@@ -6,10 +6,11 @@ use strict;
 use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
-require './acl-lib.pl';
+require './acl-lib.pl';    ## no critic
 our (%in, %text, %config, %access, $base_remote_user, %gconfig,
      $config_directory);
 &ReadParse();
+$access{'acl'} || &error($text{'acl_emod'});
 
 my $who;
 if ($in{'_acl_group'}) {
@@ -30,6 +31,7 @@ my $aclfile = $in{'_acl_group'} ? "$config_directory/$in{'_acl_mod'}/$who.gacl"
 			        : "$config_directory/$in{'_acl_mod'}/$who.acl";
 my %minfo = $in{'_acl_mod'} ? &get_module_info($in{'_acl_mod'})
 			    : ( 'desc' => $text{'index_global'} );
+%minfo || &error($text{'acl_emod2'});
 if ($in{'reset'}) {
 	# Just remove the .acl file
 	&lock_file($aclfile);
@@ -54,13 +56,8 @@ else {
 	if (defined($in{'noconfig'})) {
 		$maccess{'noconfig'} = $in{'noconfig'};
 		}
-	if ($in{'rbac'}) {
-		# RBAC overrides everything
-		$maccess{'rbac'} = 1;
-		}
-	elsif (-r "../$in{'_acl_mod'}/acl_security.pl") {
+	if (-r "../$in{'_acl_mod'}/acl_security.pl") {
 		# Use user inputs
-		$maccess{'rbac'} = 0 if (defined($in{'rbac'}));
 		&foreign_require($in{'_acl_mod'}, "acl_security.pl");
 		&foreign_call($in{'_acl_mod'}, "acl_security_save",
 			      \%maccess, \%in);

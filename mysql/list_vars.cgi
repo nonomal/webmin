@@ -7,21 +7,36 @@ $access{'perms'} == 1 || &error($text{'vars_ecannot'});
 &ReadParse();
 %d = map { $_, 1 } split(/\0/, $in{'d'});
 
-print &text('vars_desc', 'edit_cnf.cgi'),"<p>\n";
+print &ui_alert_box(&text('vars_desc', 'edit_cnf.cgi'), 'warn');
 
 # Work out which ones can be edited
-%canedit = map { $_->[0], 1 } &list_system_variables();
+my %canedit;
+foreach my $v (&list_system_variables()) {
+	my $vn = $v->[0];
+	$canedit{$vn} = 1;
+	$vn =~ s/-/_/g;
+	$canedit{$vn} = 1;
+	}
 
 # Show search form
-print &ui_form_start("list_vars.cgi");
-print "<b>$text{'vars_search'}</b> ",
-      &ui_textbox("search", $in{'search'}, 20)," ",
+print &ui_form_start("list_vars.cgi", undef, undef, "style='float: right;'");
+print &ui_textbox("search", $in{'search'}, 25, undef, undef,
+	"placeholder=\"$text{'vars_search'}\"")," ",
       &ui_submit($text{'vars_ok'});
 print &ui_form_end();
 
 $d = &execute_sql($master_db, "show variables".
 		 ($in{'search'} ? " like '%".quotemeta($in{'search'})."%'" : ""));
 if (@{$d->{'data'}}) {
+	@{$d->{'data'}} = sort {
+		# Editing now (highest priority)
+		($d{$b->[0]} <=> $d{$a->[0]}) ||
+		# Can edit (second priority) 
+		($canedit{$b->[0]} <=> $canedit{$a->[0]}) ||
+		# Natural sort for equal priority
+		$a->[0] cmp $b->[0]
+		} @{$d->{'data'}};
+
 	print &ui_form_start("save_vars.cgi");
 	print &ui_hidden("search", $in{'search'});
 	@tds = ( "width=5" );

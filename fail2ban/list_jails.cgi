@@ -28,7 +28,7 @@ foreach my $j (@jails) {
 	my $action_dir = &find("action", $j);
 	my $action = "";
 	if ($action_dir) {
-		$action = join("&nbsp;|&nbsp;",
+		$action = join(",&nbsp;",
 			map { /^([^\[]+)/; &html_escape("$1") }
 			    @{$action_dir->{'words'}});
 		}
@@ -37,9 +37,8 @@ foreach my $j (@jails) {
 	print &ui_checked_columns_row([
 		&ui_link("edit_jail.cgi?name=".&urlize($j->{'name'}),
 			 $j->{'name'}),
-		$enabled =~ /true|yes|1/i ? $text{'yes'} :
-			"<font color=red>$text{'no'}</font>",
-		&html_escape($filter),
+		$enabled =~ /true|yes|1/i ? $text{'yes'} : $text{'no'},
+		&html_escape($filter) || $text{'config_dbpurgeagedef'},
 		$action,
 		], \@tds, "d", $j->{'name'});
 	}

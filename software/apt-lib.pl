@@ -11,22 +11,51 @@ sub list_update_system_commands
 return ($apt_get_command, $apt_search_command);
 }
 
-# update_system_install([package], [&in], [no-force])
+# strip_apt_package_arch(package)
+# Returns an APT package name without any Debian architecture suffix.
+sub strip_apt_package_arch
+{
+my ($name) = @_;
+$name =~ s/:[A-Za-z0-9][A-Za-z0-9._-]*$//;
+return $name;
+}
+
+# update_system_hold_flags()
+# Returns the APT option for explicitly updating held packages.
+sub update_system_hold_flags
+{
+return '--allow-change-held-packages';
+}
+
+# update_system_install([package], [&in], [no-force], [flags])
 # Install some package with apt
 sub update_system_install
 {
 local $update = $_[0] || $in{'update'};
 local $force = !$_[2];
+local $flags = $_[3];
 local (@rv, @newpacks);
+
+# Only accept the one flag needed for an explicit update of held packages.
+# Other update systems use this argument for their own package-manager flags,
+# but APT historically ignored it.
+local $holdflag = defined($flags) &&
+		$flags eq '--allow-change-held-packages'
+		 	? ' --allow-change-held-packages' 
+			: '';
+local $install_command = $holdflag ? 'apt-get' : $apt_get_command;
+local @rehold = $holdflag ? &list_update_system_holds() : ( );
 
 # Build the command to run
 $ENV{'UCF_FORCE_CONFFOLD'} = 'YES';
 $ENV{'DEBIAN_FRONTEND'} = 'noninteractive';
-local $uicmd = "$apt_get_command -y ".($force ? " -f" : "")." install $update";
+local $uicmd = "$install_command -y".$holdflag.
+		($force ? " -f" : "")." install $update";
 $update = join(" ", map { quotemeta($_) } split(/\s+/, $update));
-local $cmd = "$apt_get_command -y ".($force ? " -f" : "")." install $update";
-print "<b>",&text('apt_install', "<tt>".&html_escape($uicmd)."</tt>"),"</b><p>\n";
-print "<pre>";
+local $cmd = "$install_command -y".$holdflag.
+		($force ? " -f" : "")." install $update";
+print &text('apt_install', "<tt>".&html_escape($uicmd)."</tt>"),"\n";
+print "<pre data-installer>";
 &additional_log('exec', undef, $cmd);
 
 # Run dpkg --configure -a to clear any un-configured packages
@@ -47,7 +76,7 @@ foreach (0..100) {
 &open_execute_command(CMD, "$cmd <".quotemeta($yesfile), 2);
 while(<CMD>) {
 	if (/setting\s+up\s+(\S+)/i && !/as\s+MDA/i) {
-		push(@rv, $1);
+		push(@rv, &strip_apt_package_arch($1));
 		}
 	elsif (/packages\s+will\s+be\s+upgraded/i ||
 	       /new\s+packages\s+will\s+be\s+installed/i) {
@@ -59,26 +88,41 @@ while(<CMD>) {
 	print &html_escape("$_");
 	}
 close(CMD);
+local $status = $?;
+
+# Restore holds after --allow-change-held-packages, which applies to the whole
+# transaction and can clear holds on selected packages or dependencies.
+if (@rehold) {
+	local $rehold_error = &update_system_hold(\@rehold, 1);
+	if ($rehold_error) {
+		print &text('apt_reholdfailed',
+			"<tt>".&html_escape(join(" ", @rehold))."</tt>",
+			&html_escape($rehold_error)),"<p>\n";
+		}
+	}
 &reset_environment();
-if (!@rv && $config{'package_system'} ne 'debian' && !$?) {
+if (!@rv && $config{'package_system'} ne 'debian' && !$status) {
 	# Other systems don't list the packages installed!
 	@rv = @newpacks;
 	}
 print "</pre>\n";
-if ($?) { print "<b>$text{'apt_failed'}</b><p>\n"; }
-else { print "<b>$text{'apt_ok'}</b><p>\n"; }
+if ($status) { print "$text{'apt_failed'}<p>\n"; }
+else { print "$text{'apt_ok'}<p>\n"; }
+$? = $status;
 return @rv;
 }
 
-# update_system_operations(packages)
-# Given a list of packages, returns a list containing packages that will
-# actually get installed, each of which is a hash ref with name and version.
+# update_system_operations(packages, [flags])
+# Returns packages APT would install or update. The optional hold flag includes
+# held packages in the simulation.
 sub update_system_operations
 {
-my ($packages) = @_;
+my ($packages, $flags) = @_;
 $ENV{'UCF_FORCE_CONFFOLD'} = 'YES';
 $ENV{'DEBIAN_FRONTEND'} = 'noninteractive';
-my $cmd = "apt-get -s install ".
+my $holdflag = defined($flags) &&
+	       $flags eq &update_system_hold_flags() ? " $flags" : "";
+my $cmd = "apt-get -s$holdflag install ".
 	  join(" ", map { quotemeta($_) } split(/\s+/, $packages)).
 	  " </dev/null 2>&1";
 &clean_language();
@@ -94,6 +138,7 @@ foreach my $l (split(/\r?\n/, $out)) {
 		if ($pkg->{'version'} =~ s/^(\S+)://) {
 			$pkg->{'epoch'} = $1;
 			}
+		$pkg->{'name'} = &strip_apt_package_arch($pkg->{'name'});
 		push(@rv, $pkg);
 		}
 	elsif ($l =~ /Inst\s+(\S+)\s+\(([^ \)]+)/) {
@@ -103,6 +148,7 @@ foreach my $l (split(/\r?\n/, $out)) {
 		if ($pkg->{'version'} =~ s/^(\S+)://) {
 			$pkg->{'epoch'} = $1;
 			}
+		$pkg->{'name'} = &strip_apt_package_arch($pkg->{'name'});
 		push(@rv, $pkg);
 		}
 	}
@@ -224,25 +270,17 @@ close(DUMP);
 return @rv;
 }
 
-# update_system_updates()
-# Returns a list of available package updates
+# update_system_updates([include-holds])
+# Returns available package updates, optionally including held packages.
 sub update_system_updates
 {
+my ($include_holds) = @_;
 &execute_command("$apt_get_command update");
 
-# Find held packages by dpkg
-local %holds;
-if ($config{'package_system'} eq 'debian') {
-	&clean_language();
-	&open_execute_command(HOLDS, "dpkg --get-selections", 1, 1);
-	while(<HOLDS>) {
-		if (/^(\S+)\s+hold/) {
-			$holds{$1}++;
-			}
-		}
-	close(HOLDS);
-	&reset_environment();
-	}
+# Find held packages. By default these remain excluded, but callers can ask
+# for them so that a dedicated held-updates view can display them.
+local %holds = map { &strip_apt_package_arch($_), 1 }
+			&list_update_system_holds();
 
 if (&has_command("apt-show-versions")) {
 	# This awesome command can give us all updates in one hit, and takes
@@ -253,7 +291,7 @@ if (&has_command("apt-show-versions")) {
 	&open_execute_command(PKGS, "apt-show-versions 2>/dev/null", 1, 1);
 	while(<PKGS>) {
 		if (/^(\S+)\/(\S+)\s+upgradeable\s+from\s+(\S+)\s+to\s+(\S+)/ &&
-		    !$holds{$1}) {
+		    ($include_holds || !$holds{&strip_apt_package_arch($1)})) {
 			# Old format
 			local $pkg = { 'name' => $1,
 				       'source' => $2,
@@ -261,9 +299,12 @@ if (&has_command("apt-show-versions")) {
 			if ($pkg->{'version'} =~ s/^(\S+)://) {
 				$pkg->{'epoch'} = $1;
 				}
+			$pkg->{'held'} = 1
+				if ($holds{&strip_apt_package_arch($pkg->{'name'})});
 			push(@rv, $pkg);
 			}
-		elsif (/^(\S+):(\S+)\/(\S+)\s+(\S+)\s+upgradeable\s+to\s+(\S+)/ && !$holds{$1}) {
+		elsif (/^(\S+):(\S+)\/(\S+)\s+(\S+)\s+upgradeable\s+to\s+(\S+)/ &&
+		       ($include_holds || !$holds{$1})) {
 			# New format, like 
 			# libgomp1:i386/unstable 4.8.2-2 upgradeable to 4.8.2-4
 			local $pkg = { 'name' => $1,
@@ -273,12 +314,14 @@ if (&has_command("apt-show-versions")) {
 			if ($pkg->{'version'} =~ s/^(\S+)://) {
 				$pkg->{'epoch'} = $1;
 				}
+			$pkg->{'held'} = 1 if ($holds{$pkg->{'name'}});
 			push(@rv, $pkg);
 			}
 		}
 	close(PKGS);
 	&reset_environment();
-	@rv = &filter_held_packages(@rv);
+	@rv = grep { !$holds{&strip_apt_package_arch($_->{'name'})} } @rv
+		if (!$include_holds);
 	foreach my $pkg (@rv) {
 		$pkg->{'security'} = 1 if ($pkg->{'source'} =~ /security/i);
 		}
@@ -290,7 +333,8 @@ elsif (&has_command("apt")) {
 	&clean_language();
 	&open_execute_command(PKGS, "apt list --upgradable 2>/dev/null", 1, 1);
 	while(<PKGS>) {
-		if (/^(\S+)\/(\S+)\s+(\S+)\s+(\S+)\s+\[upgradable\s+from:\s+(\S+)\]/ && !$holds{$1}) {
+		if (/^(\S+)\/(\S+)\s+(\S+)\s+(\S+)\s+\[upgradable\s+from:\s+(\S+)\]/ &&
+		    ($include_holds || !$holds{&strip_apt_package_arch($1)})) {
 			local $pkg = { 'name' => $1,
 				       'source' => $2,
 				       'version' => $3,
@@ -299,12 +343,15 @@ elsif (&has_command("apt")) {
 				$pkg->{'epoch'} = $1;
 				}
 			$pkg->{'source'} =~ s/,.*$//;
+			$pkg->{'held'} = 1
+				if ($holds{&strip_apt_package_arch($pkg->{'name'})});
 			push(@rv, $pkg);
 			}
 		}
 	close(PKGS);
 	&reset_environment();
-	@rv = &filter_held_packages(@rv);
+	@rv = grep { !$holds{&strip_apt_package_arch($_->{'name'})} } @rv
+		if (!$include_holds);
 	foreach my $pkg (@rv) {
 		$pkg->{'security'} = 1 if ($pkg->{'source'} =~ /security/i);
 		}
@@ -323,7 +370,8 @@ else {
 		$currentmap{$pkg->{'name'}} ||= $pkg;
 		}
 	local @rv;
-	local @names = grep { !$holds{$_} } keys %currentmap;
+	local @names = $include_holds ? keys %currentmap :
+					grep { !$holds{$_} } keys %currentmap;
 	while(scalar(@names)) {
 		local @somenames;
 		if (scalar(@names) > 100) {
@@ -360,6 +408,8 @@ else {
 				    &compare_versions($pkg->{'version'},
 						      $pkg->{'oldversion'});
 				if ($newer > 0) {
+					$pkg->{'held'} = 1
+						if ($holds{$pkg->{'name'}});
 					push(@rv, $pkg);
 					}
 				}
@@ -367,7 +417,8 @@ else {
 		close(PKGS);
 		&reset_environment();
 		}
-	@rv = &filter_held_packages(@rv);
+	@rv = grep { !$holds{&strip_apt_package_arch($_->{'name'})} } @rv
+		if (!$include_holds);
 	&set_pinned_versions(\@rv);
 	return @rv;
 	}
@@ -400,11 +451,10 @@ close(PKGS);
 &reset_environment();
 }
 
-# filter_held_packages(package, ...)
-# Returns a list of package updates, minus those that are held
-sub filter_held_packages
+# list_update_system_holds()
+# Returns the unique names of all packages currently held by APT or dpkg.
+sub list_update_system_holds
 {
-my @pkgs = @_;
 my %hold;
 
 # Get holds from dpkg
@@ -436,15 +486,47 @@ if (&has_command("apt-mark")) {
 	&clean_language();
 	&open_execute_command(PKGS, "apt-mark showhold 2>/dev/null", 1, 1);
 	while(<PKGS>) { 
-		if (/^([^:\s]+)/) {
+		if (/^(\S+)/) {
 			$hold{$1} = 1;
 			}
 		}
 	close(PKGS);
 	&reset_environment();
 	}
+return sort keys %hold;
+}
 
-return grep { !$hold{$_->{'name'}} } @pkgs;
+# update_system_hold(&packages, hold)
+# Holds or unholds a list of packages. Returns undef on success, or an error.
+sub update_system_hold
+{
+my ($packages, $hold) = @_;
+return "The apt-mark command is not installed"
+	if (!&has_command("apt-mark"));
+my @packages = &unique(@$packages);
+return "No packages were specified" if (!@packages);
+my $action = $hold ? 'hold' : 'unhold';
+my $cmd = "apt-mark $action ".
+	  join(" ", map { quotemeta($_) } @packages);
+my $out;
+&clean_language();
+my $status = &execute_command_logged($cmd, undef, \$out, \$out);
+&reset_environment();
+if ($status) {
+	$out = &trim($out);
+	return $out || "apt-mark $action failed";
+	}
+return undef;
+}
+
+# filter_held_packages(package, ...)
+# Returns a list of package updates, minus those that are held
+sub filter_held_packages
+{
+my @pkgs = @_;
+my %hold = map { &strip_apt_package_arch($_), 1 }
+		       &list_update_system_holds();
+return grep { !$hold{&strip_apt_package_arch($_->{'name'})} } @pkgs;
 }
 
 # list_package_repos()
@@ -457,17 +539,77 @@ my @rv;
 foreach my $f ($sources_list_file, glob("$sources_list_dir/*")) {
 	my $lref = &read_file_lines($f, 1);
 	my $lnum = 0;
+	my (%repo, @types);
+	my $repo_proc = sub {
+		foreach my $type (@types) {
+			my @suites = @{$repo{'suites'}};
+			foreach my $suite (@suites) {
+				my @comps = @{$repo{'comps'}};
+				foreach my $comp (@comps) {
+					my $repo =
+					  {
+					    'cannot' => 1,
+					    'file' => $f,
+					    'url' => $repo{'url'},
+					    'enabled' => !$repo{'disabled'},
+					    'words' => [$comp, $suite],
+					    'name' => join("/", $comp, $suite).
+					      ($type =~ /src/ ? " ($type)" : ""),
+					    'signed_by' => $repo{'signed_by'},
+					  };
+					$repo->{'id'} =
+						$repo->{'url'}.$repo->{'name'};
+					push(@rv, $repo);
+					}
+				}
+			}
+		};
 	foreach my $l (@$lref) {
-		if ($l =~ /^(#*)\s*deb\s+((http|https)\S+)\s+(\S.*)/) {
+		# Debian classic format (using .list files)
+		if ($l =~ /^(#*)\s*deb.*?((http|https)\S+)\s+(\S.*)/) {
 			my $repo = { 'file' => $f,
 				     'line' => $lnum,
 				     'words' => \@w,
 				     'url' => $2,
 				     'enabled' => !$1 };
 			my @w = split(/\s+/, $4);
-			$repo->{'name'} = join("/", @w);
+			my $type = 
+				($l =~ /^(#*)\s*(deb-src)/) ? " ($2)" : "";
+			$repo->{'name'} = join("/", @w).$type;
 			$repo->{'id'} = $repo->{'url'}.$repo->{'name'};
 			push(@rv, $repo);
+			}
+		# New Ubuntu-style repos (using .sources files)
+		elsif ($f =~ /\.sources$/) {
+			if ($l =~ /^([\w\-]+):\s*(.+)$/) {
+				my ($key, $value) = ($1, $2);
+				if ($key eq 'Types') {
+					@types = split(/\s+/, $value);
+					}
+				elsif ($key eq 'URIs') {
+					$repo{'url'} = $value;
+					}
+				elsif ($key eq 'Suites') {
+					$repo{'suites'} = [split(/\s+/, $value)];
+					}
+				elsif ($key eq 'Components') {
+					$repo{'comps'} = [split(/\s+/, $value)];
+					}
+				elsif ($key eq 'Signed-By') {
+					$repo{'signed_by'} = $value;
+					}
+				elsif ($key eq 'Enabled') {
+					$repo{'disabled'} =
+						(lc($value) eq 'no') ? 1 : 0;
+					}
+				}
+			if (($l =~ /^\s*$/ || $lnum == $#{$lref}) && %repo) {
+				# Process and push the current repo if we
+				# got an empty line or it's the last line
+				$repo_proc->();
+				%repo = ();
+				@types = ();
+				}
 			}
 		$lnum++;
 		}

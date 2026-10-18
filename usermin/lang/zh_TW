@@ -11,7 +11,6 @@ index_boot=開機後啟動
 index_bootmsg=改變此選項來設定是否在開機時啟動 Usermin，如果目前沒有在開機時啟動而且選擇是"是"的話，將會產生一個新的 init script。
 
 access_title=IP 存取控制
-access_desc=Usermin 伺服器可以設定拒絕或允許使用此格式之特定 IP 位址的存取。主機名稱（例如 foo.bar.com）與 IP 網路（例如 10.254.3.0 或 10.254.1.0/255.255.255.128）都可以被輸入。您應該僅允許讓可信任的位址存取伺服器，特別是在可從 Internet 存取的情況下。否則，只要有人猜對了您的密碼，他就可以完全控制您的系統。
 
 bind_title=連接埠與位址
 
@@ -34,8 +33,6 @@ lang_intro=這個網頁可以讓您選擇 Usermin 顯示標題、提示字元和
 
 session_title=認證
 session_desc1=當啟用密碼逾時保護時，使您的 Usermin 伺服器免於同一使用者連續阻斷服務攻擊而使暴力破解密碼的攻擊者的入侵。
-session_desc2=當 session 認證啟用時,Usermin可以根據使用者的session來判斷是否閒置而自動登出使用者，注意當啟用或停用 session 認證時，會迫使所有使用者要重新登入。
-session_remember=顯示記得上次登入?
 session_hostname=顯示主機名稱在登入畫面?
 
 themes_title=Usermin佈景主題
@@ -47,7 +44,7 @@ themes_installdesc=使用下方的表單來安裝一個新的Usermin佈景主題
 themes_installok=安裝佈景主題
 themes_err1=從$1安裝佈景主題失敗
 themes_efile=檔案不存在
-themes_err2= 安裝上傳佈景主題失敗
+themes_err2=安裝上傳佈景主題失敗
 themes_ebrowser=您的瀏覽器不支援檔案上傳
 themes_err3=從$1安裝佈景主題失敗
 themes_eurl=無效的 URL
@@ -156,16 +153,16 @@ ui_eblue='$1' 的藍色值錯誤
 ui_feedback=傳送回饋到
 
 upgrade_title=升級 Usermin
-upgrade_desc=這個表單可以讓您將整個安裝的 Usermin 升級到新的版本。您可以從本機檔案、上傳檔案或從 <a href=http://www.webmin.com/>www.webmin.com</a> 所提供的最新版本安裝。就如同手動升級一樣，所有的設定與協力廠商模組都會被保留。
-upgrade_descrpm=這個表單可以讓您安裝升級所輸入的新webmin RPM升級檔案，您可以從本地端安裝RPM檔案,上傳一個檔案或是從 <a href=http://www.webmin.com/>www.webmin.com</a>下載最新版本，只要按照說明升級，所有您的設定和額外(third-party)的模組都會保留。
+upgrade_desc=這個表單可以讓您將整個安裝的 Usermin 升級到新的版本。您可以從本機檔案、上傳檔案或從 <a href=https://webmin.com>webmin.com</a> 所提供的最新版本安裝。就如同手動升級一樣，所有的設定與協力廠商模組都會被保留。
+upgrade_descrpm=這個表單可以讓您安裝升級所輸入的新webmin RPM升級檔案，您可以從本地端安裝RPM檔案,上傳一個檔案或是從 <a href=https://webmin.com>webmin.com</a>下載最新版本，只要按照說明升級，所有您的設定和額外(third-party)的模組都會保留。
 upgrade_local=從本機檔案
 upgrade_uploaded=從上傳的檔案
-upgrade_ftp=從 www.usermin.com 的最新版本
+upgrade_ftp=從 usermin.com 的最新版本
 upgrade_delete=升級後刪除舊版本目錄?
 upgrade_ok=升級 Usermin
 upgrade_err1=無法從 $1 升級
 upgrade_err2=無法從上傳的檔案升級
-upgrade_err3=無法從 www.usermin.com 升級
+upgrade_err3=無法從 usermin.com 升級
 upgrade_efile=檔案不存在
 upgrade_ebrowser=您的瀏覽器不支援上傳檔案
 upgrade_eversion=無法降級為版本 $1

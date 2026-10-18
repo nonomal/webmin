@@ -140,7 +140,6 @@ opts_mydomain_default=기본값(시스템에서 제공)
 opts_myhostname=이 메일 시스템의 인터넷 호스트 이름
 opts_myhostname_default=기본값(시스템에서 제공)
 opts_mynetworks=로컬 네트워크
-opts_mynetworks_default=기본값(모든 연결된 네트워크)
 opts_bounce_notice_recipient=바운스 시 포스트마스터 알림 메시지 전송 대상...
 opts_2bounce_notice_recipient=2회 바운스 시 포스터마스터 알림 메시지 전송 대상...
 opts_delay_notice_recipient=지연 시 포스트마스터 알림 메시지 전송 대상...
@@ -248,10 +247,6 @@ map_delete_create=현재 작성 중인 맵을 삭제할 수 없습니다
 maps_internal_error=맵: 내부 오류
 maps_cant_write=쓰기를 할 수 없습니다
 help_map_format=무슨 포맷을 사용할까요?
-
-virtual_title=가상 도메인
-virtual_ecannot=가상 도메인 매핑 구성을 편집할 수 없습니다
-opts_virtual_maps=도메인 매핑 조회 테이블
 
 transport_title=전송 매핑
 transport_ecannot=전송 매핑 구성을 편집할 수 없습니다

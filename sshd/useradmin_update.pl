@@ -11,12 +11,13 @@ if ($config{'sync_create'} && &has_command($config{'keygen_path'}) &&
 	local $cmd;
 	local $type = $config{'sync_type'} || &get_preferred_key_type();
 	local $tflag = $type ? "-t $type" : "";
+	local $bflag = $type eq "rsa" ? "-b 4096" : "";
 	if ($config{'sync_pass'} && $uinfo->{'passmode'} == 3) {
-		$cmd = "$config{'keygen_path'} $tflag -P ".
+		$cmd = "$config{'keygen_path'} $tflag $bflag -P ".
 		       quotemeta($uinfo->{'plainpass'});
 		}
 	else {
-		$cmd = "$config{'keygen_path'} $tflag -P \"\"";
+		$cmd = "$config{'keygen_path'} $tflag $bflag -P \"\"";
 		}
 	&system_logged("echo '' | ".&command_as_user($uinfo->{'user'}, 0, $cmd).
 		       " >/dev/null 2>&1");
@@ -25,6 +26,9 @@ if ($config{'sync_create'} && &has_command($config{'keygen_path'}) &&
 		&lock_file($akeys);
 		if (-r "$uinfo->{'home'}/.ssh/identity.pub") {
 			&copy_source_dest("$uinfo->{'home'}/.ssh/identity.pub", $akeys);
+			}
+		elsif (-r "$uinfo->{'home'}/.ssh/id_ed25519.pub") {
+			&copy_source_dest("$uinfo->{'home'}/.ssh/id_ed25519.pub", $akeys);
 			}
 		elsif (-r "$uinfo->{'home'}/.ssh/id_rsa.pub") {
 			&copy_source_dest("$uinfo->{'home'}/.ssh/id_rsa.pub", $akeys);

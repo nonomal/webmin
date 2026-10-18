@@ -9,6 +9,7 @@ if ($in{'clear'}) {
 	$in{'search'} = '';
 	}
 $has_repos = defined(&software::list_package_repos);
+$has_holds = &supports_package_holds();
 
 # Start of mode tabs
 print &ui_tabs_start([ [ 'pkgs', $text{'index_tabpkgs'} ],
@@ -20,12 +21,13 @@ print &ui_tabs_start([ [ 'pkgs', $text{'index_tabpkgs'} ],
 # See if any security updates exist
 $in{'mode'} ||= 'updates';
 @avail = &list_for_mode($in{'mode'}, 0);
-($sec) = grep { $_->{'security'} } @avail;
 
 # Show mode selector (all, updates only, updates and new)
 @grid = ( );
-foreach $m ('current', 'updates', 'new',
-	    $sec || $in{'mode'} eq 'security' ? ( 'security' ) : ( )) {
+@modes = ('current', 'updates');
+push(@modes, 'held') if ($has_holds);
+push(@modes, 'security', 'new');
+foreach $m (@modes) {
 	$mmsg = $text{'index_mode_'.$m};
 	if ($in{'mode'} eq $m) {
 		push(@mlinks, "<b>$mmsg</b>");
@@ -49,6 +51,16 @@ print &ui_hidden("mode", $in{'mode'});
 print &ui_grid_table(\@grid, 2),"<p>\n";
 print &ui_form_end();
 
+# Warn if the last check for updates failed, as the list may be stale
+$updates_error = &get_updates_error();
+if ($updates_error) {
+	print &ui_tag('div', &ui_details({
+		'title' => $text{'index_updateserr'},
+		'content' => &ui_tag('tt', &html_escape($updates_error)),
+		'class' => 'error',
+		'html' => 1 }, 1), {'style' => 'margin-bottom: 0.333em;'});
+	}
+
 # Work out what packages to show
 @current = &list_current(1);
 
@@ -70,15 +82,21 @@ foreach $p (sort { $a->{'name'} cmp $b->{'name'} } (@current, @avail)) {
 	$c = $current{$p->{'name'}."/".$p->{'system'}};
 	$a = $avail{$p->{'name'}."/".$p->{'system'}};
 
-	if ($a && $c && (&compare_versions($a, $c) > 0 || $upmode)) {
+	if ($a && $c && (&compare_versions($a, $c) > 0 || $upmode ||
+			 $in{'mode'} eq 'held')) {
 		# An update is available
-		$msg = "<b><font color=#00aa00>".
-		       &text('index_new', $a->{'version'})."</font></b>";
-		$need = 1;
+		$msg = $a->{'held'} ?
+			"<b><font color=#ffaa00>".
+			&text('index_held', $c->{'version'}, $a->{'version'}).
+			"</font></b>" :
+			"<b><font color=#00aa00>".
+			&text('index_new', $a->{'version'})."</font></b>";
+		$need = $a->{'held'} ? 0 : 1;
 		next if ($in{'mode'} eq 'security' && !$a->{'security'});
 		next if ($in{'mode'} ne 'updates' &&
 			 $in{'mode'} ne 'current' &&
-			 $in{'mode'} ne 'security');
+			 $in{'mode'} ne 'security' &&
+			 $in{'mode'} ne 'held');
 		}
 	elsif ($a && !$c) {
 		# Could be installed, but isn't currently
@@ -145,18 +163,20 @@ if ($in{'mode'} eq 'new' && !$in{'search'}) {
 	}
 else {
 	# Show the packages, if any
+	$update_label = $in{'mode'} eq 'new' ? $text{'index_install'} :
+			$in{'mode'} eq 'held' ? $text{'index_updateheld'} :
+					    $text{'index_update'};
 	if (@rows) {
 		print &text('index_count', scalar(@rows)),"<br>\n";
 		print &ui_form_start("update.cgi", "post");
-		print &ui_submit($in{'mode'} eq 'new' ? $text{'index_install'}
-		                           : $text{'index_update'}, "ok_top" );
+		print &ui_submit($update_label, "ok_top" );
 		print &ui_submit($text{'index_refresh'}, "refresh_top"), "<br>";
 		}
+	@buttons = ( [ "ok", $update_label ] );
+	push(@buttons, [ "refresh", $text{'index_refresh'} ]);
 	print &ui_form_columns_table(
 		"",
-		[ [ "ok", $in{'mode'} eq 'new' ? $text{'index_install'}
-					       : $text{'index_update'} ],
-		  [ "refresh", $text{'index_refresh'} ] ],
+		\@buttons,
 		1,
 		undef,
 		[ [ "mode", $in{'mode'} ],
@@ -211,16 +231,46 @@ print &ui_table_row($text{'index_sched'},
 			         [ 'w', $text{'index_schedw'} ] ]));
 
 # Send email to
-print &ui_table_row($text{'index_email'},
-		    &ui_textbox("email", $config{'sched_email'}, 40));
+if ($gconfig{'webmin_email_to'}) {
+	$efield = &ui_opt_textbox("email",
+		$config{'sched_email'} eq '*' ? undef : $config{'sched_email'},
+		40, &text('index_email_def',
+			  "<tt>$gconfig{'webmin_email_to'}</tt>"));
+	}
+else {
+	$efield = &ui_textbox("email", $config{'sched_email'}, 40);
+	}
+print &ui_table_row($text{'index_email'}, $efield);
+
+# When to send email. If never saved, keep the old behavior for an existing
+# schedule, but default new setups to only report new updates
+$when = $config{'sched_when'} ne '' ? int($config{'sched_when'}) :
+	$job ? 0 : 3;
+print &ui_table_row($text{'index_ewhen'},
+	&ui_select("when", $when,
+		  [ [ 0, $text{'index_ewhen0'} ],
+		    [ 3, $text{'index_ewhen3'} ],
+		    [ 1, $text{'index_ewhen1'} ],
+		    [ 2, $text{'index_ewhen2'} ] ]));
 
 # Install or just notify?
-print &ui_table_row($text{'index_action'},
-		    &ui_radio("action", int($config{'sched_action'}),
-			       [ [ -1, $text{'index_action-1'} ],
-			         [ 0, $text{'index_action0'} ],
-			         [ 1, $text{'index_action1'} ],
-			         [ 2, $text{'index_action2'} ] ]));
+$action_ui = &ui_select("action", int($config{'sched_action'}),
+			[ [ -1, $text{'index_action-1'} ],
+			  [ 0, $text{'index_action0'} ],
+			  [ 1, $text{'index_action1'} ],
+			  [ 2, $text{'index_action2'} ] ]);
+if (my @auto_updates = &list_enabled_auto_update_services()) {
+	# If any auto-update services are enabled, show option to disable them
+	$auto_update_names = join(", ", map { $_->{'name'} } @auto_updates);
+	$action_ui .= " ".
+		&ui_checkbox("disable_auto_updates", 1,
+			     &text('index_action_disable',
+				   $auto_update_names), 0);
+	$action_ui .= "<br>\n".
+		&ui_note(&text('index_action_note',
+				&ui_tag('tt', $auto_update_names)));
+	}
+print &ui_table_row($text{'index_action'}, $action_ui);
 
 print &ui_table_end();
 print &ui_form_end([ [ "save", $text{'save'} ] ]);
@@ -246,7 +296,7 @@ if ($has_repos) {
 				    "<font color=green>$text{'yes'}</font>" :
 				    "<font color=red>$text{'no'}</font>",
 				$r->{'url'},
-				], "", "d", $r->{'id'});
+				], "", "d", $r->{'id'}, undef, $r->{'cannot'});
 			}
 		print &ui_columns_end();
 		print &ui_form_end([
@@ -272,4 +322,3 @@ if ($has_repos) {
 print &ui_tabs_end(1);
 
 &ui_print_footer("/", $text{'index'});
-

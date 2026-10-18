@@ -12,6 +12,16 @@ sub list_system_info
 {
 my ($data, $in, $modskip) = @_;
 my $info = &get_collected_info(undef, $modskip);
+# Filter a presentation copy so cached collection data and history stay raw.
+if ($info->{'disk_fs'}) {
+	&foreign_require("mount");
+	$info = { %$info };
+	($info->{'disk_total'}, $info->{'disk_free'},
+	 $info->{'disk_fs'}, $info->{'disk_used'}) =
+		&mount::filter_dashboard_disk_space(
+			$info->{'disk_total'}, $info->{'disk_free'},
+			$info->{'disk_fs'}, $info->{'disk_used'});
+	}
 my @rv;
 my @table;
 my @raw = $info;
@@ -49,13 +59,17 @@ if (&show_section('host')) {
 	push(@table, { 'desc' => $text{'right_host'},
 		       'value' => &get_system_hostname().$ip });
 
-	# Operating system
+	# Operating system and EOL
+	&foreign_require("webmin");
+	&webmin::eol_update_cache();
+	my $eol = $gconfig{'os_eol_expired'} || $gconfig{'os_eol_expiring'};
 	my $os = &html_escape($gconfig{'os_version'} eq '*' ?
 				$gconfig{'real_os_type'} :
 				$gconfig{'real_os_type'}.' '.
-				  $gconfig{'real_os_version'});
+				  ($gconfig{'real_os_version_full'} ||
+				   $gconfig{'real_os_version'}));
 	push(@table, { 'desc' => $text{'right_os'},
-		       'value' => $os
+		       'value' => $os . ($eol ? " ($eol)" : "")
 		     });
 
 	# Webmin version
@@ -325,6 +339,9 @@ if ($info->{'poss'} && &show_section('poss')) {
 	push(@table, { 'desc' => $text{'right_updates'},
 		       'value' => $msg,
 		       'wide' => 1 });
+	# Check for repos
+	&foreign_require("webmin");
+	&webmin::has_repos(1);
 	}
 
 return @rv;

@@ -1,4 +1,22 @@
 index_title=Usermin Configuration
+log_title=Logging
+log_desc=Usermin can be configured to write a log of web server hits, in the standard CLF log file format. If logging is enabled, you can also choose whether IP addresses or hostnames are recorded, and how often the log file is cleared. When enabled, logs are written to the file $1.
+log_header=Webserver logging options
+log_status=Logging active?
+log_enable=Enable logging
+log_disable=Disable logging
+log_resolv=Log resolved hostnames?
+log_trust=Log client IP address when behind proxy?
+log_clf=Use combined log format (including referrer and user agent)?
+log_clear=Periodically clear log files?
+log_period=Yes, every $1 hours
+log_logrotate=Yes, rotate using <tt>logrotate</tt>
+log_elogrotate=The <tt>logrotate</tt> configuration is not available on this system
+log_error=Error log destination
+log_error_file=Write to <tt>miniserv.error</tt>
+log_error_journal=Write to the <tt>systemd journal</tt>
+log_err=Failed to save logging options
+log_ehours='$1' is not a valid number of hours
 index_econfig=The directory $1 either does not exist on your system, or is not the Usermin configuration directory. Maybe Usermin is not installed, or your <a href='$2'>module configuration</a> is incorrect.
 index_return=Usermin configuration
 index_stop=Stop Usermin
@@ -18,7 +36,7 @@ index_restart=Restart Usermin
 index_restartmsg=Click this button to re-start the Usermin server process. This may be necessary if you have recently upgraded Perl.
 
 access_title=IP Access Control
-access_desc=The Usermin server can be configured to deny or allow access only from certain IP addresses using this form. Hostnames (like foo.bar.com) and IP networks (like 10.254.3.0 or 10.254.1.0/255.255.255.128 or 10.254.1.0/25 or 10.254.1.5-10.254.97.127) can also be entered. You should limit access to your server to trusted addresses, especially if it is accessible from the Internet. Otherwise, anyone who guesses your password will have complete control of your system.
+access_desc=Usermin can be configured to deny or allow access only from certain IP addresses using this form. Hostnames (like foo.bar.com) and IP networks (like 10.254.3.0 or 10.254.1.0/255.255.255.128 or 10.254.1.0/25 or 10.254.1.5-10.254.97.127) can also be entered. You should limit access to Usermin to trusted addresses, especially if it is accessible from the Internet. Otherwise, anyone who guesses your password will have complete control of your system.
 
 bind_title=Ports and Addresses
 bind_desc2=This form can be used to change the port number that Usermin listens on, or have it listen on only a single IP address on your system. You can also configure it to accept connections on multiple ports, or to listen on several IP addresses. Note - your web browser may prompt you to log in again after changing the port or binding address.
@@ -57,9 +75,9 @@ lang_title2=Usermin Language and Locale
 lang_intro=This page allows you to choose which language Usermin will use for displaying titles, prompts and messages
 
 session_title=Authentication
+session_header=Authentication and session options
 session_desc1=When enabled, password timeouts protect your Usermin server from brute-force password cracking attacks by adding a continuously expanding delay between each failed login attempt for the same user.
-session_desc2=When session authentication is enabled, each logged in users' session will be tracked by Usermin, making it possible for idle users to be automatically logged out. Be aware that enabling or disabling session authentication may force all users to re-login.
-session_remember=Offer to remember login permanently?
+session_remember=Offer a remember-me option for permanent logins?
 session_hostname=Show hostname on login screen?
 session_realname=Show real hostname instead of name from URL?
 session_authmode=Authentication method
@@ -79,10 +97,11 @@ session_blank=Prompt users with empty password to choose one at first login?
 session_homedir=Create missing home directories after login?
 session_homedir_perms=Permissions for new directory
 session_ehomedir_perms=Missing or invalid octal home directory permissions
+session_forgot=Allow forgotten password recovery?
 
 themes_title=Usermin Themes
 themes_desc=Themes control the appearance of the Usermin user interface, including icons, colours, backgrounds and possibly the layout of pages. The selection box below can be used to choose one of the themes installed on your system that will be the default for Usermin users.
-themes_sel=Current theme :
+themes_sel=Current theme
 themes_default=Legacy Theme
 themes_change=Change
 themes_installdesc=Use the form below to install a new Usermin theme on your system. Themes are typically distributed in <tt>.wbt</tt> files, but can also be installed from RPM files if supported by your operating system.
@@ -107,7 +126,7 @@ themes_erpm=Not a Usermin theme RPM
 themes_eirpm=RPM install failed : $1
 themes_ok=Theme changed successfully .. redirecting to the Webmin index page.
 themes_delete=This form can be used to delete one of the themes installed on your system that is not currently in use.
-themes_delok=Theme to delete :
+themes_delok=Theme to delete
 
 themes_desc4=Installed themes can be exported as a wbt.gz file using the form below. A theme file can then be installed onto another system running Usermin.
 
@@ -129,8 +148,7 @@ acl_title=Available Modules
 acl_desc=Use this page to select which installed Usermin modules are visible to users.
 
 ssl_title=SSL Encryption
-ssl_desc1=The host on which Usermin is running appears to have the SSLeay Perl module installed. Using this, Usermin supports SSL encrypted communication between your browser and the server. If users are accessing your Usermin server over the Internet, then you should definitely consider using SSL to prevent an attacker capturing their passwords.
-ssl_desc2=Warning - only turn on SSL support if you have a browser that supports SSL, and there is no firewall blocking <tt>https</tt> requests between your browser and the Usermin host.
+ssl_desc1=Usermin can use SSL to encrypt the connection between your browser and the server. If you connect to Usermin over the internet, always use SSL to protect your password and prevent man-in-the-middle attacks.
 ssl_newkey=This form can be used to create a new SSL key for your Usermin server.
 ssl_hole=Because you are currently using the default Usermin SSL key that everyone has access to, you should generate a new key immediately. Otherwise your SSL connection is not secure!
 ssl_savekey=This form allows you to upload an existing PEM format SSL private key and certificate for your Usermin server to use.
@@ -250,21 +268,27 @@ ui_hnm1=Hostname from URL
 ui_hnm2=Domain name from URL
 ui_hnm3=Other name..
 ui_tabs=Categorize modules?
+ui_show=Display on the dashboard​
+ui_show_host=System hostname
+ui_show_os=Operating system
+ui_show_ver=Usermin version
+ui_show_tver=Theme version
+ui_show_time=Time on system
 
 upgrade_title=Upgrade Usermin
 upgrade_title2=Install Usermin
-upgrade_desc=This form allows you to upgrade your entire Usermin installation to a new version. You can install from a local file, an uploaded file or from the latest version at <a href=http://www.webmin.com/>www.webmin.com</a>. Just as with a manual upgrade, all your config settings and third-party modules will be kept.
-upgrade_descrpm=This form allows you to upgrade your entire Usermin installation to a new version using RPM's upgrade option. You can install from a local RPM file, an uploaded file or from the latest version at <a href=http://www.webmin.com/>www.webmin.com</a>. Just as with a manual upgrade, all your config settings and third-party modules will be kept.
-upgrade_descdeb=This form allows you to upgrade your entire Usermin installation to a new version by upgrading its Debian package. You can install from a local .deb file, an uploaded file or from the latest version at <a href=http://www.webmin.com/>www.webmin.com</a>. Just as with a manual upgrade, all your config settings and third-party modules will be kept.
+upgrade_desc=This form allows you to upgrade your entire Usermin installation to a new version. You can install from a local file, an uploaded file or from the latest version at <a href=https://webmin.com>webmin.com</a>. Just as with a manual upgrade, all your config settings and third-party modules will be kept.
+upgrade_descrpm=This form allows you to upgrade your entire Usermin installation to a new version using RPM's upgrade option. You can install from a local RPM file, an uploaded file or from the latest version at <a href=https://webmin.com>webmin.com</a>. Just as with a manual upgrade, all your config settings and third-party modules will be kept.
+upgrade_descdeb=This form allows you to upgrade your entire Usermin installation to a new version by upgrading its Debian package. You can install from a local .deb file, an uploaded file or from the latest version at <a href=https://webmin.com>webmin.com</a>. Just as with a manual upgrade, all your config settings and third-party modules will be kept.
 upgrade_local=From local file
 upgrade_uploaded=From uploaded file
 upgrade_url=From ftp or http URL
-upgrade_ftp=Latest version from www.webmin.com
+upgrade_ftp=Latest version from webmin.com
 upgrade_delete=Delete old version's directory after upgrade?
 upgrade_ok=Upgrade Usermin
 upgrade_err1=Failed to upgrade from $1
 upgrade_err2=Failed to upgrade from uploaded file
-upgrade_err3=Failed to upgrade from www.webmin.com
+upgrade_err3=Failed to upgrade from webmin.com
 upgrade_err5=Failed to upgrade from URL $1
 upgrade_eurl=Missing or invalid URL
 upgrade_efile=File does not exist
@@ -285,10 +309,10 @@ upgrade_failed=.. upgrade failed!
 upgrade_updates=There are $1 updates for this new version of Usermin. <a href='$2'>Click here</a> to automatically download and install them now.
 upgrade_eupdates=Failed to download list of updates : $1
 
-update_desc1=This form allows you to upgrade Usermin modules that have been found to contain bugs or security holes from the <a href=http://www.webmin.com/uupdates.html>Usermin Updates</a> page or from another source. This will compare the currently installed modules with those available for update, and optionally automatically download and install any modules that are out of date.
+update_desc1=This form allows you to upgrade Usermin modules that have been found to contain bugs or security holes from the <a href=https://webmin.com/uupdates.html>Usermin Updates</a> page or from another source. This will compare the currently installed modules with those available for update, and optionally automatically download and install any modules that are out of date.
 update_header1=Update modules now
 update_header2=Update modules on schedule
-update_webmin=Update from www.webmin.com
+update_webmin=Update from webmin.com
 update_other=Update from another source
 update_show=Only show which modules would be updated
 update_missing=Install modules that are not currently installed
@@ -300,7 +324,7 @@ update_apply=Save and Apply
 update_sched=Update modules at $1:00 every $2 days
 update_none=No Usermin updates for this version.
 update_failed=Failed to install module : $1
-update_desc2=This form is for scheduling the automatic update of Usermin modules containing bugs or security holes from the <a href=http://www.webmin.com/uupdates.html>Usermin Updates</a> page or from another source. While this service is useful, you should be careful using it as it may allow attackers to take over your system if the update server was ever compromised.
+update_desc2=This form is for scheduling the automatic update of Usermin modules containing bugs or security holes from the <a href=https://webmin.com/uupdates.html>Usermin Updates</a> page or from another source. While this service is useful, you should be careful using it as it may allow attackers to take over your system if the update server was ever compromised.
 
 assignment_title=Reassign Modules
 assignment_header=Module category assignments
@@ -427,6 +451,8 @@ clone_ecopy=failed to copy config : $1
 clone_desc=Clone of $1
 
 sessions_title=Current Login Sessions
+sessions_ecannot=You are not allowed to manage Usermin login sessions
+switch_esession=Failed to create a Usermin login session
 sessions_desc=Current Usermin session logins are listed below. To cancel an existing session and force the user to login again, click on its session ID.
 sessions_id=Session ID
 sessions_user=Unix user

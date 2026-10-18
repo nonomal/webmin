@@ -16,7 +16,7 @@ local $arg = @_ ? join(" ", map { quotemeta($_) } @_) : "";
 &open_execute_command(PKGINFO, "COLUMNS=1024 dpkg --list $arg", 1, 1);
 while(<PKGINFO>) {
 	next if (/^\|/ || /^\+/);
-	if (/^[uirph]i..(\S+)\s+(\S+)\s+(.*)/) {
+	if (/^[uirph][iHUFWt]..(\S+)\s+(\S+)\s+(.*)/) {
 		$packages{$i,'name'} = $1;
 		$packages{$i,'class'} = &alphabet_name($1);
 		$packages{$i,'version'} = $2;
@@ -49,24 +49,26 @@ return lc($_[0]) =~ /^[a-e]/ ? "A-E" :
        lc($_[0]) =~ /^[u-z]/ ? "U-Z" : "Other";
 }
 
-# package_info(package)
+# package_info(package, [version])
 # Returns an array of package information in the order
 #  name, class, description, arch, version, vendor, installtime
 sub package_info
 {
-local $qm = quotemeta($_[0]);
+local ($pkg, $ver) = @_;
+local $qm = quotemeta($pkg);
 
-# First check if it is really installed, and not just known to the package
-# system in some way
+# First check if it is installed or partially installed, and not just known
+# to the package system in some way
 local $out = &backquote_command("dpkg --list $qm 2>&1", 1);
 local @lines = split(/\r?\n/, $out);
-if ($lines[$#lines] !~ /^.[ih]/) {
+if ($lines[$#lines] !~ /^.[iHUFWt]/) {
 	return ( );
 	}
 
 # Get full status
 local $out;
 if (&has_command("apt-cache")) {
+	$qm .= "=*".quotemeta($ver) if ($ver);
 	$out = &backquote_command("apt-cache show $qm 2>&1", 1);
 	$out =~ s/[\0-\177]*\r?\n\r?\n(Package:)/\\1/;	# remove available ver
 	}
@@ -74,7 +76,70 @@ else {
 	$out = &backquote_command("dpkg --print-avail $qm 2>&1", 1);
 	}
 return () if ($? || $out =~ /Package .* is not available/i);
+
+# Set name and class
 local @rv = ( $_[0], &alphabet_name($_[0]) );
+
+# Get description
+push(@rv, $out =~ /Description(-en)?:\s+((.*\n)(\s+.*\n)*)/i
+	? $2
+	: $text{'debian_unknown'});
+
+# Get architecture
+push(@rv, $out =~ /Architecture:\s+(\S+)/i
+	? $1
+	: $text{'debian_unknown'});
+my $arch = $1;
+
+# Get version
+push(@rv, $out =~ /Version:\s+(\S+)/i
+	? $1
+	: $text{'debian_unknown'});
+
+# Get maintainer
+push(@rv, $out =~ /Maintainer:\s+(.*)/i
+	? &html_escape($1)
+	: $text{'debian_unknown'});
+
+# Get install time from the package info file
+my ($path) = grep { -e $_ } $arch
+	? ("/var/lib/dpkg/info/$pkg:$arch.list", "/var/lib/dpkg/info/$pkg.list")
+	: ("/var/lib/dpkg/info/$pkg.list");   # prefer multi-arch
+my $inst_epoch = $path ? (stat($path))[9] : undef;
+push(@rv, $inst_epoch ? &make_date($inst_epoch) : undef);
+
+# Get homepage
+push(@rv, $out =~ /Homepage:\s+(.*)/i ? $1 : undef);
+
+# Return info
+return @rv;
+}
+
+# virtual_package_info(package)
+# Returns an array of package information for a virtual package, usually called
+# if "package_info" returns nothing.
+sub virtual_package_info
+{
+my ($pkg) = @_;
+my $qpkg = quotemeta($pkg);
+my $apt_cache_cmd = &has_command("apt-cache");
+return ( ) if (!$apt_cache_cmd);
+my $out = &backquote_command("$apt_cache_cmd showpkg $qpkg 2>&1", 1);
+
+# Get the package that provides this virtual package
+my ($vpkg);
+if ($out =~ /Reverse Provides:\s*(\S+\s+\S+)/) {
+	my ($rpkg, $rver) = split(/\s+/, $1, 2);
+	$vpkg = $rpkg;
+	$qvpkg = quotemeta($vpkg)."=".quotemeta($rver);
+	}
+return ( ) if (!$vpkg);
+
+# Get full status
+$out = &backquote_command("$apt_cache_cmd show $qvpkg 2>&1", 1);
+$out =~ s/[\0-\177]*\r?\n\r?\n(Package:)/\\1/;	# remove available ver
+return () if ($? || $out =~ /Package .* is not available/i);
+local @rv = ( $vpkg, &alphabet_name($vpkg) );
 push(@rv, $out =~ /Description(-en)?:\s+((.*\n)(\s+.*\n)*)/i ? $2
 						   : $text{'debian_unknown'});
 push(@rv, $out =~ /Architecture:\s+(\S+)/i ? $1 : $text{'debian_unknown'});

@@ -83,16 +83,16 @@ if (-r $jfile) {
 	push(@rv, &parse_config_file($jfile));
 	}
 
+my @lrv;
 # Read separate config files under jail.d
 my $jdir = "$config{'config_dir'}/jail.d";
 if (-d $jdir) {
 	foreach my $f (glob("$jdir/*.conf")) {
-		push(@rv, &parse_config_file($f));
+		push(@lrv, &parse_config_file($f));
 		}
 	}
 
 # Read the main local file, and separate files under jail.d
-my @lrv;
 my $jlfile = &make_local_file($jfile);
 if (-r $jlfile) {
 	push(@lrv, &parse_config_file($jlfile));
@@ -210,7 +210,7 @@ my @w;
 my $v = $dir->{'value'};
 $v =~ s/\n/ /g;
 while($v =~ /\S/) {
-	if ($v =~ /^([^\[]+\[[^\]]+\])\s*(.*)/) {
+	if ($v =~ /^\s*([^\s\[]+\[[^\]]*\])\s*(.*)/) {
 		push(@w, $1);
 		$v = $2;
 		}
@@ -220,6 +220,122 @@ while($v =~ /\S/) {
 		}
 	}
 $dir->{'words'} = \@w;
+}
+
+# parse_action_definition(string)
+# Splits an action definition into a name and list of option triples,
+# each containing a name, parsed value and raw text chunk
+sub parse_action_definition
+{
+my ($str) = @_;
+return (undef, []) if (!defined($str));
+if ($str =~ /^(\S.*\S)\[(.*)\]$/) {
+	return ($1, [ &parse_action_options($2) ]);
+	}
+return ($str, []);
+}
+
+# parse_action_options(string)
+# Parses action options, handling quoted values and comma/space separators
+sub parse_action_options
+{
+my ($str) = @_;
+my @rv;
+my $len = length($str);
+my $i = 0;
+while ($i < $len) {
+	while ($i < $len) {
+		my $ch = substr($str, $i, 1);
+		last if ($ch !~ /[\s,]/);
+		$i++;
+		}
+	last if ($i >= $len);
+	my $start = $i;
+
+	my $name = "";
+	while ($i < $len) {
+		my $ch = substr($str, $i, 1);
+		last if ($ch eq "=" || $ch =~ /[\s,]/);
+		$name .= $ch;
+		$i++;
+		}
+	last if (!length($name));
+
+	while ($i < $len && substr($str, $i, 1) =~ /\s/) {
+		$i++;
+		}
+
+	# Support option names without values, although most action
+	# parameters are expected to be name=value pairs.
+	if ($i >= $len || substr($str, $i, 1) ne "=") {
+		while ($i < $len && substr($str, $i, 1) =~ /\s/) {
+			$i++;
+			}
+		$i++ if ($i < $len && substr($str, $i, 1) eq ",");
+		push(@rv, [ $name, undef, substr($str, $start, $i - $start) ]);
+		next;
+		}
+
+	$i++;
+	while ($i < $len && substr($str, $i, 1) =~ /\s/) {
+		$i++;
+		}
+
+	my ($value, $ni) = &parse_action_option_value($str, $i);
+	push(@rv, [ $name, $value, substr($str, $start, $ni - $start) ]);
+	$i = $ni;
+	}
+return @rv;
+}
+
+# parse_action_option_value(string, index)
+# Returns an option value and the next parse position
+sub parse_action_option_value
+{
+my ($str, $i) = @_;
+my $len = length($str);
+my $value = "";
+if ($i < $len) {
+	my $quote = substr($str, $i, 1);
+	if ($quote eq "'" || $quote eq "\"") {
+		$i++;
+		while ($i < $len) {
+			my $ch = substr($str, $i, 1);
+			if ($ch eq "\\") {
+				if ($i+1 < $len) {
+					my $next = substr($str, $i+1, 1);
+					if ($next eq $quote || $next eq "\\") {
+						$value .= $next;
+						$i += 2;
+						next;
+						}
+					}
+				$value .= $ch;
+				$i++;
+				next;
+				}
+			if ($ch eq $quote) {
+				$i++;
+				last;
+				}
+			$value .= $ch;
+			$i++;
+			}
+		}
+	else {
+		while ($i < $len) {
+			my $ch = substr($str, $i, 1);
+			last if ($ch eq "," || $ch =~ /\s/);
+			$value .= $ch;
+			$i++;
+			}
+		}
+	}
+while ($i < $len && substr($str, $i, 1) =~ /\s/) {
+	$i++;
+	}
+$i++ if ($i < $len && substr($str, $i, 1) eq ",");
+return ($value, $i);
 }
 
 # create_section(file, &section)
@@ -292,7 +408,9 @@ my @rv;
 my @v = ref($dir->{'value'}) eq 'ARRAY' ? @{$dir->{'value'}}
 					: split(/\n/, $dir->{'value'});
 push(@rv, $dir->{'name'}." = ".shift(@v));
-push(@rv, map { "        ".$_ } @v);	# Continuation
+# Indent continuation lines to align with the first value
+my $indent = " " x (length($dir->{'name'}) + 3);
+push(@rv, map { $indent.$_ } @v);
 return @rv;
 }
 
@@ -552,7 +670,114 @@ foreach my $f (reverse(@all_files_for_lock)) {
 sub get_fail2ban_version
 {
 my $out = &backquote_command("$config{'client_cmd'} -V 2>/dev/null </dev/null");
-return !$? && $out =~ /v([0-9\.]+)/ ? $1 : undef;
+return !$? && $out =~ /v?([0-9\.]+)/ ? $1 : undef;
+}
+
+# supports_bantime_increment([version])
+# Returns 1 if the installed Fail2Ban version supports incremental ban times
+sub supports_bantime_increment
+{
+my ($version) = @_;
+$version = &get_fail2ban_version() if (!defined($version));
+return 0 if (!defined($version) || $version eq "");
+return &compare_version_numbers($version, "0.11.1") >= 0;
+}
+
+# canonical_fail2ban_boolean(value)
+# Converts the boolean spellings accepted by Fail2Ban to true or false
+sub canonical_fail2ban_boolean
+{
+my ($value) = @_;
+return "" if (!defined($value) || $value eq "");
+return "true" if ($value =~ /^(1|on|true|yes)$/i);
+return "false" if ($value =~ /^(0|off|false|no)$/i);
+return $value;
+}
+
+# valid_fail2ban_duration(value, [allow-zero])
+# Returns 1 for a safe subset of Fail2Ban duration expressions
+sub valid_fail2ban_duration
+{
+my ($value, $allow_zero) = @_;
+return 0 if (!defined($value) || $value eq "");
+return 0 if ($value =~ /[\r\n]/);
+my $number = qr/\d+(?:\.\d+)?/;
+my $unit = qr/(?:s|sec(?:ond)?s?|m|min(?:ute)?s?|h|hour(?:s)?|d|day(?:s)?|w|week(?:s)?|mo|mon|month(?:s)?|y|year(?:s)?)/i;
+return 0 if ($value !~ /^\s*(?:$number\s*$unit\s*)+$/ &&
+		   $value !~ /^\s*$number\s*$/);
+return 1 if ($allow_zero);
+my @numbers = $value =~ /(\d+(?:\.\d+)?)/g;
+return scalar(grep { $_ > 0 } @numbers) ? 1 : 0;
+}
+
+# valid_positive_fail2ban_duration(value)
+# Returns 1 for a safe, positive Fail2Ban duration expression
+sub valid_positive_fail2ban_duration
+{
+return &valid_fail2ban_duration($_[0], 0);
+}
+
+# valid_nonnegative_fail2ban_duration(value)
+# Returns 1 for a safe Fail2Ban duration expression, including zero
+sub valid_nonnegative_fail2ban_duration
+{
+return &valid_fail2ban_duration($_[0], 1);
+}
+
+# valid_bantime_factor(value)
+# Returns 1 for a positive numeric incremental-ban growth factor
+sub valid_bantime_factor
+{
+my ($value) = @_;
+return defined($value) &&
+	$value =~ /^(?:\d+(?:\.\d+)?|\.\d+)$/ && $value > 0;
+}
+
+# validate_bantime_increment_inputs(&input)
+# Returns a language key for the first invalid incremental-ban option
+sub validate_bantime_increment_inputs
+{
+my ($input) = @_;
+foreach my $f ("bantime_increment", "bantime_overalljails") {
+	my $value = $input->{$f};
+	return "jail_e".$f if (defined($value) && $value ne "" &&
+					$value !~ /^(true|false)$/);
+	}
+if (!$input->{'bantime_factor_def'} &&
+    !&valid_bantime_factor($input->{'bantime_factor'})) {
+	return "jail_ebantime_factor";
+	}
+if (!$input->{'bantime_maxtime_def'} &&
+    !&valid_positive_fail2ban_duration($input->{'bantime_maxtime'})) {
+	return "jail_ebantime_maxtime";
+	}
+if (!$input->{'bantime_rndtime_def'} &&
+    !&valid_nonnegative_fail2ban_duration($input->{'bantime_rndtime'})) {
+	return "jail_ebantime_rndtime";
+	}
+return undef;
+}
+
+# save_bantime_increment_options(&input, &jail)
+# Saves incremental-ban options using the standard jail directive handling
+sub save_bantime_increment_options
+{
+my ($input, $jail) = @_;
+&save_directive("bantime.increment",
+	$input->{'bantime_increment'} eq "" ? undef :
+		$input->{'bantime_increment'}, $jail);
+&save_directive("bantime.factor",
+	$input->{'bantime_factor_def'} ? undef :
+		$input->{'bantime_factor'}, $jail);
+&save_directive("bantime.maxtime",
+	$input->{'bantime_maxtime_def'} ? undef :
+		$input->{'bantime_maxtime'}, $jail);
+&save_directive("bantime.overalljails",
+	$input->{'bantime_overalljails'} eq "" ? undef :
+		$input->{'bantime_overalljails'}, $jail);
+&save_directive("bantime.rndtime",
+	$input->{'bantime_rndtime_def'} ? undef :
+		$input->{'bantime_rndtime'}, $jail);
 }
 
 # Unblock given IP in given jail

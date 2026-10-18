@@ -1,6 +1,6 @@
 index_title=SSHサーバ
 index_econfig=sshd設定ファイル $1 が見付かりませんでした。sshdがインストールされていないか <a href= '$2'>モジュール設定</a>が正しくありません
-index_esshd=sshサーバプログラム $1 が見付かりませんでした。SSHDがインストールされていないか <a href= '$2'>モジュール設定</a>が正しくありません 
+index_esshd=sshサーバプログラム $1 が見付かりませんでした。SSHDがインストールされていないか <a href= '$2'>モジュール設定</a>が正しくありません
 index_eversion=SSHサーバプログラム $1 のバージョン番号の取得に失敗しました。<a href= '$2'>モジュール設定</a>が正しくありません。コマンド $3 の出力 : $4
 index_eversion2=SSHサーバプログラム $1 のバージョンは $2 です。WebminではSSH バージョン １及び２のみサポートしています。
 index_return=モジュールインデックス
@@ -31,9 +31,6 @@ users_pexpire=パスワード失効前の警告日数
 users_pexpire_def=警告しない
 users_auth=パスワードによる認証を許可する
 users_pempty=空のパスワードでのログインを制限する
-users_root=ルートでのログインを許可する
-users_nopwd=RSA認証のみ
-users_fcmd=コマンドのみ
 users_rsa=RSA認証を許可する
 users_strict=キーファイルのパーミッションを許可する
 users_rhosts=<tt>.rhosts</tt>ファイルを無視する

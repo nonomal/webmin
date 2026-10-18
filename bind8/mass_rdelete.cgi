@@ -6,7 +6,7 @@ no warnings 'redefine';
 no warnings 'uninitialized';
 our (%access, %text, %in);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 &ReadParse();
 &error_setup($text{'umass_err'});
 
@@ -38,6 +38,7 @@ foreach my $zi (@zones) {
 	my @recs = &read_zone_file($zi->{'file'}, $zi->{'name'});
 	my $realfile = &make_chroot(&absolute_path($zi->{'file'}));
 	foreach my $r (reverse(@recs)) {
+		next if ($r->{'defttl'} || $r->{'generate'});
 		my $shortname = $r->{'name'};
 		$shortname =~ s/\.$zi->{'name'}\.$//;
 		my $v = join(" ", @{$r->{'values'}});

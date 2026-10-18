@@ -22,16 +22,17 @@ fi
 srcdir=$wadir
 ver=`cat "$wadir/version"`
 
-# Find temp directory
-if [ "$tempdir" = "" ]; then
-	tempdir=/tmp/.webmin
-fi
-
 if [ $? != "0" ]; then
 	echo "ERROR: Cannot find the Webmin install directory";
 	echo "";
 	exit 1;
 fi
+
+# Find temp directory
+if [ "$tempdir" = "" ]; then
+	tempdir=/tmp/.webmin
+fi
+
 echo "****************************************************************************"
 echo "           Welcome to the Webmin setup script, version $ver"
 echo "****************************************************************************"
@@ -457,6 +458,9 @@ else
 	fi
 
 	# Ask the user if SSL should be used
+	if [ "$ssl" = "0" ]; then
+		no_ssl_warn=1
+	fi
 	if [ "$ssl" = "" ]; then
 		ssl=0
 		$perl -e 'use Net::SSLeay' >/dev/null 2>/dev/null
@@ -465,6 +469,8 @@ else
 			read sslyn
 			if [ "$sslyn" = "y" -o "$sslyn" = "Y" ]; then
 				ssl=1
+			else
+				no_ssl_warn=1
 			fi
 		else
 			echo "The Perl SSLeay library is not installed. SSL not available."
@@ -527,6 +533,9 @@ else
 	echo "pidfile=$var_dir/miniserv.pid" >> $cfile
 	echo "logtime=168" >> $cfile
 	echo "ssl=$ssl" >> $cfile
+	if [ "$no_ssl_warn" = "1" ]; then
+		echo "no_ssl_warn=1" >> $cfile
+	fi
 	echo "no_ssl2=1" >> $cfile
 	echo "no_ssl3=1" >> $cfile
 	openssl version 2>&1 | grep "OpenSSL 1" >/dev/null
@@ -547,6 +556,7 @@ else
 	fi
 	echo "denyfile=\\.pl\$" >> $cfile
 	echo "log=1" >> $cfile
+	echo "nolistdir=1" >> $cfile
 	echo "blockhost_failures=5" >> $cfile
 	echo "blockhost_time=60" >> $cfile
 	echo "syslog=1" >> $cfile
@@ -596,8 +606,10 @@ else
 	echo "userfile=$ufile" >> $cfile
 
 	kfile=$config_dir/miniserv.pem
+	openssl_available=0
 	openssl version >/dev/null 2>&1
 	if [ "$?" = "0" ]; then
+		openssl_available=1
 		# OpenSSL support `-addext` flag?
 		addtextsup="-addext subjectAltName=DNS:$host,DNS:localhost -addext extendedKeyUsage=serverAuth"
 		openssl version 2>&1 | grep "OpenSSL 1.0" >/dev/null
@@ -605,7 +617,7 @@ else
 			addtextsup=""
 		fi
 		# We can generate a new SSL key for this host
-		openssl req -newkey rsa:2048 -x509 -nodes -out $tempdir/cert -keyout $tempdir/key -days 1825 -sha256 -subj "/CN=$host/C=US/L=Santa Clara" $addtextsup >/dev/null 2>&1 <<EOF
+		openssl req -newkey rsa:4096 -x509 -nodes -out $tempdir/cert -keyout $tempdir/key -days 1825 -sha256 -subj "/CN=$host/C=US/L=Santa Clara" $addtextsup >/dev/null 2>&1 <<EOF
 .
 .
 .
@@ -619,12 +631,28 @@ EOF
 		fi
 		rm -f $tempdir/cert $tempdir/key
 	fi
-	if [ ! -r $kfile ]; then
-		# Fall back to the built-in key
-		cp "$wadir/miniserv.pem" $kfile
+	if [ -r "$kfile" ]; then
+		chmod 600 "$kfile"
+		echo "keyfile=$config_dir/miniserv.pem" >> $cfile
+	elif [ "$ssl" = "1" ]; then
+		echo ""
+		if [ "$openssl_available" = "1" ]; then
+			echo "ERROR: Failed to generate or install a unique TLS certificate for this host."
+		else
+			echo "ERROR: OpenSSL is not available, so a unique TLS certificate could not be generated."
+		fi
+		echo "WARNING: Webmin will be configured to use HTTP only."
+		echo "Login credentials and sessions will not be encrypted until SSL is enabled"
+		echo "with a valid certificate. See https://webmin.com/docs/modules/webmin-configuration/#ssl-encryption for help."
+		echo ""
+		ssl=0
+		new_cfile=$tempdir/$$.miniserv.conf
+		if ! sed 's/^ssl=.*/ssl=0/' "$cfile" >"$new_cfile" ||
+		   ! mv "$new_cfile" "$cfile"; then
+			echo "ERROR: Failed to switch Webmin to HTTP-only mode."
+			exit 1
+		fi
 	fi
-	chmod 600 $kfile
-	echo "keyfile=$config_dir/miniserv.pem" >> $cfile
 
 	chmod 600 $cfile
 	echo ".. done"
@@ -661,12 +689,12 @@ if [ ! -f "$config_dir/.pre-install" ]; then
 fi
 
 # Test if we have systemd system
-systemctlcmd=$(which systemctl 2>/dev/null)
+systemctlcmd=`command -v systemctl 2>/dev/null`
 if [ -x "$systemctlcmd" ]; then
-    initsys=$(cat /proc/1/comm 2>/dev/null)
-    if [ "$initsys" != "systemd" ]; then
-        systemctlcmd=""
-    fi
+	initsys=`cat /proc/1/comm 2>/dev/null`
+	if [ "$initsys" != "systemd" ]; then
+		systemctlcmd=""
+	fi
 fi
 
 # Re-generating main scripts
@@ -693,6 +721,19 @@ echo "if [ \"\$1\" = \"--kill\" ]; then" >>$config_dir/.stop-init
 echo "  echo Force stopping Webmin server in $wadir" >>$config_dir/.stop-init
 echo "else" >>$config_dir/.stop-init
 echo "  echo Stopping Webmin server in $wadir" >>$config_dir/.stop-init
+echo "fi" >>$config_dir/.stop-init
+echo "targets=\"stats.pl shellserver.pl\"" >>$config_dir/.stop-init
+echo "collect_pids() {" >>$config_dir/.stop-init
+echo "  for s in \$targets; do" >>$config_dir/.stop-init
+echo "    ps axww | grep \"$wadir/\" | grep \"/\$s\" | grep -v grep" >>$config_dir/.stop-init
+echo "  done | awk '{print \$1}' | sort -u" >>$config_dir/.stop-init
+echo "}" >>$config_dir/.stop-init
+echo "pids=\$(collect_pids)" >>$config_dir/.stop-init
+echo "[ -n \"\$pids\" ] && kill \$pids 2>/dev/null || true" >>$config_dir/.stop-init
+echo "if [ \"\$1\" = \"--kill\" ]; then" >>$config_dir/.stop-init
+echo "  sleep 1" >>$config_dir/.stop-init
+echo "  pids=\$(collect_pids)" >>$config_dir/.stop-init
+echo "  [ -n \"\$pids\" ] && kill -KILL \$pids 2>/dev/null || true" >>$config_dir/.stop-init
 echo "fi" >>$config_dir/.stop-init
 echo "pidfile=\`grep \"^pidfile=\" $config_dir/miniserv.conf | sed -e 's/pidfile=//g'\`" >>$config_dir/.stop-init
 echo "pid=\`cat \$pidfile 2>/dev/null\`" >>$config_dir/.stop-init
@@ -791,9 +832,6 @@ if [ -x "$systemctlcmd" ]; then
 	chmod 755 $config_dir/stop $config_dir/start $config_dir/restart $config_dir/restart-by-force-kill $config_dir/reload $config_dir/.pre-install $config_dir/.post-install
 fi
 
-# Fix existing systemd webmin.service file to update start and stop commands
-(cd "$wadir/init" ; WEBMIN_CONFIG=$config_dir WEBMIN_VAR=$var_dir "$wadir/init/updateboot.pl" "$bootscript")
-
 if [ "$upgrading" = 1 -a "$inetd" != "1" -a "$nostop" = "" ]; then
 	# Stop old version, with updated stop script
 	$config_dir/.pre-install >/dev/null 2>&1
@@ -811,6 +849,7 @@ if [ "$upgrading" != 1 ]; then
 	echo "os_version=$os_version" >> $config_dir/config
 	echo "real_os_type=$real_os_type" >> $config_dir/config
 	echo "real_os_version=$real_os_version" >> $config_dir/config
+	echo "real_os_version_full=${real_os_version_full:-$real_os_version}" >> $config_dir/config
 	echo "lang=en" >> $config_dir/config
 
 	# Turn on logging by default
@@ -821,15 +860,29 @@ if [ "$upgrading" != 1 ]; then
 		echo licence_module=$licence_module >>$config_dir/config
 	fi
 
+	# Enable log rotation by default
+	echo "logclear=1" >> $config_dir/miniserv.conf
+	echo "logclear=1" >> $config_dir/config
+	
+	# Enable HSTS by default
+	echo "ssl_hsts=1" >> $config_dir/miniserv.conf
+
+	# Enable force redirect to SSL with HSTS by default
+	echo "ssl_enforce=2" >> $config_dir/miniserv.conf
+
 	# Disallow unknown referers by default
 	echo "referers_none=1" >>$config_dir/config
 else
-	# one-off hack to set log variable in config from miniserv.conf
-	grep log= $config_dir/config >/dev/null
-	if [ "$?" = "1" ]; then
-		grep log= $config_dir/miniserv.conf >> $config_dir/config
-		grep logtime= $config_dir/miniserv.conf >> $config_dir/config
-		grep logclear= $config_dir/miniserv.conf >> $config_dir/config
+	# Enable HSTS by default if not set
+	grep ssl_hsts= $config_dir/miniserv.conf >/dev/null
+	if [ "$?" != "0" ]; then
+		echo "ssl_hsts=1" >> $config_dir/miniserv.conf
+	fi
+
+	# Enable force redirect to SSL with HSTS if not set
+	grep ssl_enforce= $config_dir/miniserv.conf >/dev/null
+	if [ "$?" != "0" ]; then
+		echo "ssl_enforce=2" >> $config_dir/miniserv.conf
 	fi
 
 	# Disallow unknown referers if not set
@@ -898,12 +951,16 @@ if [ "$?" != "0" ]; then
 	echo product=webmin >> $config_dir/config
 fi
 
+# Add boot script if needed
 if [ "$makeboot" = "1" ]; then
 	echo "Configuring Webmin to start at boot time .."
 	(cd "$wadir/init" ; WEBMIN_CONFIG=$config_dir WEBMIN_VAR=$var_dir "$wadir/init/atboot.pl" $bootscript)
 	echo ".. done"
 	echo ""
 fi
+
+# Update boot script if needed
+(cd "$wadir/init" ; WEBMIN_CONFIG=$config_dir WEBMIN_VAR=$var_dir "$wadir/init/updateboot.pl" "$bootscript")
 
 # If password delays are not specifically disabled, enable them
 grep passdelay= $config_dir/miniserv.conf >/dev/null
@@ -929,6 +986,9 @@ if [ "\$answer" = "y" ]; then
 	echo "Deleting $config_dir .."
 	rm -rf "$config_dir"
 	echo "Deleting $var_dir .."
+	if [ "$var_dir" = "/var/webmin" ] && command -v semanage >/dev/null 2>&1; then
+		semanage fcontext -d "/var/webmin(/.*)?" >/dev/null 2>&1 || true
+	fi
 	rm -rf "$var_dir"
 	echo "Done!"
 fi
@@ -947,9 +1007,11 @@ for m in $newmods; do
 done
 # Make miniserv config files non-world-readable
 for f in miniserv.conf miniserv.pem miniserv.users; do
-	chown -R root $config_dir/$f
-	chgrp -R bin $config_dir/$f
-	chmod -R og-rw $config_dir/$f
+	if [ -e "$config_dir/$f" ]; then
+		chown -R root $config_dir/$f
+		chgrp -R bin $config_dir/$f
+		chmod -R og-rw $config_dir/$f
+	fi
 done
 chmod +r $config_dir/version
 if [ "$nochown" = "" ]; then
@@ -976,6 +1038,34 @@ for m in ldap-client ldap-server ldap-useradmin mailboxes mysql postgresql serve
 done
 echo ".. done"
 echo ""
+
+fix_selinux_var_dir()
+{
+	selinux_var_dir="$1"
+	case "$selinux_var_dir" in
+	/var/webmin) ;;
+	*) return 0 ;;
+	esac
+	if ! command -v selinuxenabled >/dev/null 2>&1 ||
+	   ! selinuxenabled >/dev/null 2>&1; then
+		return 0
+	fi
+	restored=0
+	if command -v semanage >/dev/null 2>&1; then
+		if semanage fcontext -m -t var_run_t "$selinux_var_dir(/.*)?" >/dev/null 2>&1 ||
+		   semanage fcontext -a -t var_run_t "$selinux_var_dir(/.*)?" >/dev/null 2>&1; then
+			if command -v restorecon >/dev/null 2>&1; then
+				restorecon -R "$selinux_var_dir" >/dev/null 2>&1 && restored=1
+			fi
+		fi
+	fi
+	# chcon is an immediate fallback only; semanage above makes it persistent.
+	if [ "$restored" != "1" ] && command -v chcon >/dev/null 2>&1; then
+		chcon -R -t var_run_t "$selinux_var_dir" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+fix_selinux_var_dir "$var_dir"
 
 # Save target directory if one was specified
 if [ "$wadir" != "$srcdir" ]; then
@@ -1044,10 +1134,10 @@ if [ "$nostart" = "" ]; then
 		echo "Since Webmin was installed outside the package manager, ensure the"
 		echo "following recommended Perl modules and packages are present:"
 		echo " Perl modules:"
-		echo "  - DateTime, DateTime::Locale, DateTime::TimeZone, Data::Dumper"
-		echo "  - Digest::MD5, Digest::SHA, Encode::Detect, File::Basename"
-		echo "  - File::Path, Net::SSLeay, Time::HiRes, Time::Local, Time::Piece"
-		echo "  - lib, open"
+		echo "  - DateTime, DateTime::Locale, DateTime::TimeZone, Data::Dumper,"
+		echo "  - Digest::MD5, Digest::SHA, Encode::Detect, File::Basename,"
+		echo "  - File::Path, Net::SSLeay, Time::HiRes, Time::Local, Time::Piece,"
+		echo "  - Socket6, Sys::Syslog, JSON::XS, lib, open"
 		echo " Packages:"
 		echo "  - openssl - Cryptography library with TLS implementation"
 		echo "  - shared-mime-info - Shared MIME information database"

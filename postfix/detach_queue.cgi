@@ -2,8 +2,11 @@
 # detach_queue.cgi
 # View one attachment from a queued message
 
-require './postfix-lib.pl';
-require './boxes-lib.pl';
+require './postfix-lib.pl';    ## no critic
+use strict;
+use warnings;
+our ($attach, $mail, %access, %in, %text);
+require './boxes-lib.pl';    ## no critic
 &ReadParse();
 $access{'mailq'} || &error($text{'mailq_ecannot'});
 
@@ -13,16 +16,14 @@ $mail || &error($text{'mailq_egone'});
 $attach = $mail->{'attach'}->[$in{'attach'}];
 
 print "X-no-links: 1\n";
-if ($attach->{'type'} eq 'message/delivery-status') {
+if ($attach->{'type'} eq 'message/delivery-status' ||
+    $attach->{'type'} =~ /^text\/html/i ||
+    $attach->{'type'} =~ /^image\/svg(?:\+xml)?/i ||
+    $attach->{'type'} =~ /^application\/xhtml\+xml/i) {
 	print "Content-type: text/plain\n\n";
 	}
 else {
 	print "Content-type: $attach->{'type'}\n\n";
 	}
-if ($attach->{'type'} =~ /^text\/html/i) {
-	print &filter_javascript($attach->{'data'});
-	}
-else {
-	print $attach->{'data'};
-	}
+print $attach->{'data'};
 

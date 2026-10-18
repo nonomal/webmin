@@ -1,3 +1,5 @@
+index_restart=Indítsa újra a MySQL Servert
+index_restartmsg=Kattintson erre a gombra a MySQL adatbázis-kiszolgáló újraindításához a rendszeren. Az összes kliens leválasztásra kerül, és minden konfigurációs fájl újra betöltődik.
 index_eshow=A (z) $1 MySQL állapotprogram nem található a rendszerén. Lehet, hogy a MySQL nincs telepítve, vagy a <a href='$2'>modul konfigurációja</a> helytelen.
 index_estart=A (z) $1 MySQL indító szkript nem található a rendszerén. Lehet, hogy a MySQL nincs telepítve, vagy a <a href='$2'>modul konfigurációja</a> helytelen.
 index_indexes=Indexek
@@ -9,7 +11,7 @@ index_nodbs2=A rendszerben nem található MySQL adatbázis.
 index_nodbs3=Egyik MySQL adatbázis sem felel meg a keresésnek.
 index_mysqlshow=MySQL állapotprogram
 index_mysqlstatus=MySQL indító szkript
-index_emsg=A teljes MySQL hibaüzenet a következő volt : $1 
+index_emsg=A teljes MySQL hibaüzenet a következő volt : $1
 index_jump=Vagy szerkessze az adatbázist:
 index_jumpok=Nyisd ki
 
@@ -17,6 +19,7 @@ dbase_header=Adatbázis-táblázatok, indexek és nézetek
 dbase_empty=Üres adatbázis
 dbase_none2=Egyik táblázat sem felel meg a keresésnek.
 dbase_name=Név
+dbase_size=Méret
 dbase_delete2=A kijelölt objektumok eldobása
 dbase_index=Index
 dbase_view=Kilátás
@@ -56,7 +59,7 @@ view_sorthead1=Rendezés $1 szerint, csökkenő sorrendben
 view_sorthead2=Rendezés $1 szerint, növekvő sorrendben
 view_sortreset=Reset sort
 view_go=Megy
-view_sqlrun=SQL lekérdezés által generált eredmények : $1 
+view_sqlrun=SQL lekérdezés által generált eredmények : $1
 
 users_syncwhen=Mikor kell szinkronizálni
 users_ssl=Bizonyítvány
@@ -66,6 +69,8 @@ users_dok=Felhasználók törlése
 
 user_vwarning=FIGYELMEZTETÉS: Ez a MySQL felhasználó az adminisztrációs bejelentkezés a $1 Virtualmin domainhez. A beállítások itt történő megváltoztatása hibákat okozhat a Virtualminban.
 user_locked=Zárt
+user_plugin=Hitelesítés típusa
+user_hashpass=Jelenlegi kivonatolt jelszó
 user_priv_select=Válassza ki a táblázat adatait
 user_priv_insert=Helyezze be a táblázat adatait
 user_priv_update=Frissítse a táblázat adatait
@@ -113,6 +118,8 @@ user_emax_connections=A maximális óránkénti kapcsolatnak számnak kell lenni
 user_emax_updates=Az óránkénti legfrissebb frissítéseknek számnak kell lenniük
 user_emax_questions=Az óránkénti maximális lekérdezéseknek számnak kell lenniük
 
+dbs_except=Minden, kivéve
+dbs_except_and=és
 dbs_dtitle=Adatbázis-engedélyek törlése
 dbs_drusure=Biztosan törli a kiválasztott MySQL adatbázis $1 engedélyeket?
 dbs_dok=Engedélyek törlése
@@ -131,7 +138,7 @@ newdb_collation=Osztályozási sorrend
 exec_header2a=Ez felhasználható egy MySQL biztonsági másolat visszaállítására is, amely csak az SQL parancsok fájlja.
 exec_format=Fájlformátum
 exec_ecompress=Az SQL fájl tömörítve van, de a tömörítéshez szükséges $1 program nincs telepítve.
-exec_ecompress2=A tömörítés sikertelen : $1 
+exec_ecompress2=A tömörítés sikertelen : $1
 exec_tabexec=Futtassa az SQL-t
 exec_tabfile=Futtassa az SQL fájlt
 exec_tabimport=Szöveges fájl importálása
@@ -159,6 +166,7 @@ acl_indexes=Megtekintheti és kezelheti az indexeket?
 acl_views=Megtekintheti és kezelheti a nézeteket?
 acl_files=Futtatható az SQL helyi fájlokból?
 
+log_restart=A MySQL szerver újraindult
 log_cnf=Megváltozott a MySQL szerver konfigurációja
 log_ssl=SSL tanúsítvány megváltozott
 log_genssl=Generált SSL tanúsítvány
@@ -208,14 +216,14 @@ backup_notify1=Csak kudarc esetén
 backup_notify2=Csak sikerrel
 backup_allsubject_failed=A $2 MySQL adatbázisának biztonsági másolata tartalmaz hibákat a $3 -on
 backup_allsubject_ok=A $2 MySQL adatbázisának biztonsági mentése sikeres volt a $3 -on
-backup_subject_failed=A (z) $1 MySQL adatbázis biztonsági mentésében hibás volt a $3 
+backup_subject_failed=A (z) $1 MySQL adatbázis biztonsági mentésében hibás volt a $3
 backup_subject_ok=A (z) $1 MySQL adatbázis biztonsági mentése sikeres volt a $3 -on
 backup_body=$2 MySQL adatbázisok biztonsági mentése a $1 -en.
 backup_bodydoing=Biztonsági másolat készítése $1 -től $2 -ig ..
-backup_bodyfailed=.. biztonsági mentés sikertelen : $1 
+backup_bodyfailed=.. biztonsági mentés sikertelen : $1
 backup_bodyok=.. a $1 biztonsági másolatát létrehozva, rendben
-backup_bodytotal=Teljes biztonsági mentés mérete : $1 
-backup_bodyspace=Fájlrendszer mérete: $1 Szabad hely : $2 
+backup_bodytotal=Teljes biztonsági mentés mérete : $1
+backup_bodyspace=Fájlrendszer mérete: $1 Szabad hely : $2
 backup_bodyall=összes
 backup_edownloadall=Csak egyetlen adatbázis biztonsági másolata tölthető le
 backup_edownloadsave=A letöltési mód nem használható ütemezett biztonsági másolatok készítéséhez
@@ -263,6 +271,8 @@ cnf_restart=Mentsd el és indítsd újra a MySQL-t
 cnf_fpt=Különálló fájl az egyes InnoDB táblázatokhoz?
 cnf_ilt=InnoDB zárolási időtúllépés (másodpercben)
 cnf_eilt=Az InnoDB zárolásának időkorlátjának egész számnak kell lennie
+cnf_sqlm=SQL mód beállításai
+cnf_esqlm=Az SQL mód beállításainak a jelzők vesszővel elválasztott listájának kell lenniük
 
 manual_title=A Config Files szerkesztése
 manual_file=A konfigurációs fájl szerkesztése:
@@ -337,7 +347,7 @@ kill_ecannot=Nem engedélyezi az adatbázis-kapcsolatok kezelését
 kill_enone=Egy sincs kiválasztva
 
 vars_title=MySQL rendszerváltozók
-vars_desc=Figyelem - Az ezen az oldalon beállított változók alapértelmezett értékeikre állnak vissza, amikor a MySQL újraindul. Az állandó beállításokat a <a href='$1'>MySQL Server Configuration</a> oldalon kell elvégezni.
+vars_desc=Az ezen az oldalon beállított változók az alapértelmezett értékekre állnak vissza a MySQL újraindításakor. Az állandó beállításokat a <a href='$1'>MySQL Server Configuration</a> oldalon kell elvégezni.
 vars_ecannot=A rendszerváltozókat nem szabad szerkeszteni
 vars_name=Változó név
 vars_value=Jelenlegi érték
@@ -378,10 +388,10 @@ root_socket=A MySQL <tt>$1</tt> felhasználó Unix socket hitelesítést haszná
 
 mysqlpass_err=MySQL biztonságos mód
 mysqlpass_esafecmd=A (z) $1 parancs, amely a MySQL elindításához szükséges a hitelesítés letiltásához, nem található
-mysqlpass_eshutdown=A leállítás nem sikerült : $1 
-mysqlpass_esafe=Az indítás csökkentett módban nem sikerült : $1 
-mysqlpass_estartup=Az indítás sikertelen : $1 
-mysqlpass_echange=A jelszó megváltoztatása sikertelen : $1 
+mysqlpass_eshutdown=A leállítás nem sikerült : $1
+mysqlpass_esafe=Az indítás csökkentett módban nem sikerült : $1
+mysqlpass_estartup=Az indítás sikertelen : $1
+mysqlpass_echange=A jelszó megváltoztatása sikertelen : $1
 mysqlpass_echange_forcepass=Kényszerítve írja felül a megadott jelszót, ha elveszett vagy elfelejtődött
 
 ssl_title=SSL tanúsítvány

@@ -44,6 +44,17 @@ else {
 		$clash && &error($text{'jail_eclash'});
 		}
 
+	# Validate backend
+	!$in{'backend'} || 
+	$in{'backend'} =~ /^(auto|systemd|polling|gamin|pyinotify|\%\(\w+\)s)$/ ||
+		&error($text{'jail_ebackend'});
+
+	# Validate ports (1234 or 1234:1245 or 1234:1245,1250,http or 1238,http,https)
+	$in{'port'} =~ s/\s+//g if ($in{'port'});
+	!$in{'port'} || $in{'port'} =~
+		/^(?:\d{1,5}(:\d{1,5})?|[a-zA-Z][a-zA-Z0-9-]*)(?:,(?:\d{1,5}(:\d{1,5})?|[a-zA-Z][a-zA-Z0-9-]*))*$/ ||
+			&error($text{'jail_eports'});
+
 	# Parse and validate actions
 	my @actions;
 	for(my $i=0; defined($in{"action_$i"}); $i++) {
@@ -74,8 +85,15 @@ else {
 		if ($in{"protocol_$i"}) {
 			push(@opts, "protocol=".$in{"protocol_$i"});
 			}
-		push(@opts, split(/\s+/, $in{"others_$i"}));
-		push(@actions, $in{"action_$i"}."[".join(", ", @opts)."]");
+		if ($in{"others_$i"}) {
+			my $others = $in{"others_$i"};
+			$others =~ s/^\s+//;
+			$others =~ s/\s+$//;
+			push(@opts, $others) if (length($others));
+			}
+		my $action = $in{"action_$i"};
+		$action .= "[".join(", ", @opts)."]" if (@opts);
+		push(@actions, $action);
 		}
 
 	# Split and validate log file paths
@@ -104,6 +122,19 @@ else {
 			&error($text{'jail_eignoreip'});
 		}
 
+	# Validate incremental banning options when submitted by a supported UI
+	my @increment_fields = ("bantime_increment", "bantime_factor",
+		"bantime_maxtime", "bantime_overalljails", "bantime_rndtime");
+	my $increment_submitted = scalar(grep { exists($in{$_}) }
+		@increment_fields);
+	if ($increment_submitted && !&supports_bantime_increment()) {
+		&error($text{'jail_eincrement_version'});
+		}
+	if ($increment_submitted) {
+		my $err = &validate_bantime_increment_inputs(\%in);
+		&error($text{$err}) if ($err);
+		}
+
 	# Create new section or rename existing if needed
 	&lock_all_config_files();
 	if ($in{'new'}) {
@@ -116,6 +147,8 @@ else {
 	# Save directives within the section
 	&save_directive("enabled", $in{'enabled'} ? 'true' : 'false', $jail);
 	&save_directive("filter", $in{'filter'} || undef, $jail);
+	&save_directive("backend", $in{'backend'} || undef, $jail);
+	&save_directive("port", $in{'port'} || undef, $jail);
 	&save_directive("action", @actions ? join("\n", @actions)
 					   : undef, $jail);
 	&save_directive("logpath", join("\n", @logpaths), $jail);
@@ -124,6 +157,8 @@ else {
 		}
 	&save_directive("ignoreip",
 		@ignoreips ? join(" ", @ignoreips) : undef, $jail);
+	&save_bantime_increment_options(\%in, $jail)
+		if ($increment_submitted);
 
 	&unlock_all_config_files();
 	}

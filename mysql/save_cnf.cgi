@@ -11,8 +11,9 @@ foreach my $l (&get_all_mysqld_files()) {
 	&lock_file($l);
 	}
 $conf = &get_mysql_config();
-($mysqld) = grep { $_->{'name'} eq 'mysqld' } @$conf;
+$mysqld = &get_mysqld_config_section($conf);
 $mysqld || &error($text{'cnf_emysqld'});
+$mems = $mysqld->{'members'};
 
 # Parse mysql server inputs
 if ($in{'port_def'}) {
@@ -53,11 +54,9 @@ else {
 &save_directive($conf, $mysqld, "default-storage-engine",
 		$in{'stor'} ? [ $in{'stor'} ] : [ ]);
 
-$fpt = &find_value("innodb_file_per_table", $mems);
-if ($fpt || $in{'fpt'}) {
-	&save_directive($conf, $mysqld, "innodb_file_per_table",
-			[ $in{'fpt'} ]);
-	}
+my $ifpt_def_off = &get_innodb_file_per_table_default();
+&save_directive($conf, $mysqld, "innodb_file_per_table",
+	[ $in{'fpt'} ? ($ifpt_def_off ? 1 : undef) : 0 ]);
 
 if ($in{'ilt_def'}) {
 	&save_directive($conf, $mysqld, "innodb_lock_wait_timeout", [ ]);
@@ -68,8 +67,28 @@ else {
 			[ $in{'ilt'} ]);
 	}
 
+if ($in{'sqlm_def'}) {
+	&save_directive($conf, $mysqld, "sql_mode", [ ]);
+	}
+else {
+	$in{'sqlm'} =~ /^\S+$/ || &error($text{'cnf_esqlm'});
+	&save_directive($conf, $mysqld, "sql_mode", [ $in{'sqlm'} ]);
+	}
+
 &save_directive($conf, $mysqld, "big-tables",
 		$in{'big-tables'} ? [ "" ] : [ ]);
+
+# Save slow query log options
+&save_directive($conf, $mysqld, "slow_query_log",
+		[ $in{'slow'} ]);
+$in{'slow_file_def'} || $in{'slow_file'} =~ /^\S+$/ ||
+	&error($text{'cnf_eslow_file'});
+&save_directive($conf, $mysqld, "slow_query_log_file",
+		$in{'slow_file_def'} ? [ ] : [ $in{'slow_file'} ]);
+$in{'long_def'} || $in{'long'} =~ /^\d+$/ ||
+	&error($text{'cnf_elong'});
+&save_directive($conf, $mysqld, "long_query_time",
+		$in{'long_def'} ? [ ] : [ $in{'long'} ]);
 
 # Save set variables
 %vars = &parse_set_variables(&find_value("set-variable", $mems));
@@ -113,4 +132,3 @@ if ($in{'restart'} && &is_mysql_running() > 0) {
 	}
 &webmin_log("cnf");
 &redirect("");
-

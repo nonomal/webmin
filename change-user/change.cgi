@@ -35,10 +35,12 @@ if ($access{'lang'}) {
 	if ($in{'lang_def'}) {
 		$user->{'lang'} = undef;
 		$user->{'langauto'} = undef;
+		$user->{'langneutral'} = undef;
 		}
 	else {
 		$user->{'lang'} = $in{'lang'};
 		$user->{'langauto'} = $in{'langauto'} ? 1 : 0;
+		$user->{'langneutral'} = $in{'langneutral'} ? 1 : 0;
 		}
 	}
 
@@ -128,6 +130,6 @@ if ($access{'theme'} &&
 	print &js_redirect("/", "top");
 	print "$text{'change_done'}<p>\n";
 	}
-
-&ui_print_footer("/", $text{'index'});
-
+else {
+	&ui_print_footer("", $text{'index'});
+	}

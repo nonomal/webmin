@@ -17,7 +17,7 @@ index_find=Trouver utilisateurs où nom
 index_equals=égale
 index_contains=contient
 index_eperl=Le module Perl $1 nécessaire pour le mode d'authentification SMTP sélectionné n'est pas installé ou manque un module dépend. <a href='$2'>Cliquez ici</a> pour l'installer maintenant.
-index_file=Lire le courrier du Fichier:
+index_file=Lire le courrier du Fichier
 index_nousers=Aucun membre n'a été trouvé!
 index_nousersmail=Aucun membre avec email ont été trouvés.
 
@@ -293,7 +293,7 @@ confirm_warnallf=Etes-vous sûr que vous voulez supprimer tous les messages dans
 search_title=Résultats de recherche
 search_ecannot=Vous n'êtes pas autorisé à rechercher l'email de l'utilisateur
 search_ematch=Vous devez saisir texte auquel faire correspondre.
-search_escore=Spam score manquant ou invalide 
+search_escore=Spam score manquant ou invalide
 search_efield=Vous devez sélectionner un type de recherche.
 search_ewhat=Aucun texte de match indiquée pour la ligne $1
 search_enone=Pas de critères de recherche entrés

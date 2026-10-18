@@ -73,6 +73,14 @@ push(@rv, @st ? ctime($st[9]) : $text{'bsd_unknown'});
 return @rv;
 }
 
+# virtual_package_info(package)
+# Returns an array of package information for a virtual package, usually called
+# if "package_info" returns nothing.
+sub virtual_package_info
+{
+return ( );
+}
+
 # check_files(package, version)
 # Fills in the %files array with information about the files belonging
 # to some package. Values in %files are  path type user group mode size error
@@ -128,7 +136,8 @@ sub installed_file
 local (%packages, $file, $i, @pkgin);
 local $n = &list_packages();
 for($i=0; $i<$n; $i++) {
-	&open_execute_command(PKGINFO, "$pkg_info -L $packages{$i,'name'}", 1, 1);
+	local $qm = quotemeta($packages{$i,'name'});
+	&open_execute_command(PKGINFO, "$pkg_info -L $qm", 1, 1);
 	while($file = <PKGINFO>) {
 		$file =~ s/\r|\n//g;
 		if ($file eq $_[0]) {
@@ -268,7 +277,8 @@ sub install_package
 local $in = $_[2] ? $_[2] : \%in;
 local $args = ($in->{"scripts"} ? " -I" : "").
 	      ($in->{"force"} ? " -f" : "");
-local $out = &backquote_logged("$pkg_add $args $_[0] 2>&1");
+local $qm = quotemeta($_[0]);
+local $out = &backquote_logged("$pkg_add $args $qm 2>&1");
 if ($?) {
 	return "<pre>$out</pre>";
 	}
@@ -282,14 +292,16 @@ sub install_packages
 local $in = $_[2] ? $_[2] : \%in;
 local $args = ($in->{"scripts"} ? " -I" : "").
 	      ($in->{"force"} ? " -f" : "");
-local $file;
+local ($file, $qm);
 if (-d $_[0]) {
 	$file = "$_[0]/*.tgz";
 	}
 else {
 	$file = $_[0];
 	}
-local $out = &backquote_logged("$pkg_add $args $file 2>&1");
+$qm = quotemeta($file);
+$qm =~ s/\\([*?])/$1/g if ($file =~ /[\*\?]/);
+local $out = &backquote_logged("$pkg_add $args $qm 2>&1");
 if ($?) {
 	return "<pre>$out</pre>";
 	}

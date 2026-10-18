@@ -31,16 +31,18 @@ Returns a sorted list of disks that can support SMART.
 =cut
 sub list_smart_disks_partitions
 {
+my @rv;
 if (&foreign_check("fdisk")) {
-	return &list_smart_disks_partitions_fdisk();
+	@rv = &list_smart_disks_partitions_fdisk();
 	}
 elsif (&foreign_check("bsdfdisk")) {
-	return &list_smart_disks_partitions_bsdfdisk();
+	@rv = &list_smart_disks_partitions_bsdfdisk();
 	}
 elsif (&foreign_check("mount")) {
-	return &list_smart_disks_partitions_fstab();
+	@rv = &list_smart_disks_partitions_fstab();
 	}
-return ( );
+push(@rv, &list_configured_raid_disks());
+return &unique_smart_disks(@rv);
 }
 
 =head2 list_smart_disks_partitions_fdisk
@@ -57,7 +59,7 @@ my $twcount = 0;
 foreach my $d (sort { $a->{'device'} cmp $b->{'device'} }
 		    &fdisk::list_disks_partitions()) {
 	if (($d->{'type'} eq 'scsi' || $d->{'type'} eq 'raid') &&
-	    $d->{'model'} =~ /3ware|amcc|9750/i) {
+	    $d->{'model'} =~ /3ware|amcc|\b9750\b/i) {
 		# A 3ware hardware RAID device.
 
 		# First find the controllers.
@@ -96,7 +98,7 @@ foreach my $d (sort { $a->{'device'} cmp $b->{'device'} }
 		$twcount++;
 		}
 	elsif (($d->{'type'} eq 'scsi' || $d->{'type'} eq 'raid') &&
-	       $d->{'model'} =~ /LSI/i && $d->{'model'} !~ /9750/) {
+	       $d->{'model'} =~ /LSI/i && $d->{'model'} !~ /\b9750\b/) {
 		# A LSI megaraid device.
 		local @units = &list_megaraid_subdisks(0);
 
@@ -220,6 +222,71 @@ while(1) {
 return $count;
 }
 
+=head2 list_configured_raid_disks()
+
+Returns SMART disk entries for manually configured hardware RAID passthrough
+devices. Each configured line is in device type first-disk disk-count format.
+
+=cut
+sub list_configured_raid_disks
+{
+my @rv;
+foreach my $line (split(/\t/, $config{'raid_devices'} || "")) {
+	$line =~ s/^\s+//;
+	$line =~ s/\s+$//;
+	next if (!$line || $line =~ /^#/);
+	my ($device, $type, $first, $count, $extra) = split(/\s+/, $line, 5);
+	next if (!$device || !$type ||
+		 !defined($first) || !defined($count) || defined($extra));
+	next if ($device !~ /^\/dev\/\S+$/);
+	next if ($type !~ /^[A-Za-z0-9_.+-]+$/);
+	next if ($first !~ /^\d+$/ || $count !~ /^\d+$/);
+	next if ($count < 1 || $count > 256);
+
+	for(my $i=$first; $i<$first+$count; $i++) {
+		push(@rv, { 'device' => $device,
+			    'prefix' => $device,
+			    'desc' => &configured_raid_disk_desc($type, $i),
+			    'type' => 'scsi',
+			    'subtype' => $type,
+			    'subdisk' => $i,
+			    'ids' => [ ],
+			    'manual' => 1 });
+		}
+	}
+return @rv;
+}
+
+=head2 configured_raid_disk_desc(type, subdisk)
+
+Returns a description for a manually configured hardware RAID disk.
+
+=cut
+sub configured_raid_disk_desc
+{
+my ($type, $subdisk) = @_;
+if ($type eq "cciss") {
+	return "HP Smart Array physical disk ".$subdisk;
+	}
+return "Hardware RAID ".$type." physical disk ".$subdisk;
+}
+
+=head2 unique_smart_disks(&disks)
+
+Returns SMART disk entries with duplicate device/type/subdisk entries removed.
+
+=cut
+sub unique_smart_disks
+{
+my %seen;
+return grep {
+	my $key = $_->{'device'}.":".
+		  ($_->{'subtype'} || "").":".
+		  (defined($_->{'subdisk'}) ? $_->{'subdisk'} : "");
+	!$seen{$key}++;
+	} @_;
+}
+
 =head2 list_smart_disks_partitions_fstab
 
 Returns a list of disks on which we can use SMART, taken from /etc/fstab.
@@ -275,18 +342,20 @@ foreach my $d (sort { $a->{'device'} cmp $b->{'device'} }
 return sort { $a->{'device'} cmp $b->{'device'} } @rv;
 }
 
-=head2 get_drive_status(device-name, [&drive])
+=head2 get_drive_status(device-name, [&drive], [basic])
 
-Returns a hash reference containing the status of some drive
+Returns a hash reference containing the status of some drive. If basic is set,
+fetches attributes and the error log without self-test logs for background
+temperature collection.
 
 =cut
 sub get_drive_status
 {
-local ($device, $drive) = @_;
+local ($device, $drive, $basic) = @_;
 if ($device =~ /^(\/dev\/nvme\d+)n\d+$/) {
 	# For NVME drives, try the underlying device first
 	local $nd = $1;
-	local $st = &get_drive_status($nd, $drive);
+	local $st = &get_drive_status($nd, $drive, $basic);
 	return $st if ($st->{'support'} && $st->{'enabled'});
 	}
 local %rv;
@@ -385,7 +454,12 @@ if ($config{'attribs'}) {
 	local ($lastline, @attribs);
 	local $doneknown = 0;
 	$rv{'raw'} = "";
-	open(OUT, "$config{'smartctl'} $extra_args -a $qd |");
+	# Poll attributes and errors without requesting self-test logs, which
+	# can trigger resets on some USB bridges. Keep full details for callers
+	# that do not request basic status, and use legacy flags on old tools.
+	local $args = $basic ? (&get_smart_version() > 5.0 ?
+			       "-A -l error" : "-vl") : "-a";
+	open(OUT, "$config{'smartctl'} $extra_args $args $qd |");
 	while(<OUT>) {
 		s/\r|\n//g;
 		if (/Model\s+Family:\s+(.*)/i) {
@@ -406,18 +480,25 @@ if ($config{'attribs'}) {
 			push(@attribs, [ $2, $7 ]);
 			}
 		elsif (/^\s*(\d+)\s+(\S+)\s+(0x\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/) {
-			# A new-style vendor attribute
+			# A new-style vendor attribute, like :
+			#   1 Raw_Read_Error_Rate     0x000f   130   130   039    Pre-fail  Always       -       4294967295
 			$doneknown = 1;
 			push(@attribs, [ $2, $10, undef, $4 ]);
 			$attribs[$#attribs]->[0] =~ s/_/ /g;
 			}
-		elsif (/^((\w+.*):\s+([0-9]+(,[0-9]+)+)|(\w+.*):\s+(\d+x\d+)|(\w+.*):\s+(\d+%)|^(\w+.*):\s+(\d+))/) {
-			# NVME style
+		elsif (/^((\w+.*):\s+([0-9]+(,[0-9]+)+)|(\w+.*):\s+(\d+x\d+)|(\w+.*):\s+(\d+%)|^(\w+.*):\s+(\d+))$/) {
+			# NVME style (what is this like??)
 			$doneknown = 1;
 			push(@attribs, [ $5 || $7 || $9 || $2, $6 || $8 || $10 || $3, undef, undef ]);
 			}
+		elsif (/^([A-Z][^:]+):\s+(\S.*)$/) {
+			# Some other attribute like :
+			# Form Factor:      2.5 inches
+			push(@attribs, [ $1, $2 ]);
+			}
 		elsif (/^(\S.*\S):\s+\(\s*(\S+)\)\s*(.*)/ && !$doneknown) {
-			# A known attribute
+			# A known attribute, like :
+			# Offline data collection status:  (0x02)	Offline data collection activity
 			local $attrib = [ $1, $2, $3 ];
 			if ($lastline =~ /^\S/ && $lastline !~ /:/) {
 				$attrib->[0] = $lastline." ".$attrib->[0];
@@ -425,7 +506,8 @@ if ($config{'attribs'}) {
 			push(@attribs, $attrib);
 			}
 		elsif (/^\s+(\S.*)/ && @attribs && !$doneknown) {
-			# Continuation of a known attribute description
+			# Continuation of a known attribute description, like :
+			# 			was completed without error.
 			local $cont = $1;
 			local $ls = $attribs[$#attribs];
 			if ($ls->[2] =~ /\.\s*$/) {
@@ -555,4 +637,3 @@ return $extra_args;
 }
 
 1;
-

@@ -56,8 +56,10 @@ if ($can_download) {
 		# Download time can be selected, for scheduling with At
 		@now = localtime(time());
 		print &ui_table_row($text{'index_bg'},
-			&ui_radio("bg", 0, [ [ 0, $text{'index_bg0'}."<br>" ],
-					     [ 1, $text{'index_bg1'} ] ])." ".
+			&ui_radio("bg", 0,
+				  [ [ 0, $text{'index_bg0'}."<br>" ],
+				    [ 2, $text{'index_bg1u'}."<br>" ],
+				    [ 1, $text{'index_bg1'} ] ])." ".
 			&ui_textbox("day", $now[3], 2)."/".
 			&ui_select("month", $now[4],
 			  [ map { [ $_, $text{"smonth_".($_+1)} ] }
@@ -72,7 +74,7 @@ if ($can_download) {
 		# Download must be immediate, but can be backgrounded
 		print &ui_table_row($text{'index_bg'},
 			&ui_radio("bg", 0, [ [ 0, $text{'index_bg0'} ],
-					     [ 1, $text{'index_bg1u'} ] ]));
+					     [ 2, $text{'index_bg1u'} ] ]));
 		}
 	else {
 		# Download is always right now
@@ -166,7 +168,8 @@ if ($can_upload) {
 	print &ui_tabs_start_tab("mode", "upload");
 	print $text{'index_descupload'},"<p>\n";
 	local $upid = time().$$;
-	print &ui_form_start("upload.cgi?id=$upid", "form-data", undef,
+	print &ui_form_start("upload.cgi?id=$upid&direct=1",
+			     "form-data", undef,
 			     &read_parse_mime_javascript($upid,
 			       [ "upload0", "upload1", "upload2", "upload3" ]));
 	print &ui_table_start($text{'index_header2'}, "width=100%", 2);
@@ -183,7 +186,11 @@ if ($can_upload) {
 	print &ui_table_row($text{'index_dir'},
 		&ui_textbox("dir", $upload_dir, 50)." ".
 		&file_chooser_button("dir", 1, $form)." &nbsp;&nbsp;".
-		&ui_checkbox("mkdir", 1, $text{'index_mkdir'}, 0));
+		&ui_checkbox("mkdir", 1, $text{'index_mkdir'}, 0)." &nbsp;".
+		&ui_checkbox("direct", 1, $text{'upload_direct'}, 1,
+			"onchange=\"this.form.action=this.form.action.".
+			"replace(/direct=([^&]*)/, 'direct=' + ".
+			"(this.checked ? 1 : 0))\""));
 
 	if ($can_mode != 3) {
 		# Allow selection of user to save as
@@ -197,12 +204,14 @@ if ($can_upload) {
 						$upload_group, $form) ] ]));
 		}
 
-	# Unzip files
-	print &ui_table_row($text{'index_zip'},
-		&ui_radio("zip", 0,
-			  [ [ 2, $text{'index_zipyes'} ],
-			    [ 1, $text{'yes'} ],
-			    [ 0, $text{'no'} ] ]));
+	if (&can_write_file("/")) {
+		# Offer extraction only when uploads are not directory-restricted
+		print &ui_table_row($text{'index_zip'},
+			&ui_radio("zip", 0,
+				  [ [ 2, $text{'index_zipyes'} ],
+				    [ 1, $text{'yes'} ],
+				    [ 0, $text{'no'} ] ]));
+		}
 
 	# Email notification
 	print &ui_table_row($text{'index_email2'},

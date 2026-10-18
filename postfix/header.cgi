@@ -8,7 +8,10 @@
 # << Here are all options seen in Postfix sample-virtual.cf >>
 
 
-require './postfix-lib.pl';
+require './postfix-lib.pl';    ## no critic
+use strict;
+use warnings;
+our (%access, %text);
 &ReadParse();
 
 $access{'header'} || &error($text{'header_ecannot'});
@@ -27,7 +30,8 @@ print &ui_form_end([ [ undef, $text{'opts_save'} ] ]);
 
 # Header map contents
 print &ui_hr();
-if (&get_real_value("header_checks") eq "") {
+my $hc = &get_real_value("mime_header_checks");
+if ($hc eq "") {
     print $text{'opts_header_checks_no_map'},"<p>\n";
 } else {
     &generate_map_edit("header_checks", $text{'map_click'}." ".
@@ -37,8 +41,11 @@ if (&get_real_value("header_checks") eq "") {
 
 # MIME header map contents
 print &ui_hr();
-if (&get_real_value("mime_header_checks") eq "") {
+my $mhc = &get_real_value("mime_header_checks");
+if ($mhc eq "") {
     print $text{'opts_mime_header_checks_no_map'},"<p>\n";
+} elsif ($mhc eq $hc) {
+    print $text{'opts_mime_header_checks_same_map'},"<p>\n";
 } else {
     &generate_map_edit("mime_header_checks", $text{'map_click'}." ".
 		       &hlink($text{'help_map_format'}, "header"), 1,

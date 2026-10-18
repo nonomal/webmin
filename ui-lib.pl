@@ -1,5 +1,7 @@
 use vars qw($theme_no_table $ui_radio_selector_donejs $module_name
-	    $ui_multi_select_donejs, $ui_formcount);
+	    $ui_multi_select_donejs, $ui_formcount,
+	    $ui_form_end_side_by_side_donecss,
+	    $ui_form_grouped_buttons_donecss);
 
 =head1 ui-lib.pl
 
@@ -58,7 +60,7 @@ sub ui_help
 {
 return &theme_ui_help(@_) if (defined(&theme_ui_help));
 my ($title) = @_;
-$title = html_strip($title);
+$title = &html_escape(&html_strip($title));
 return ("<sup class=\"ui_help\" aria-label=\"$title\" data-tooltip><samp>?</samp></sup>");
 }
 
@@ -82,7 +84,10 @@ sub ui_img
 {
 return &theme_ui_img(@_) if (defined(&theme_ui_img));
 my ($src, $alt, $title, $class, $tags) = @_;
-return ("<img src='".$src."' class='ui_img".($class ? " ".$class : "")."' alt='$alt' ".($title ? "title='$title'" : "").($tags ? " ".$tags : "").">");
+my $esrc   = &quote_escape($src);
+my $ealt   = &quote_escape($alt);
+my $etitle = &quote_escape($title);
+return ("<img src='".$esrc."' class='ui_img".($class ? " ".$class : "")."' alt='$ealt' ".($title ne '' ? "title='$etitle'" : "").($tags ? " ".$tags : "").">");
 }
 
 =head2 ui_link_button(href, text, [target], [tags])
@@ -281,7 +286,7 @@ $rv .= "<tr class='ui_table_span'> ".
 return $rv;
 }
 
-=head2 ui_columns_start(&headings, [width-percent], [noborder], [&tdtags], [heading])
+=head2 ui_columns_start(&headings, [width-percent], [noborder], [&tdtags], [heading], [sortable], [class])
 
 Returns HTML for the start of a multi-column table, with the given headings.
 The parameters are :
@@ -296,14 +301,20 @@ The parameters are :
 
 =item heading - An optional heading to put above the table.
 
+=item sortable - Set to 1 to ask the theme for client-side sorting and searching of this table, such as with DataTables in the Authentic theme. The table is marked with a data-sortable attribute. A module can instead request this for all tables on its pages with sortable=1 in module.info.
+
+=item class - Extra CSS class names for the table, such as a theme's no-hover for a table whose rows are inputs.
+
 =cut
 sub ui_columns_start
 {
 return &theme_ui_columns_start(@_) if (defined(&theme_ui_columns_start));
-my ($heads, $width, $noborder, $tdtags, $title) = @_;
+my ($heads, $width, $noborder, $tdtags, $title, $sortable, $class) = @_;
 my $rv;
 $rv .= "<table".($noborder ? "" : " border").
-		(defined($width) ? " width='$width%'" : "")." class='ui_columns'>\n";
+		(defined($width) ? " width='$width%'" : "").
+		" class='ui_columns".($class ? " ".$class : "")."'".
+		($sortable ? " data-sortable='1'" : "").">\n";
 if ($title) {
 	$rv .= "<tr".($tb ? " ".$tb : "")." class='ui_columns_heading'>".
 	       "<td colspan='".scalar(@$heads)."'><b>$title</b></td></tr>\n";
@@ -465,7 +476,7 @@ return &theme_ui_columns_end(@_) if (defined(&theme_ui_columns_end));
 return "</table>\n";
 }
 
-=head2 ui_columns_table(&headings, width-percent, &data, &types, no-sort, title, empty-msg)
+=head2 ui_columns_table(&headings, width-percent, &data, &types, no-sort, title, empty-msg, [sortable])
 
 Returns HTML for a complete table, typically generated internally by
 ui_columns_start, ui_columns_row and ui_columns_end. The parameters are :
@@ -491,11 +502,13 @@ ui_columns_start, ui_columns_row and ui_columns_end. The parameters are :
 
 =item empty-msg - Message to display if no data.
 
+=item sortable - Set to 1 to ask the theme for client-side sorting and searching, as for ui_columns_start.
+
 =cut
 sub ui_columns_table
 {
 return &theme_ui_columns_table(@_) if (defined(&theme_ui_columns_table));
-my ($heads, $width, $data, $types, $nosort, $title, $emptymsg) = @_;
+my ($heads, $width, $data, $types, $nosort, $title, $emptymsg, $sortable) = @_;
 my $rv;
 
 # Just show empty message if no data
@@ -519,7 +532,7 @@ foreach my $r (@$data) {
 		}
 	$maxwidth = $cc if ($cc > $maxwidth);
 	}
-$rv .= &ui_columns_start($heads, $width, 0, \@tds, $title);
+$rv .= &ui_columns_start($heads, $width, 0, \@tds, $title, $sortable);
 
 # Add the data rows
 foreach my $r (@$data) {
@@ -596,7 +609,7 @@ $rv .= &ui_columns_end();
 return $rv;
 }
 
-=head2 ui_form_columns_table(cgi, &buttons, select-all, &otherlinks, &hiddens, &headings, width-percent, &data, &types, no-sort, title, empty-msg, form-no)
+=head2 ui_form_columns_table(cgi, &buttons, select-all, &otherlinks, &hiddens, &headings, width-percent, &data, &types, no-sort, title, empty-msg, form-no, [sortable])
 
 Similar to ui_columns_table, but wrapped in a form. Parameters are :
 
@@ -612,6 +625,8 @@ Similar to ui_columns_table, but wrapped in a form. Parameters are :
 
 =item formno - Index of this form on the page. Defaults to 0, but should be set if there is more than one form on the page.
 
+=item sortable - If set to 1, the table is marked for client-side sorting and searching by themes that support it, as for ui_columns_table.
+
 All other parameters are the same as ui_columns_table.
 
 =cut
@@ -620,7 +635,8 @@ sub ui_form_columns_table
 return &theme_ui_form_columns_table(@_)
 	if (defined(&theme_ui_form_columns_table));
 my ($cgi, $buttons, $selectall, $others, $hiddens,
-       $heads, $width, $data, $types, $nosort, $title, $emptymsg, $formno) = @_;
+       $heads, $width, $data, $types, $nosort, $title, $emptymsg, $formno,
+       $sortable) = @_;
 my $rv;
 
 # Build links
@@ -670,10 +686,14 @@ if (@$data) {
 
 # Add the table
 $rv .= &ui_columns_table($heads, $width, $data, $types, $nosort, $title,
-			 $emptymsg);
+			 $emptymsg, $sortable);
+
+# Add the bottom links unless excluded
+if ($selectall != 2) {
+	$rv .= $links;
+	}
 
 # Add form end
-$rv .= $links;
 if (@$data) {
 	$rv .= &ui_form_end($buttons);
 	}
@@ -757,41 +777,265 @@ return &theme_ui_form_end(@_) if (defined(&theme_ui_form_end));
 my ($buttons, $width, $nojs) = @_;
 my $rv;
 if ($buttons && @$buttons) {
-	$rv .= "<table class='ui_form_end_buttons' ".($width ? " width='$width'" : "")."><tr>\n";
-	my $b;
-	foreach $b (@$buttons) {
-		if (ref($b)) {
-			$rv .= "<td".(!$width ? "" :
-				      $b eq $buttons->[0] ? " align='left'" :
-				      $b eq $buttons->[@$buttons-1] ?
-					" align='right'" : " align='center'").">".
-			       &ui_submit($b->[1], $b->[0], $b->[3], $b->[4]).
-			       ($b->[2] ? " ".$b->[2] : "")."</td>\n";
-			}
-		elsif ($b) {
-			$rv .= "<td>$b</td>\n";
-			}
-		else {
-			$rv .= "<td>&nbsp;&nbsp;</td>\n";
-			}
-		}
-	$rv .= "</tr></table>\n";
+	$rv .= &_ui_form_end_buttons_table($buttons, $width);
 	}
 $rv .= "</form>\n";
-if ( !$nojs ) {
-    # When going back to a form, re-enable any text fields generated by
-    # ui_opt_textbox that aren't in the default state.
-    $rv .= "<script type='text/javascript'>\n";
-    $rv .= "var opts = document.getElementsByClassName('ui_opt_textbox');\n";
-    $rv .= "for(var i=0; i<opts.length; i++) {\n";
-    $rv .= "  opts[i].disabled = document.getElementsByName(opts[i].name+'_def')[0].checked;\n";
-    $rv .= "}\n";
-    $rv .= "</script>\n";
+return $rv.&_ui_form_end_nojs($nojs);
 }
+
+=head2 ui_form_end_side_by_side(form-id, [&leftbuttons], [&rightbuttons], [width], [nojs])
+
+Returns HTML for the end of a form with button groups aligned to the left
+and right. The left buttons use the same format as ui_form_end and are linked
+back to the main form by the HTML5 C<form> attribute, allowing the right side
+to contain separate forms or custom HTML without invalid nesting.
+
+=item form-id - HTML id of the form started by ui_form_start.
+
+=item leftbuttons - Buttons for the left side, in the same format as ui_form_end.
+
+=item rightbuttons - Optional buttons or HTML for the right side. Each element
+may be either a ui_form_end button array ref or raw HTML.
+
+=item width - Optional CSS width for the action bar. Defaults to 100%.
+
+=item nojs - Set to 1 to suppress ui_opt_textbox re-enable JavaScript.
+
+=cut
+sub ui_form_end_side_by_side
+{
+$ui_formcount++;
+return &theme_ui_form_end_side_by_side(@_)
+	if (defined(&theme_ui_form_end_side_by_side));
+my ($formid, $leftbuttons, $rightbuttons, $width, $nojs) = @_;
+my $rv;
+$rv .= "</form>\n";
+if (($leftbuttons && @$leftbuttons) || ($rightbuttons && @$rightbuttons)) {
+	$rv .= &_ui_form_end_side_by_side_css();
+	$rv .= "<div class='ui_form_end_side_by_side'".
+	       " style='width:".&quote_escape($width || "100%")."'>\n";
+	if ($leftbuttons && @$leftbuttons) {
+		$rv .= "<div class='ui_form_end_side ui_form_end_side_left'>\n".
+		       &_ui_form_end_buttons_table($leftbuttons, undef, $formid,
+						   "ui_form_end_buttons_left").
+		       "</div>\n";
+		}
+	if ($rightbuttons && @$rightbuttons) {
+		$rv .= "<div class='ui_form_end_side ui_form_end_side_right'>\n".
+		       &_ui_form_end_buttons_table($rightbuttons, undef, undef,
+						   "ui_form_end_buttons_right").
+		       "</div>\n";
+		}
+	$rv .= "</div>\n";
+	}
+$rv .= &_ui_form_end_nojs($nojs);
 return $rv;
 }
 
-=head2 ui_textbox(name, value, size, [disabled?], [maxlength], [tags])
+=head2 ui_form_grouped_buttons(&groups, [width])
+
+Returns HTML for a responsive row of submit buttons, without closing the form.
+Each button uses the same array format as C<ui_form_end>.
+
+Pass an array of button groups. A group can be a normal button list, or a list
+of button lists when you want a visible gap between sets of buttons. Groups are
+spread across the row when there is room, and wrap on narrow screens. Buttons
+inside the same list stay visually joined.
+
+Example :
+
+  my @save_buttons = ([ undef, $text{'save'} ]);
+  my @control_buttons = ([ 'start', $text{'start'} ],
+                         [ 'stop', $text{'stop'} ]);
+  my @delete_buttons = ([ 'delete', $text{'delete'} ]);
+
+  print &ui_form_grouped_buttons([
+    [ \@save_buttons, \@control_buttons ],
+    \@delete_buttons,
+    ]);
+
+=cut
+sub ui_form_grouped_buttons
+{
+return &theme_ui_form_grouped_buttons(@_) if (defined(&theme_ui_form_grouped_buttons));
+my ($groups, $width) = @_;
+$groups ||= [ ];
+my @groups = grep { $_ && ref($_) eq 'ARRAY' && @$_ } @$groups;
+return "" if (!@groups);
+
+my %attrs = ( 'class' => 'ui_form_grouped_buttons' );
+$attrs{'style'} = "width:$width" if ($width);
+my $rv = &_ui_form_grouped_buttons_css();
+$rv .= &ui_tag_start('div', \%attrs);
+foreach my $group (@groups) {
+	$rv .= &_ui_form_grouped_buttons_group($group);
+	}
+$rv .= &ui_tag_end('div');
+return $rv;
+}
+
+sub _ui_form_end_buttons_table
+{
+my ($buttons, $width, $formid, $class) = @_;
+return "" if (!$buttons || !@$buttons);
+my $rv = "<table class='ui_form_end_buttons".
+	 ($class ? " $class" : "")."' ".
+	 ($width ? "width='$width'" : "")."><tr>\n";
+my $b;
+foreach $b (@$buttons) {
+	if (ref($b)) {
+		my $tags = $b->[4];
+		if ($formid && (!$tags || $tags !~ /\bform\s*=/i)) {
+			$tags .= ($tags ? " " : "").
+				 "form=\"".&quote_escape($formid)."\"";
+			}
+		$rv .= "<td".(!$width ? "" :
+			      $b eq $buttons->[0] ? " align='left'" :
+			      $b eq $buttons->[@$buttons-1] ?
+				" align='right'" : " align='center'").">".
+		       &ui_submit($b->[1], $b->[0], $b->[3], $tags).
+		       ($b->[2] ? " ".$b->[2] : "")."</td>\n";
+		}
+	elsif ($b) {
+		$rv .= "<td>$b</td>\n";
+		}
+	else {
+		$rv .= "<td>&nbsp;&nbsp;</td>\n";
+		}
+	}
+$rv .= "</tr></table>\n";
+return $rv;
+}
+
+sub _ui_form_grouped_buttons_group
+{
+my ($group) = @_;
+my @clusters = &_ui_form_grouped_buttons_clusters($group);
+return "" if (!@clusters);
+my $rv = &ui_tag_start('div', { 'class' => 'ui_form_grouped_group' });
+foreach my $cluster (@clusters) {
+	$rv .= &_ui_form_grouped_buttons_cluster($cluster);
+	}
+$rv .= &ui_tag_end('div');
+return $rv;
+}
+
+sub _ui_form_grouped_buttons_clusters
+{
+my ($group) = @_;
+return ( ) if (!$group || ref($group) ne 'ARRAY' || !@$group);
+foreach my $item (@$group) {
+	next if (!defined($item));
+	return ref($item) eq 'ARRAY' &&
+	       (!@$item || ref($item->[0]) eq 'ARRAY') ?
+		grep { $_ && ref($_) eq 'ARRAY' && @$_ } @$group :
+		( $group );
+	}
+return ( );
+}
+
+sub _ui_form_grouped_buttons_cluster
+{
+my ($buttons) = @_;
+return "" if (!$buttons || !@$buttons);
+my $rv = &ui_tag_start('span', { 'class' => 'ui_form_grouped_cluster' });
+foreach my $b (@$buttons) {
+	next if (!defined($b));
+	if (ref($b)) {
+		my $submit = &ui_submit($b->[1], $b->[0], $b->[3], $b->[4]);
+		chomp($submit);
+		$rv .= $submit;
+		$rv .= $b->[2] ? " ".$b->[2] : "";
+		}
+	elsif ($b) {
+		$rv .= $b;
+		}
+	}
+$rv .= &ui_tag_end('span');
+return $rv;
+}
+
+sub _ui_form_end_side_by_side_css
+{
+return "" if ($ui_form_end_side_by_side_donecss++);
+return <<'EOF';
+<style type='text/css'>
+.ui_form_end_side_by_side {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0 5px;
+}
+.ui_form_end_side_by_side .ui_form_end_side_left {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.ui_form_end_side_by_side .ui_form_end_side_right {
+	flex: 0 0 auto;
+}
+.ui_form_end_side_by_side .ui_form_end_buttons {
+	width: auto;
+}
+</style>
+EOF
+}
+
+sub _ui_form_grouped_buttons_css
+{
+return "" if ($ui_form_grouped_buttons_donecss++);
+my $css = <<'EOF';
+.ui_form_grouped_buttons {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5em 0.45em;
+	align-items: flex-start;
+	justify-content: space-between;
+	width: 100%;
+}
+.ui_form_grouped_group {
+	display: flex;
+	flex-wrap: wrap;
+	flex: 0 0 auto;
+	align-items: center;
+	width: max-content;
+	max-width: 100%;
+	margin: 0 -0.45em -0.45em 0;
+}
+.ui_form_grouped_cluster {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	max-width: 100%;
+	margin: 0 0.45em 0 0;
+}
+.ui_form_grouped_cluster .ui_submit {
+	margin: 0 0 0.45em 0;
+}
+EOF
+return &ui_tag('style', $css, { 'type' => 'text/css' });
+}
+
+sub _ui_form_end_nojs
+{
+my ($nojs) = @_;
+if ( !$nojs ) {
+    # When going back to a form, re-enable any text fields generated by
+    # ui_opt_textbox that aren't in the default state.
+    my $rv = "<script type='text/javascript'>\n";
+    $rv .= "(function () {\n";
+    $rv .= "const opts = document.getElementsByClassName('ui_opt_textbox');\n";
+    $rv .= "for(let i=0; i<opts.length; i++) {\n";
+    $rv .= "  opts[i].disabled = document.getElementsByName(opts[i].name+'_def')[0].checked;\n";
+    $rv .= "}\n";
+    $rv .= "})();\n";
+    $rv .= "</script>\n";
+    return $rv;
+    }
+return "";
+}
+
+=head2 ui_textbox(name, value, size, [disabled?], [maxlength], [tags], [class])
 
 Returns HTML for a text input box. The parameters are :
 
@@ -811,13 +1055,15 @@ Returns HTML for a text input box. The parameters are :
 sub ui_textbox
 {
 return &theme_ui_textbox(@_) if (defined(&theme_ui_textbox));
-my ($name, $value, $size, $dis, $max, $tags) = @_;
+my ($name, $value, $size, $dis, $max, $tags, $cls) = @_;
+$cls ||= "";
+$cls = " $cls" if ($cls);
 $size = &ui_max_text_width($size);
-return "<input class='ui_textbox' type='text' ".
+return "<input class='ui_textbox$cls' type='text' ".
        "name=\"".&html_escape($name)."\" ".
        "id=\"".&html_escape($name)."\" ".
        "value=\"".&html_escape($value)."\" ".
-       "size=$size".($dis ? " disabled='true'" : "").
+       "size='$size'".($dis ? " disabled='true'" : "").
        ($max ? " maxlength='$max'" : "").
        ($tags ? " ".$tags : "").">";
 }
@@ -883,14 +1129,15 @@ if ($bytes ne "") {
 	$bytes =~ s/(\.\d*?[1-9])0+$/$1/;
 	}
 $size = &ui_max_text_width($size || 8);
-return &ui_textbox($name, $bytes, $size, $dis, undef, $tags)." ".
+return &ui_tag('span',
+       &ui_textbox($name, $bytes, $size, $dis, undef, $tags)." ".
        &ui_select($name."_units", $units,
 		 [ [ 1, $text{"nice_size_b"} ],
 		   [ 1024, $text{"nice_size_kiB"} ],
 		   [ 1024*1024, $text{"nice_size_MiB"} ],
 		   [ 1024*1024*1024, $text{"nice_size_GiB"} ],
 		   [ 1024*1024*1024*1024, $text{"nice_size_TiB"} ],
-		   [ 1024*1024*1024*1024*1024, $text{"nice_size_PiB"} ] ], undef, undef, undef, $dis);
+		   [ 1024*1024*1024*1024*1024, $text{"nice_size_PiB"} ] ], undef, undef, undef, $dis), { class => 'ui_bytesbox' });
 }
 
 =head2 ui_upload(name, size, [disabled?], [tags])
@@ -998,13 +1245,13 @@ foreach $o (@$opts) {
 	$o = [ $o ] if (!ref($o));
 	$rv .= "<option value=\"".&quote_escape($o->[0])."\"".
 	       ($sel{$o->[0]} ? " selected" : "").($o->[2] ne '' ? " ".$o->[2] : "").">".
-	       ($o->[1] || $o->[0])."</option>\n";
+	       &html_escape($o->[1] || $o->[0], 1)."</option>\n";
 	$opt{$o->[0]}++;
 	}
 foreach $s (keys %sel) {
 	if (!$opt{$s} && $missing) {
 		$rv .= "<option value=\"".&quote_escape($s)."\"".
-		       " selected>".($s eq "" ? "&nbsp;" : $s)."</option>\n";
+		       " selected>".($s eq "" ? "&nbsp;" : &html_escape($s, 1))."</option>\n";
 		}
 	}
 $rv .= "</select>\n";
@@ -1015,7 +1262,8 @@ return $rv;
 
 Returns HTML for selecting many of many from a list. By default, this is
 implemented using two <select> lists and Javascript buttons to move elements
-between them. The resulting input value is \n separated.
+between them. The resulting input value is \n separated. ui_multi_select_list
+offers a searchable checkbox list with the same values and submission format.
 
 Parameters are :
 
@@ -1054,7 +1302,7 @@ if (!defined($width)) {
 	$width = "200";
 	}
 $width .= "px" if ($width =~ /^\d+$/);
-my $wstyle = $width ? "style='width:$width'" : "";
+my $wstyle = $width ? "style='min-width:$width'" : "";
 
 if (!$main::ui_multi_select_donejs++) {
 	$rv .= &ui_multi_select_javascript();
@@ -1102,9 +1350,8 @@ if (dir == 1 && opts_idx >= 0) {
 	for(var i=0; i<opts.options.length; i++) {
 		var o = opts.options[i];
 		if (o.selected) {
-			vals.options[vals.options.length] =
-				new Option(o.text, o.value);
-			opts.remove(i);
+			o.selected = false;
+			vals.add(o, 0);
 			i--;
 			}
 		}
@@ -1114,9 +1361,8 @@ else if (dir == 0 && vals_idx >= 0) {
 	for(var i=0; i<vals.options.length; i++) {
 		var o = vals.options[i];
 		if (o.selected) {
-			opts.options[opts.options.length] =
-				new Option(o.text, o.value);
-			vals.remove(i);
+			o.selected = false;
+			opts.add(o, 0);
 			i--;
 			}
 		}
@@ -1438,11 +1684,14 @@ a field with radio buttons next to it. The parameters are :
 
 =item tags - Additional HTML attributes for the text box
 
+=item type - HTML input type, which defaults to "text"
+
 =cut
 sub ui_opt_textbox
 {
 return &theme_ui_opt_textbox(@_) if (defined(&theme_ui_opt_textbox));
-my ($name, $value, $size, $opt1, $opt2, $dis, $extra, $max, $tags) = @_;
+my ($name, $value, $size, $opt1, $opt2, $dis, $extra, $max, $tags, $type) = @_;
+$type ||= "text";
 my $dis1 = &js_disable_inputs([ $name, @$extra ], [ ]);
 my $dis2 = &js_disable_inputs([ ], [ $name, @$extra ]);
 my $rv;
@@ -1450,7 +1699,7 @@ $size = &ui_max_text_width($size);
 $rv .= &ui_radio($name."_def", $value eq '' ? 1 : 0,
 		 [ [ 1, $opt1, "onClick='$dis1'" ],
 		   [ 0, $opt2 || " ", "onClick='$dis2'" ] ], $dis)."\n";
-$rv .= "<input class='ui_opt_textbox' type='text' ".
+$rv .= "<input class='ui_opt_textbox' type='$type' ".
        "name=\"".&quote_escape($name)."\" ".
        "id=\"".&quote_escape($name)."\" ".
        "size=$size value=\"".&quote_escape($value)."\"".
@@ -1599,7 +1848,7 @@ return &theme_ui_buttons_end(@_) if (defined(&theme_ui_buttons_end));
 return "</table>\n";
 }
 
-=head2 ui_buttons_row(script, button-label, description, [hiddens], [after-submit], [before-submit])
+=head2 ui_buttons_row(script, button-label, description, [hiddens], [after-submit], [before-submit], [postmethod], [single-cell], [disabled])
 
 Returns HTML for a button with a description next to it, and perhaps other
 inputs. The parameters are :
@@ -1616,23 +1865,42 @@ inputs. The parameters are :
 
 =item before-submit - HTML for text or inputs to appear before the submit button.
 
+=item postmethod - Defines the method used to submit the form. Defaults to 'post'.
+
+=item single-cell - If set to 1, omits the description cell and spans the button cell across both columns.
+
+=item disabled - If set to 1, disables the submit button.
+
 =cut
 sub ui_buttons_row
 {
 return &theme_ui_buttons_row(@_) if (defined(&theme_ui_buttons_row));
-my ($script, $label, $desc, $hiddens, $after, $before) = @_;
+my ($script, $label, $desc, $hiddens, $after, $before, $postmethod,
+    $singlecell, $disabled) = @_;
+$postmethod ||= 'post';
 if (ref($hiddens)) {
 	$hiddens = join("\n", map { &ui_hidden(@$_) } @$hiddens);
 	}
-return "<form action='$script' class='ui_buttons_form' method='post'>\n".
+
+# A form cannot wrap table rows, so each row is a full-width cell holding
+# the form, which wraps a table of its own
+return "<tr class='ui_buttons_form_row'><td colspan='2' style='padding:0'>\n".
+       "<form action='$script' class='ui_buttons_form' method='$postmethod'>\n".
        $hiddens.
-       "<tr class='ui_buttons_row'> ".
-       "<td nowrap width='20%' valign='top' class='ui_buttons_label'>".
+       "<table width='100%' cellspacing='0'>\n".
+       "<tr class='ui_buttons_row".($disabled ? " disabled" : "")."'> ".
+       "<td nowrap".($singlecell ? " colspan='2'" : " width='20%'").
+       " valign='top' class='ui_buttons_label'>".
        ($before ? $before." " : "").
-       &ui_submit($label).($after ? " ".$after : "")."</td>\n".
-       "<td width='80%' valign='top' class='ui_buttons_value'>".
-       $desc."</td></tr>\n".
-       "</form>\n";
+       &ui_submit($label, '', $disabled).
+       ($after ? " ".$after : "")."</td>\n".
+       ($singlecell ? "" :
+        "<td width='80%' valign='top' class='ui_buttons_value'>".
+        $desc."</td>\n").
+       "</tr>\n".
+       "</table>\n".
+       "</form>\n".
+       "</td></tr>\n";
 }
 
 =head2 ui_buttons_hr([title])
@@ -1690,7 +1958,7 @@ if (!$tconfig{'nohr'} && !$tconfig{'nobottomhr'}) {
 return $rv;
 }
 
-=head2 ui_print_header(subtext, image, [help], [config], [nomodule], [nowebmin], [rightside], [head-stuff], [body-stuff], [below])
+=head2 ui_print_header(subtext, title, image, [help], [config], [nomodule], [nowebmin], [rightside], [head-stuff], [body-stuff], [below])
 
 Print HTML for a header with the post-header line. The args are the same
 as those passed to header(), defined in web-lib-funcs.pl, with the addition
@@ -1717,8 +1985,6 @@ of the subtext parameter :
 =item body-stuff - HTML attributes to be include in the <body> tag.
 
 =item below - HTML to be displayed below the title. Typically this is used for application or server version information.
-
-
 
 =cut
 sub ui_print_header
@@ -2038,13 +2304,14 @@ my $colspan = 1;
 if (defined($heading) || defined($rightheading)) {
 	$rv .= "<tr".($tb ? " ".$tb : "")."><td>";
 	if (defined($heading)) {
-		$rv .= "<a href=\"javascript:hidden_opener('$divid', '$openerid')\" id='$openerid'><img border=0 src='@{[&get_webprefix()]}/images/$defimg'></a> <a href=\"javascript:hidden_opener('$divid', '$openerid')\"><b><font color='#$text'>$heading</font></b></a></td>";
+		$rv .= "<a href=\"javascript:hidden_opener('$divid', '$openerid')\" id='$openerid'><img border=0 src='@{[&get_webprefix()]}/images/$defimg'></a> <a href=\"javascript:hidden_opener('$divid', '$openerid')\"><b><font color='#$text'>$heading</font></b></a>";
 		}
+	$rv .= "</td>";
 	if (defined($rightheading)) {
                 $rv .= "<td align='right'>$rightheading</td>";
                 $colspan++;
                 }
-	$rv .= "</td> </tr>\n";
+	$rv .= " </tr>\n";
 	}
 $rv .= "<tr".($cb ? " ".$cb : "")."><td colspan='$colspan'><div class='$defclass' id='$divid'><table width='100%'>\n";
 $main::ui_table_cols = $cols || 4;
@@ -2106,8 +2373,8 @@ if (!$main::ui_hidden_start_donejs++) {
 	}
 
 # Build list of tab titles and names
-my $tabnames = "[".join(",", map { "\"".&quote_escape($_->[0])."\"" } @$tabs)."]";
-my $tabtitles = "[".join(",", map { "\"".&quote_escape($_->[1])."\"" } @$tabs)."]";
+my $tabnames = &convert_to_json([map { $_->[0] } @$tabs]);
+my $tabtitles = &convert_to_json([map { $_->[1] } @$tabs]);
 $rv .= "<script type='text/javascript'>\n";
 $rv .= "document.${name}_tabnames = $tabnames;\n";
 $rv .= "document.${name}_tabtitles = $tabtitles;\n";
@@ -2349,11 +2616,45 @@ Hotkeys are:
 sub ui_switch_theme_javascript
 {
 return &theme_ui_switch_theme_javascript(@_) if (defined(&theme_ui_switch_theme_javascript));
-return "" if (!$gconfig{'debug_enabled'} && !$gconfig{'debug_theme_switcher'});
-my $switch_script = "<script>const __webmin_webprefix__ = '@{[&get_webprefix()]}';</script>\n";
-my $webmin_version = &get_webmin_version();
-$webmin_version =~ s/\.//g;
-$switch_script .= "<script type=\"text/javascript\" src=\"@{[&get_webprefix()]}/unauthenticated/switch_theme.js?$webmin_version\"></script>\n";
+my $webprefix = &get_webprefix();
+my $switch_script .= <<EOF;
+<script type="text/javascript">
+(function () {
+    let firstCombinationPressed = false;
+    document.addEventListener("keydown", function (event) {
+        // Check for Ctrl+Alt+T or Control+Option+T
+        if (event.ctrlKey && event.altKey && event.keyCode === 84) {
+            firstCombinationPressed = true;
+
+            // Set a timeout to reset the state after a short period (e.g., 1 seconds)
+            setTimeout(() => {
+                firstCombinationPressed = false;
+            }, 1000);
+        }
+        if (firstCombinationPressed && event.shiftKey &&
+            (event.keyCode === 65 ||
+             event.keyCode === 70 || event.keyCode === 71 ||
+             event.keyCode === 76)) {
+            const theme =
+                // Shift + A : Authentic theme
+                event.keyCode === 65 ? 1 :
+                // Shift + F / Shift + G : Framed theme / Gray theme
+                (event.keyCode === 70 || event.keyCode === 71) ? 2 :
+                // Shift + L : Legacy theme
+                event.keyCode === 76 ? 3 : null;
+            firstCombinationPressed = false;
+            try {
+                top.document.documentElement.style.filter = 'grayscale(100%) blur(0.5px) brightness(0.75) opacity(0.5)';
+                top.document.documentElement.style.cursor = 'wait';
+                top.document.documentElement.style.pointerEvents = 'none';
+            } catch (error) {}
+            top.location.href = "$webprefix/switch_theme.cgi?theme=" + theme + "";
+        }
+    });
+})();
+document.currentScript.remove();
+</script>
+EOF
 return $switch_script;
 }
 
@@ -2577,16 +2878,17 @@ Returns HTML for a text string, with its color determined by $type.
 sub ui_text_color
 {
 my ($text, $type) = @_;
-my ($color);
+my ($color, $class_type);
 
 if (defined (&theme_ui_text_color)) {
     return &theme_ui_text_color(@_);
     }
-if ($type eq "success") { $color = "#3c763d"; }
-elsif ($type eq "info") { $color = "#31708f"; }
-elsif ($type eq "warn") { $color = "#8a6d3b"; }
-elsif ($type eq "danger") { $color = "#a94442"; }
-return "<span class=\"ui_text_color text_type_$type\" style=\"color: $color\">$text</span>";
+$class_type = $type eq "warn" ? "warning" : $type;
+if ($type eq "success") { $color = "var(--text-color-success, #3c763d)"; }
+elsif ($type eq "info") { $color = "var(--text-color-info, #31708f)"; }
+elsif ($type eq "warn") { $color = "var(--text-color-warning, #8a6d3b)"; }
+elsif ($type eq "danger") { $color = "var(--text-color-danger, #a94442)"; }
+return "<span class=\"ui_text_color text_type_$type text-$class_type\" style=\"color: $color\">$text</span>";
 }
 
 =head2 ui_alert_box(msg, type)
@@ -2766,23 +3068,165 @@ foreach $f (@{$_[2]}) {
 return $_[3] ? "$_[3]='$rv'" : $rv;
 }
 
-=head2 js_redirect(url, [window-object])
+=head2 ui_form_field_state_javascript(control-name, &active-values, &element-ids, &field-names, [&reset-values])
+
+Returns a <script> block that keeps page elements and form fields in sync with
+another form control. When the control's current value is one of active-values,
+the element IDs are shown and field names are enabled. Otherwise the elements
+are hidden, the fields are disabled, and any reset-values are applied.
+
+=item control-name - Name of the controlling form field.
+
+=item active-values - Array ref of values for which dependents are active.
+
+=item element-ids - Array ref of element IDs to show or hide.
+
+=item field-names - Array ref of form field names to enable or disable.
+
+=item reset-values - Optional hash ref of field name to value to set when disabled.
+
+=cut
+sub ui_form_field_state_javascript
+{
+return &theme_ui_form_field_state_javascript(@_)
+	if (defined(&theme_ui_form_field_state_javascript));
+my ($control, $values, $ids, $fields, $resets) = @_;
+$values ||= [ ];
+$ids ||= [ ];
+$fields ||= [ ];
+$resets ||= { };
+my $js_quote = sub {
+	my ($str) = @_;
+	return "'".&quote_javascript($str)."'";
+	};
+my $js_array = sub {
+	my ($arr) = @_;
+	return "[".join(",", map { &$js_quote($_) } @$arr)."]";
+	};
+my $js_hash = sub {
+	my ($hash) = @_;
+	return "{".
+	       join(",", map { &$js_quote($_).":".&$js_quote($hash->{$_}) }
+			 sort { $a cmp $b } keys %$hash).
+	       "}";
+	};
+my $jcontrol = &$js_quote($control);
+my $jvalues = &$js_array($values);
+my $jids = &$js_array($ids);
+my $jfields = &$js_array($fields);
+my $jresets = &$js_hash($resets);
+return <<EOF;
+<script type='text/javascript'>
+(function() {
+	var controlName = $jcontrol,
+	    activeValues = $jvalues,
+	    elementIds = $jids,
+	    fieldNames = $jfields,
+	    resetValues = $jresets;
+
+	function currentControlValue() {
+		var controls = document.getElementsByName(controlName), i, c;
+		for (i = 0; i < controls.length; i++) {
+			c = controls[i];
+			if (c.type == 'radio' || c.type == 'checkbox') {
+				if (c.checked) {
+					return c.value;
+				}
+			}
+			else {
+				return c.value;
+			}
+		}
+		return null;
+	}
+
+	function hasActiveValue(value) {
+		var i;
+		for (i = 0; i < activeValues.length; i++) {
+			if (String(activeValues[i]) == String(value)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	function setFieldValue(field, value) {
+		if (field.type == 'radio' || field.type == 'checkbox') {
+			field.checked = String(field.value) == String(value);
+		}
+		else {
+			field.value = value;
+		}
+	}
+
+	function syncDependentFields() {
+		var active = hasActiveValue(currentControlValue()), i, j, elem,
+		    fields, field, name;
+		for (i = 0; i < elementIds.length; i++) {
+			elem = document.getElementById(elementIds[i]);
+			if (elem) {
+				elem.style.display = active ? '' : 'none';
+			}
+		}
+		for (i = 0; i < fieldNames.length; i++) {
+			name = fieldNames[i];
+			fields = document.getElementsByName(name);
+			for (j = 0; j < fields.length; j++) {
+				field = fields[j];
+				field.disabled = !active;
+				if (!active &&
+				    Object.prototype.hasOwnProperty.call(resetValues, name)) {
+					setFieldValue(field, resetValues[name]);
+				}
+			}
+		}
+	}
+
+	var controls = document.getElementsByName(controlName), i;
+	for (i = 0; i < controls.length; i++) {
+		controls[i].addEventListener('change', syncDependentFields);
+		controls[i].addEventListener('input', syncDependentFields);
+	}
+	if (document.readyState == 'loading') {
+		document.addEventListener('DOMContentLoaded', syncDependentFields);
+	}
+	else {
+		syncDependentFields();
+	}
+})();
+</script>
+EOF
+}
+
+=head2 js_redirect(url, [window-object], [timeout])
 
 Returns HTML to trigger a redirect to some URL.
 
 =cut
 sub js_redirect
 {
-my ($url, $window) = @_;
+my ($url, $window, $timeout) = @_;
 if (defined(&theme_js_redirect)) {
 	return &theme_js_redirect(@_);
 	}
-$window ||= "window";
+$window = $window && $window =~ /^[\w.]+$/ ? $window : "window";
+$timeout = int($timeout);
 if ($url =~ /^\//) {
 	# If the URL is like /foo , add webprefix
 	$url = &get_webprefix().$url;
 	}
-return "<script type='text/javascript'>${window}.location = '".&quote_escape($url)."';</script>\n";
+$url = &quote_escape($url);
+# Prevent the URL from terminating or destabilising the enclosing
+# script element. Escaping every "<" stops the HTML parser from ever
+# seeing </script (which would close it) or <!-- (which would enter
+# script-data-escaped state). < evaluates back to "<" in JS, so
+# the redirect target is preserved.
+$url =~ s|<|\\u003C|g;
+return "<script type='text/javascript'>
+		setTimeout(function(){
+			${window}.location = '$url';
+		}, $timeout);
+	</script>";
 }
 
 =head2 ui_webmin_link(module, page)
@@ -2866,6 +3310,18 @@ $rv .= "<summary>$c->{'title'}</summary>";
 $rv .= "<span>$c->{'content'}</span>";
 $rv .= "</details>";
 return $rv;
+}
+
+=head2 ui_div(data)
+
+Returns passed HTML as div element
+
+=cut
+sub ui_div
+{
+return &theme_ui_div(@_) if (defined(&theme_ui_div));
+my ($data) = @_;
+return &ui_tag('div', $data, { 'class' => 'ui_div' });
 }
 
 =head2 ui_div_row(label, content)
@@ -3297,5 +3753,3328 @@ if ($head) {
 	}
 }
 
-1;
+=head2 ui_note(text, [whitespace-count])
 
+Returns a note as a small font size text
+
+=cut
+sub ui_note
+{
+return &theme_ui_note(@_) if (defined(&theme_ui_note));
+my ($text, $whitespace) = @_;
+$whitespace //= 2;
+my $whitespace_str = "&nbsp;" x $whitespace;
+# Written as an entity, not a literal character, so the icon survives
+# whether the page is handled as bytes or as decoded text
+return "<font class='ui_note' style='font-size:92%;opacity:0.66'>".
+	"${whitespace_str}&#9432;&nbsp;&nbsp;$text".
+	"</font>";
+}
+
+=head2 ui_brh()
+
+Returns a break line with ability to style height
+
+=cut
+sub ui_brh
+{
+return &theme_ui_brh() if (defined(&theme_ui_brh));
+return "<br data-x-br>\n";
+}
+
+# ui_tag_start(tag, [attrs])
+# Function to create an opening HTML tag with optional attributes.
+# Attributes are passed as a hash reference and its values are quote escaped.
+sub ui_tag_start
+{
+return theme_ui_tag_start(@_) if (defined(&theme_ui_tag_start));
+my ($tag, $attrs) = @_;
+
+# Ensure every tag gets a proper marker class
+$attrs ||= {};
+$attrs->{'class'} = defined($attrs->{class})
+	? "ui--$tag $attrs->{class}"
+	: "ui--$tag";
+
+# Start building tag
+my $rv = "<$tag";
+
+# Add attributes if provided
+if ($attrs && ref($attrs) eq 'HASH') {
+	foreach my $key (keys %$attrs) {
+		my $value = $attrs->{$key};
+		if (defined($value)) {
+			$value = &quote_escape($value, '"');
+			$value =~ tr/\n\t//d;
+			$value =~ s/\s+/ /g;
+			$rv .= " $key=\"$value\"" ;
+			}
+		elsif ($key) {
+			$rv .= " $key";
+			}
+		}
+	}
+
+# Close the opening tag
+$rv .= ">";
+
+# Handle special case for <html> tag
+$rv = "<!DOCTYPE html>\n$rv" if ($tag eq 'html');
+
+return $rv;
+}
+
+# ui_tag_content(content)
+# Function to handle the content of an HTML tag.
+sub ui_tag_content
+{
+return theme_ui_tag_content(@_) if (defined(&theme_ui_tag_content));
+my ($content) = @_;
+my $rv;
+$rv = $content if (defined($content));
+return $rv;
+}
+
+# ui_tag_end(tag)
+# Function to create a closing HTML tag.
+sub ui_tag_end
+{
+return theme_ui_tag_end(@_) if (defined(&theme_ui_tag_end));
+my ($tag) = @_;
+return "</$tag>\n";
+}
+
+# ui_tag(tag, [content], [attrs])
+# Function to create a complete HTML tag with optional content and attributes.
+sub ui_tag
+{
+return theme_ui_tag(@_) if (defined(&theme_ui_tag));
+my ($tag, $content, $attrs) = @_;
+my $rv = ui_tag_start($tag, $attrs);
+$rv .= ui_tag_content($content) if (defined($content));
+my %void_tags = map { $_ => 1 }
+	qw(
+		area base br col embed hr img input link
+		meta param source track wbr
+	);
+$rv .= ui_tag_end($tag) if (!exists($void_tags{lc($tag)}));
+return $rv;
+}
+
+# ui_alert(content, type, [icon], [attrs])
+# Generates an HTML alert with the specified content, type, and optional icon
+# and attributes.
+#
+# Parameters:
+#   content - The main message/body of the alert
+#   type    - Alert style: "success", "info", "warning", "danger", "danger-fatal"
+#   icon    - Optional. Controls icon and title display:
+#             - If undefined: uses default icon and title for the alert type
+#             - If string: uses as icon class with default title
+#             - If array ref [icon, title, no_break]:
+#               - icon: Icon class
+#               - title: Custom title (if undef, uses default for type)
+#               - no_break: If 1, no line break after title (space instead)
+#   attrs   - Optional hash ref of additional HTML attributes for the alert div
+#
+# Examples:
+#   ui_alert("Operation completed", "success");
+#   ui_alert("Access denied", "danger", "fa-lock");
+#   ui_alert("Settings changed", "info", ["fa-info-circle", "", 1]);
+#   ui_alert("Server offline", "warning", undef, {id => "server-status"});
+sub ui_alert
+{
+return theme_ui_alert(@_) if (defined(&theme_ui_alert));
+my ($content, $type, $icon, $attrs) = @_;
+
+# Default alert type
+$type ||= 'info';
+
+# Default icons and titles based on type
+my %type_defaults = (
+	'success' => {
+		'icon' => 'fa-check-circle',
+		'title' => $text{'ui_success'}
+	},
+	'info' => {
+		'icon' => 'fa-info-circle',
+		'title' => $text{'ui_info'}
+	},
+	'warning' => {
+		'icon' => 'fa-exclamation-triangle',
+		'title' => $text{'ui_warning'}
+	},
+	'danger' => {
+		'icon' => 'fa-bolt',
+		'title' => $text{'ui_error'}
+	},
+	'danger-fatal' => {
+		'icon' => 'fa-exclamation-triangle',
+		'title' => $text{'ui_error_fatal'}
+	}
+);
+
+my $use_icon = '';
+my $use_title = '';
+my $use_br = 1;  # Default to using line break
+
+# Process icon parameter
+if (!defined($icon)) {
+	# Use defaults based on type
+	if ($type_defaults{$type}) {
+		$use_icon = $type_defaults{$type}{'icon'};
+		$use_title = $type_defaults{$type}{'title'};
+		}
+	}
+elsif (ref($icon)) {
+	# Array format [icon_class, title, no_br]
+	if (defined($icon->[0])) {
+		$use_icon = $icon->[0];
+		}
+	else {
+		$use_icon = $type_defaults{$type}{'icon'};
+		}
+
+	# Title: if provided use it, else use default for type
+	if (defined($icon->[1])) {
+		$use_title = $icon->[1];
+		}
+	elsif ($type_defaults{$type}) {
+		$use_title = $type_defaults{$type}{'title'};
+		}
+
+	# Line break flag: 1 = no break, anything else = break
+	$use_br = $icon->[2] ? 0 : 1 if (defined($icon->[2]));
+	}
+else {
+	# String format: just the icon class
+	$use_icon = $icon;
+	$use_title = $type_defaults{$type} ? $type_defaults{$type}{'title'} : '';
+	}
+
+# Prepare attributes for the alert div
+my $all_attrs = $attrs || {};
+
+# Add alert class
+my $class = 'alert';
+$class .= ' alert-'.$type if ($type);
+
+$all_attrs->{'class'} = $all_attrs->{'class'}
+	? "$class $all_attrs->{'class'}"
+	:  $class;
+
+# Build alert
+my $rv = '';
+
+# Start alert container
+$rv .= ui_tag_start('div', $all_attrs);
+
+# Add icon and title if either is available
+if ($use_icon || $use_title) {
+	# Add icon if available
+	if ($use_icon) {
+		$rv .= ui_tag('i', undef, { 'class' => "fa fa-fw $use_icon" });
+		$rv .= ' ';
+		}
+
+	# Add title if available
+	if ($use_title) {
+		$rv .= ui_tag('strong', $use_title);
+		}
+
+	# Add line break if needed
+	if ($use_br) {
+		$rv .= '<br>';
+		}
+	else {
+		$rv .= ' ';
+		}
+	$rv .= "\n";
+	}
+
+# Add main content
+$rv .= ui_tag_content(ui_tag('span', $content));
+
+# Close alert container
+$rv .= ui_tag_end('div');
+
+return $rv;
+}
+
+# ui_button_icon(text, icon, [attrs])
+# Creates a button with an icon and text
+# Parameters:
+#   text    - The text/label for the button
+#   icon    - Icon class
+#   attrs   - Optional hash ref of additional HTML attributes
+#
+# Examples:
+#   ui_button_icon("Save", "save", {class => "primary"})
+#   ui_button_icon("Delete", "trash", {type => "submit", name => "delete"})
+sub ui_button_icon
+{
+return theme_ui_button_icon(@_) if (defined(&theme_ui_button_icon));
+my ($text, $icon, $attrs) = @_;
+
+# Default to button type if not specified
+my $all_attrs = $attrs || {};
+$all_attrs->{'type'} ||= 'button';
+
+# Button class
+my $btn_cls = $all_attrs->{'class'};
+$all_attrs->{'class'} = "btn " . ($btn_cls 
+	? ($btn_cls =~ /^btn-/ ? $btn_cls
+	: "btn-$btn_cls") : 'btn-default');
+
+# Build the button
+my $rv = ui_tag_start('button', $all_attrs);
+
+# Add icon if specified
+if ($icon) {
+	my $icon_class = "";
+
+	# Check if icon specifies a specific bundle (fa2)
+	if ($icon =~ /^fa2-/) {
+		$icon_class = "fa2 $icon";
+		}
+	# Check if it already has fa- prefix
+	elsif ($icon =~ /^fa-/) {
+		$icon_class = "fa $icon";
+		}
+	# Otherwise add the default fa- prefix
+	else {
+		$icon_class = "fa fa-$icon";
+		}
+	$rv .= ui_tag('i', undef, {'class' => $icon_class});
+	$rv .= "&nbsp;&nbsp;";
+	}
+
+# Add text
+$rv .= ui_tag_content($text) if defined($text);
+
+# Close the button
+$rv .= ui_tag_end('button');
+
+return $rv;
+}
+
+# ui_link_icon(href, text, [icon], [attrs])
+# Creates a link with an icon and text
+# Parameters:
+#   href    - The URL for the link
+#   text    - The text/label for the link
+#   icon    - Icon class
+#   attrs   - Optional hash ref of additional HTML attributes
+#
+# Examples:
+#   ui_link_icon("view.cgi?id=1", "View Details", "eye", {class => "primary"})
+#   ui_link_icon("docs.html", "Documentation", "book", {target => "_blank"})
+sub ui_link_icon
+{
+return theme_ui_link_icon(@_) if (defined(&theme_ui_link_icon));
+my ($href, $text, $icon, $attrs) = @_;
+
+# Create attribute hash and set href
+my $all_attrs = $attrs || {};
+$all_attrs->{'href'} = $href if (defined($href));
+
+# Button class
+my $btn_cls = $all_attrs->{'class'};
+$all_attrs->{'class'} = "btn " . ($btn_cls 
+	? ($btn_cls =~ /^btn-/ ? $btn_cls
+	: "btn-$btn_cls") : 'btn-default');
+
+# Build the link
+my $rv = ui_tag_start('a', $all_attrs);
+
+# Add icon if specified
+if ($icon) {
+	my $icon_class = "";
+
+	# Check if icon specifies a specific bundle (fa2)
+	if ($icon =~ /^fa2-/) {
+		$icon_class = "fa2 $icon";
+		}
+	# Check if it already has fa- prefix
+	elsif ($icon =~ /^fa-/) {
+		$icon_class = "fa $icon";
+		}
+	# Otherwise add the default fa- prefix
+	else {
+		$icon_class = "fa fa-$icon";
+		}
+	$rv .= ui_tag('i', undef, {'class' => $icon_class});
+	$rv .= "&nbsp;&nbsp;";
+	}
+
+# Add text
+$rv .= ui_tag_content($text) if (defined($text));
+
+# Close the link
+$rv .= ui_tag_end('a');
+
+return $rv;
+}
+
+# ui_icon(icon, [attrs])
+# Creates an icon element
+# Parameters:
+#   icon    - Icon class (with or without fa- prefix)
+#   attrs   - Optional hash ref of additional HTML attributes
+#
+# Examples:
+#   ui_icon("search")                  # Standard icon
+#   ui_icon("fa2-warning")             # Extended icon set
+sub ui_icon
+{
+return theme_ui_icon(@_) if (defined(&theme_ui_icon));
+my ($icon, $attrs) = @_;
+
+return "" if (!defined($icon)) || $icon eq '';
+
+# Create attribute hash
+my $all_attrs = $attrs || {};
+
+# Process icon class
+my $icon_class = "";
+
+# Check if icon is in a specific bundle
+if ($icon =~ /^fa2-/) {
+	$icon_class = "fa2 $icon";
+	}
+elsif ($icon =~ /^fa-/) {
+	$icon_class = "fa $icon";
+	}
+else {
+	$icon_class = "fa fa-$icon";
+	}
+
+# Make icon always fixed width unless specified otherwise
+$icon_class .= " fa-fw" if ($all_attrs->{'class'} !~ /fa-dw/);
+
+# Add icon class to any existing classes
+if ($all_attrs->{'class'}) {
+	$all_attrs->{'class'} .= " $icon_class";
+} else {
+	$all_attrs->{'class'} = $icon_class;
+	}
+
+# Build the icon tag
+return ui_tag('i', undef, $all_attrs);
+}
+
+# ui_br([attrs])
+# Creates a line break element
+sub ui_br
+{
+return theme_ui_br(@_) if (defined(&theme_ui_br));
+my ($attrs) = @_;
+return ui_tag('br', undef, $attrs);
+}
+
+# ui_p(content, [attrs])
+# Creates a paragraph element with optional content
+sub ui_p
+{
+return theme_ui_p(@_) if (defined(&theme_ui_p));
+my ($content, $attrs) = @_;
+return ui_tag('p', $content, $attrs);
+}
+
+=head2 ui_text_mask(text, [tag], [extra_class])
+
+Returns an HTML string with the given text hidden inside a tag that only shows
+on hover. If a second parameter is given, it is used as the outer tag that
+triggers the hover (default is "td"). If a third parameter is provided,
+it is added as an extra class to both the tag and its style.
+
+=cut
+sub ui_text_mask
+{
+return &theme_ui_text_mask(@_) if (defined(&theme_ui_text_mask));
+my ($text, $tag, $extra_class) = @_;
+my $class = 'hover-mask';
+my $classcss = ".$class";
+if ($extra_class) {
+	$class .= " $extra_class";
+	$classcss .= ".$extra_class";
+	}
+$tag ||= 'td';
+my $style_content = <<"CSS";
+x-ui-text-mask${classcss} {
+	position: relative;
+	display: inline-block;
+	color: transparent;
+	transition:color .25s ease;
+}
+x-ui-text-mask${classcss}::after{
+	content: attr(data-mask);
+	position: absolute;
+	inset: 0;
+	white-space: nowrap;
+	color: var(--ui-password-mask-color, #000);
+	pointer-events: none;
+	transition: opacity .25s ease;
+}
+$tag:has(>*>x-ui-text-mask${classcss}):hover x-ui-text-mask${classcss},
+$tag:has(>x-ui-text-mask${classcss}):hover x-ui-text-mask${classcss}{
+	color: inherit;
+}
+$tag:has(>*>x-ui-text-mask${classcss}):hover x-ui-text-mask${classcss}::after,
+$tag:has(>x-ui-text-mask${classcss}):hover x-ui-text-mask${classcss}::after{
+	opacity: 0;
+}
+CSS
+my $rv = '';
+$rv .= &ui_tag('style', $style_content, { type => 'text/css' })
+	if (!$main::ui_text_mask_donecss->{"$tag$class"}++);
+$rv .= &ui_tag('x-ui-text-mask', $text,
+	{ 'class' => $class, 'data-mask' => '••••••••' });
+return $rv;
+}
+
+####################### widget functions
+
+=head1 Widgets
+
+The functions below add the UI elements that were missing from this
+library — cards, layout grids, section titles, description lists, stat
+tiles, badges, lists, activity feeds, empty states, progress bars,
+segmented controls, stacked fields, drop-down menus, dialogs, breadcrumbs
+and page links — styled by the widget stylesheet
+served from C<unauthenticated/css/ui-lib.css> with a small behavior
+script in C<unauthenticated/js/ui-lib.js>.
+
+They do not replace the existing functions. Inside a page area started by
+ui_page_start, existing tabs, forms, tables and buttons retain their theme
+styling. Modules keep using those functions and reach for the functions
+below for the new kinds of content.
+
+Example code :
+
+ ui_print_header(undef, $text{'index_title'}, "");
+
+ print ui_page_start({ 'desc' => $text{'index_desc'} });
+
+ print ui_grid([
+     ui_card({ 'title' => $text{'index_status'},
+               'actions' => ui_badge($text{'index_running'}, 'success'),
+               'body'  => ui_dl([
+                   [ $text{'index_version'}, html_escape($version) ],
+                   [ $text{'index_uptime'}, html_escape($uptime) ],
+                   ]) }),
+     ui_card({ 'title' => $text{'index_activity'},
+               'body'  => ui_stats(\@stats) }),
+     ]);
+
+ print ui_page_end();
+ ui_print_footer("/", $text{'index'});
+
+Design principles :
+
+=item * Options are named. Widget options are passed in a hash reference
+after any positional content arguments, so new options can be added
+without breaking callers.
+
+=item * Functions return HTML strings, so widgets can be freely composed.
+
+=item * Escaping is part of the contract. Text-valued options (C<title>,
+C<desc>, C<label>, C<text>, C<help>, C<meta>, C<when>, C<value>) are
+HTML-escaped by the library. HTML-valued options (C<body>, C<content>,
+C<actions>, C<footer> and supported C<*_html> variants of text options) are
+emitted as-is and are expected to be built from other ui functions.
+Description-list values given in the array form are HTML for
+composability.
+
+=item * Layout is CSS, not markup. Widgets emit flat, semantic elements
+built with ui_tag, carrying stable C<ui_*> classes, and the stylesheet
+arranges them with grid and flexbox.
+
+=item * Behavior is unobtrusive. Interactive elements carry C<data-ui-*>
+attributes which ui-lib.js wires up with delegated event listeners, so no
+inline event handlers are generated. A C<data-ui-confirm> attribute
+passed in the tags of an existing button or link asks its question in a
+dialog before the action runs; C<data-ui-confirm-title>,
+C<data-ui-confirm-ok> and C<data-ui-confirm-state> set the heading, the
+label of the confirming button and the color, which is danger for a
+danger action button and warning otherwise. ui_search can filter table
+rows or list entries client-side.
+
+=item * Theming is a contract, not a rewrite. Colors and spacing
+come from C<--ui-*> CSS custom properties which a theme can redefine on
+C<.ui_page>, and every element keeps a stable class for deeper styling. A built-in
+dark palette is available by setting C<data-ui-scheme> to C<dark> (or
+C<auto> to follow the browser) on any ancestor element, or via the
+scheme option of ui_page_start. A theme can still replace any function
+by defining C<theme_ui_*>, but should rarely need to.
+
+Widget states used throughout are C<success>, C<warning>, C<danger>,
+C<info> and C<neutral>. The aliases C<ok>, C<warn>, C<error>, C<err>,
+C<off>, C<secondary>, C<gray> and C<grey> are accepted.
+
+=cut
+
+# Per-request state, kept in main:: so it is shared no matter which
+# package the library was loaded into
+$main::ui_page_assets_done ||= 0;
+
+# Valid widget states, and aliases accepted for convenience
+my %ui_states = (
+	'success' => 'success',	'ok' => 'success',
+	'warning' => 'warning',	'warn' => 'warning',
+	'danger' => 'danger',	'error' => 'danger',	'err' => 'danger',
+	'info' => 'info',
+	'neutral' => 'neutral',	'off' => 'neutral',
+	'secondary' => 'neutral',	'gray' => 'neutral',	'grey' => 'neutral',
+	);
+
+# Built-in icon set, as 16x16 SVG path data drawn with the current color.
+# Each icon is one or more path definitions joined with |
+my %ui_svg_icons = (
+	'check'          => 'M3.5 8.5l3 3 6-6.5',
+	'check-circle'   => 'M8 14.25A6.25 6.25 0 1 0 8 1.75a6.25 6.25 0 0 0 0 12.5z|M5.4 8.3l1.8 1.9 3.4-4',
+	'x'              => 'M4.5 4.5l7 7|M11.5 4.5l-7 7',
+	'x-circle'       => 'M8 14.25A6.25 6.25 0 1 0 8 1.75a6.25 6.25 0 0 0 0 12.5z|M6 6l4 4|M10 6l-4 4',
+	'info-circle'    => 'M8 14.25A6.25 6.25 0 1 0 8 1.75a6.25 6.25 0 0 0 0 12.5z|M8 7.4v3.4|M8 5.1h.01',
+	'question-circle' => 'M8 14.25A6.25 6.25 0 1 0 8 1.75a6.25 6.25 0 0 0 0 12.5z|M6.2 6.2a1.8 1.8 0 1 1 2.6 1.8c-.55.28-.8.6-.8 1.15v.25|M8 11.3h.01',
+	'warning'        => 'M8 2.6l6.4 10.4H1.6L8 2.6z|M8 6.8v2.7|M8 11.3h.01',
+	'search'         => 'M7 11.25a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5z|M10.2 10.2l3.3 3.3',
+	'external'       => 'M6.5 4H4a1.5 1.5 0 0 0-1.5 1.5V12A1.5 1.5 0 0 0 4 13.5h6.5A1.5 1.5 0 0 0 12 12V9.5|M9.5 2.5h4v4|M13.3 2.7L7.8 8.2',
+	'chevron-down'   => 'M4 6l4 4 4-4',
+	'chevron-up'     => 'M4 10l4-4 4 4',
+	'chevron-right'  => 'M6 4l4 4-4 4',
+	'chevron-left'   => 'M10 4L6 8l4 4',
+	'arrow-right'    => 'M2.8 8h10|M9 4.2L12.8 8 9 11.8',
+	'plus'           => 'M8 3v10|M3 8h10',
+	'minus'          => 'M3 8h10',
+	'refresh'        => 'M13.2 6.2A5.5 5.5 0 0 0 3.4 4.6|M2.8 9.8a5.5 5.5 0 0 0 9.8 1.6|M13.5 2.5v3.7H9.8|M2.5 13.5V9.8h3.7',
+	'play'           => 'M5.5 3.6v8.8L12.5 8z',
+	'stop'           => 'M4.7 4.7h6.6v6.6H4.7z',
+	'power'          => 'M8 2.2v5.6|M11.4 4.4a5.4 5.4 0 1 1-6.8 0',
+	'clock'          => 'M8 14.25A6.25 6.25 0 1 0 8 1.75a6.25 6.25 0 0 0 0 12.5z|M8 4.8V8l2.2 1.4',
+	'star'           => 'M8 1.5l2 4.1 4.5.7-3.25 3.2.75 4.5L8 11.9l-4 2.1.75-4.5L1.5 6.3 6 5.6z',
+	'hard-drive'     => 'M3 2.5h10l1.5 7v4H1.5v-4z|M1.5 9.5h13|M4 11.5h.01|M7 11.5h.01',
+	'database'       => 'M8 6.3c3 0 5.4-.9 5.4-2s-2.4-2-5.4-2-5.4.9-5.4 2 2.4 2 5.4 2z|M2.6 4.3v7.4c0 1.1 2.4 2 5.4 2s5.4-.9 5.4-2V4.3|M2.6 8c0 1.1 2.4 2 5.4 2s5.4-.9 5.4-2',
+	'shield'         => 'M8 1.8l5.2 2v4c0 3.2-2.2 5.3-5.2 6.4C4.8 13.1 2.8 11 2.8 7.8v-4z',
+	'server'         => 'M2 3.2h12v4.2H2z|M2 8.6h12v4.2H2z|M4.6 5.3h.01|M4.6 10.7h.01',
+	'gear'           => 'M8 10.4a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8z|M8 1.8v2|M8 12.2v2|M1.8 8h2|M12.2 8h2|M3.6 3.6L5 5|M11 11l1.4 1.4|M12.4 3.6L11 5|M5 11l-1.4 1.4',
+	'user'           => 'M8 8a2.6 2.6 0 1 0 0-5.2A2.6 2.6 0 0 0 8 8z|M2.9 13.6a5.4 5.4 0 0 1 10.2 0',
+	'trash'          => 'M2.8 4.2h10.4|M6.2 4V2.8h3.6V4|M4.2 4.4l.5 8a1.4 1.4 0 0 0 1.4 1.3h3.8a1.4 1.4 0 0 0 1.4-1.3l.5-8|M6.6 7v4|M9.4 7v4',
+	'download'       => 'M8 2.5v7|M4.8 6.7L8 9.9l3.2-3.2|M3 12.5h10',
+	'upload'         => 'M8 9.5v-7|M4.8 5.3L8 2.1l3.2 3.2|M3 12.5h10',
+	'edit'           => 'M9.8 3.1l3.1 3.1L6 13.1l-3.6.5.5-3.6z|M8.6 4.3l3.1 3.1',
+	'terminal'       => 'M1.8 3h12.4v10H1.8z|M4.5 6.3L7 8.4l-2.5 2.1|M8.5 10.7h3',
+	'filter'         => 'M2.5 3.5h11L9.8 8.4v4.3l-3.6-1.6V8.4z',
+	'book'           => 'M8 3.4C6.9 2.6 5.3 2.2 2.8 2.3v10.3c2.5-.1 4.1.3 5.2 1.1 1.1-.8 2.7-1.2 5.2-1.1V2.3c-2.5-.1-4.1.3-5.2 1.1z|M8 3.4v10.3',
+	'globe'          => 'M8 14.25A6.25 6.25 0 1 0 8 1.75a6.25 6.25 0 0 0 0 12.5z|M2 8h12|M8 1.9c1.7 1.8 2.6 3.9 2.6 6.1S9.7 12.3 8 14.1C6.3 12.3 5.4 10.2 5.4 8S6.3 3.7 8 1.9z',
+	'dot'            => 'M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+	'ellipsis'       => 'M3.5 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2z|M8 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2z|M12.5 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
+	'menu'           => 'M2.5 4.2h11|M2.5 8h11|M2.5 11.8h11',
+	'home'           => 'M2.5 7.6L8 2.8l5.5 4.8|M4 6.6v6.6h8V6.6|M6.6 13.2V9.4h2.8v3.8',
+	'folder'         => 'M1.8 4.2h4.4l1.5 1.5h6.5v7.1H1.8z',
+	'folder-plus'    => 'M1.8 4.2h4.4l1.5 1.5h6.5v7.1H1.8z|M8 7.4v3.6|M6.2 9.2h3.6',
+	'file'           => 'M4 1.8h5.4l3 3v9.4H4z|M9.4 1.8v3h3',
+	'file-plus'      => 'M4 1.8h5.4l3 3v9.4H4z|M9.4 1.8v3h3|M8 7.4v3.8|M6.1 9.3h3.8',
+	'copy'           => 'M5.8 5.8h7.4v7.4H5.8z|M10.2 5.8V3.4a.6.6 0 0 0-.6-.6H3.4a.6.6 0 0 0-.6.6v6.2a.6.6 0 0 0 .6.6h2.4',
+	'scissors'       => 'M4.5 6.4a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8z|M4.5 13.4a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8z|M13.5 3.2L6.1 8|M13.5 12.8L6.1 8',
+	'clipboard'      => 'M5.5 3.2H4a1 1 0 0 0-1 1v8.6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.2a1 1 0 0 0-1-1h-1.5|M5.8 2.2h4.4v2H5.8z',
+	'archive'        => 'M2 3h12v3H2z|M3 6v7h10V6|M6.4 9h3.2',
+	'unarchive'      => 'M3 9.5v3.5h10V9.5|M3 9.5h10|M8 9.5V2.8|M5.5 5.3L8 2.8l2.5 2.5',
+	'key'            => 'M10.5 8.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M8.4 7.6l-5.9 5.9|M4.3 11.2l1.4 1.4|M6.1 9.4l1.4 1.4',
+	'tag'            => 'M2.2 2.2h5.6l6 6-5.6 5.6-6-6z|M5.2 5.2h.01',
+	'lock'           => 'M4 7.2h8v6.3H4z|M5.6 7.2V5.4a2.4 2.4 0 0 1 4.8 0v1.8|M8 10.1h.01',
+	'link'           => 'M7 9l2-2|M9.9 10.1l1.3-1.3a2.6 2.6 0 0 0-3.7-3.7L6.2 6.4|M6.1 5.9L4.8 7.2a2.6 2.6 0 0 0 3.7 3.7l1.3-1.3',
+	'bookmark'       => 'M4 2.5h8v11l-4-2.8-4 2.8z',
+	'check-square'   => 'M2.8 2.8h10.4v10.4H2.8z|M5.3 8.2l1.9 1.9 3.6-4.1',
+	'square-half'    => 'M2.8 2.8h10.4v10.4H2.8z|M8 2.8v10.4|M8 5.3h5.2|M8 7.8h5.2|M8 10.3h5.2',
+	'cursor-text'    => 'M5.5 2.5c1.4 0 2.5 1 2.5 2.4v6.2c0 1.4-1.1 2.4-2.5 2.4|M10.5 2.5c-1.4 0-2.5 1-2.5 2.4v6.2c0 1.4 1.1 2.4 2.5 2.4|M6 8h4',
+	);
+
+# Icons drawn filled rather than stroked
+my %ui_svg_icons_filled = ( 'play' => 1, 'stop' => 1, 'dot' => 1,
+			    'ellipsis' => 1 );
+
+# Default badge icons per state
+my %ui_state_icons = (
+	'success' => 'check-circle',
+	'warning' => 'warning',
+	'danger'  => 'x-circle',
+	'info'    => 'info-circle',
+	);
+
+# _ui_state(state)
+# Maps a caller-supplied state name or alias to a canonical state class
+# suffix, defaulting to neutral
+sub _ui_state
+{
+my ($state) = @_;
+return $state && $ui_states{$state} ? $ui_states{$state} : 'neutral';
+}
+
+# _ui_text(&opts, key)
+# Returns the escaped text option, preferring a raw key_html variant when
+# the caller supplied pre-built HTML. Returns undef if both are absent or empty.
+sub _ui_text
+{
+my ($opts, $key) = @_;
+return $opts->{$key.'_html'} if (defined($opts->{$key.'_html'}) &&
+				 $opts->{$key.'_html'} ne '');
+return &html_escape($opts->{$key}) if (defined($opts->{$key}) &&
+				       $opts->{$key} ne '');
+return undef;
+}
+
+# _ui_attrs(&attrs)
+# Returns a copy of the given attribute hash without the undefined or empty
+# values, ready for ui_tag. Boolean attributes like checked are added by the
+# callers afterwards with an undefined value, which ui_tag_start emits bare.
+sub _ui_attrs
+{
+my ($attrs) = @_;
+my %rv;
+foreach my $key (keys %$attrs) {
+	my $value = $attrs->{$key};
+	next if (!defined($value) || $value eq '');
+	$rv{$key} = $value;
+	}
+return \%rv;
+}
+
+# _ui_class(@classes)
+# Joins the given class names, skipping empty ones
+sub _ui_class
+{
+return join(" ", grep { defined($_) && $_ ne '' } @_);
+}
+
+# _ui_join(&items)
+# Joins a list of HTML fragments, accepting either an array reference or a
+# single pre-built string, and skipping empty entries
+sub _ui_join
+{
+my ($items) = @_;
+return "" if (!defined($items));
+return $items if (!ref($items));
+return join("\n", grep { defined($_) && $_ ne '' } @$items);
+}
+
+# _ui_block(tag, content, [&attrs])
+# Returns a block element whose content starts and ends on its own line,
+# so that nested widgets stay readable in the page source
+sub _ui_block
+{
+my ($tag, $content, $attrs) = @_;
+return &ui_tag($tag, "\n".$content."\n", $attrs);
+}
+
+=head2 ui_svg_icon(name, [&opts])
+
+Returns inline SVG for a named icon from the built-in set, drawn with the
+current text color. Unlike ui_icon, this does not depend on any theme
+icon font. Each icon has a CSS class identifying its name, such as
+C<ui_svg_icon_trash>, for targeted styling. Options are :
+
+=item size - Pixel size, defaulting to 16.
+
+=item class - Additional CSS classes for the <svg> element.
+
+=item title - Accessible label. Without it the icon is hidden from
+screen readers.
+
+=cut
+sub ui_svg_icon
+{
+return &theme_ui_svg_icon(@_) if (defined(&theme_ui_svg_icon));
+my ($name, $opts) = @_;
+$opts ||= {};
+my $paths = $ui_svg_icons{$name};
+return "" if (!$paths);
+my $size = int($opts->{'size'} || 16);
+my %attrs = ( 'class' => &_ui_class('ui_svg_icon', 'ui_svg_icon_'.$name,
+				  $opts->{'class'}),
+	      'width' => $size,
+	      'height' => $size,
+	      'viewBox' => '0 0 16 16',
+	      'fill' => $ui_svg_icons_filled{$name} ? 'currentColor' : 'none',
+	      'stroke' => 'currentColor',
+	      'stroke-width' => '1.5',
+	      'stroke-linecap' => 'round',
+	      'stroke-linejoin' => 'round' );
+if (defined($opts->{'title'}) && $opts->{'title'} ne '') {
+	$attrs{'role'} = 'img';
+	$attrs{'aria-label'} = $opts->{'title'};
+	}
+else {
+	$attrs{'aria-hidden'} = 'true';
+	}
+my $rv = &ui_tag_start('svg', \%attrs);
+foreach my $p (split(/\|/, $paths)) {
+	$rv .= &ui_tag('path', undef, { 'd' => $p });
+	}
+$rv .= &ui_tag_end('svg');
+return $rv;
+}
+
+=head2 ui_code(text)
+
+Returns the given text styled as inline code.
+
+=cut
+sub ui_code
+{
+return &theme_ui_code(@_) if (defined(&theme_ui_code));
+my ($str) = @_;
+return &ui_tag('code', &html_escape($str), { 'class' => 'ui_code' });
+}
+
+=head2 ui_tip(content-html, tip)
+
+Wraps arbitrary HTML content so the given plain-text tip is shown on
+hover by the theme's tooltip, the same one ui_help uses. For a plain
+question-mark help bubble, use ui_help instead.
+
+=cut
+sub ui_tip
+{
+return &theme_ui_tip(@_) if (defined(&theme_ui_tip));
+my ($content, $tip) = @_;
+return &ui_tag('span', $content,
+	{ 'class' => 'ui_tip', 'aria-label' => &html_strip($tip),
+	  'data-tooltip' => undef });
+}
+
+####################### page structure functions
+
+=head2 ui_page_assets([&opts])
+
+Returns the <link> and <script> tags that load the widget stylesheet and
+behavior script, exactly once per page. This is normally called
+automatically by ui_page_start, but can also be passed in the head-stuff
+parameter of ui_print_header to load the assets from the <head> section.
+Options are :
+
+=item nojs - Set to 1 to skip the behavior script.
+
+=cut
+sub ui_page_assets
+{
+return &theme_ui_page_assets(@_) if (defined(&theme_ui_page_assets));
+my ($opts) = @_;
+$opts ||= {};
+return "" if ($main::ui_page_assets_done++);
+my $pfx = &get_webprefix();
+
+# Each file is linked with its modification time as the cache key, so a
+# browser picks up a changed file at once instead of keeping the copy it
+# cached under the Webmin version, which stays the same between edits
+my $ver = &get_webmin_version() || 0;
+my $key = sub {
+	my ($file) = @_;
+	my @st = stat("$root_directory/unauthenticated/$file");
+	return @st ? $st[9] : $ver;
+	};
+my $rv = &ui_tag('link', undef,
+	{ 'rel' => 'stylesheet',
+	  'href' => "$pfx/unauthenticated/css/ui-lib.css?".
+		    $key->("css/ui-lib.css") })."\n";
+# The script tag carries the texts of the confirmation dialog, which the
+# script builds itself
+$rv .= &ui_tag('script', undef,
+	{ 'src' => "$pfx/unauthenticated/js/ui-lib.js?".
+		   $key->("js/ui-lib.js"),
+	  'defer' => undef,
+	  'data-ui-lib' => '1',
+	  'data-ui-text-confirm' => $text{'ui_confirm'} || 'Please confirm',
+	  'data-ui-text-ok' => $text{'ok'} || 'OK',
+	  'data-ui-text-cancel' => $text{'cancel'} || 'Cancel',
+	  'data-ui-text-close' => $text{'ui_close'} || 'Close' })
+	if (!$opts->{'nojs'});
+return $rv;
+}
+
+=head2 ui_page_start([&opts])
+
+Returns HTML for the start of a widget page area, including the assets (if
+not yet loaded) and an optional page header with a description and
+actions. The page title itself is printed by ui_print_header as usual.
+All other widgets, and any existing tabs, forms and tables that
+should get the widget styling, should be placed between this and
+ui_page_end. Options are :
+
+=item title - Large page title text, for pages that do not already show
+one in the theme header.
+
+=item desc - Short description shown under the title.
+
+=item help - URL of a help or documentation page, shown as a link with a
+question-mark icon on the right.
+
+=item help_title - Text for the help link, defaulting to "Help".
+
+=item actions - HTML (or array ref of HTML fragments) for buttons or
+links shown at the top right.
+
+=item scheme - Color scheme for the page area. By default the light
+palette is used; set to dark for the built-in dark palette, or to auto
+to follow the browser's preferred color scheme. A theme can instead set
+a data-ui-scheme attribute on the body or html element to control all
+widget pages at once, or redefine the --ui-* CSS custom properties for
+full control.
+
+=item class - Additional CSS classes for the wrapper element.
+
+=item id - HTML id for the wrapper element.
+
+=cut
+sub ui_page_start
+{
+return &theme_ui_page_start(@_) if (defined(&theme_ui_page_start));
+my ($opts) = @_;
+$opts ||= {};
+my $rv = &ui_page_assets();
+my $scheme = $opts->{'scheme'} && $opts->{'scheme'} =~ /^(dark|auto)$/ ?
+		$opts->{'scheme'} : undef;
+$rv .= &ui_tag_start('div', &_ui_attrs({
+	'class' => &_ui_class('ui_page', $opts->{'class'}),
+	'data-ui-scheme' => $scheme,
+	'id' => $opts->{'id'} }))."\n";
+
+# Optional header with title, description, help link and actions
+my $title = &_ui_text($opts, 'title');
+my $desc = &_ui_text($opts, 'desc');
+my $actions = &_ui_join($opts->{'actions'});
+my $help = "";
+if ($opts->{'help'}) {
+	my $htitle = defined($opts->{'help_title'}) ? $opts->{'help_title'} :
+			$text{'ui_page_help'} || 'Help';
+	$help = &ui_tag('a',
+		&ui_svg_icon('question-circle', { 'size' => 15 }).
+		&ui_tag('span', &html_escape($htitle)),
+		{ 'class' => 'ui_page_help', 'href' => $opts->{'help'} });
+	}
+if (defined($title) || defined($desc) || $actions || $help) {
+	my $titles = "";
+	$titles .= &ui_tag('h1', $title, { 'class' => 'ui_page_title' })
+		if (defined($title));
+	$titles .= &ui_tag('p', $desc, { 'class' => 'ui_page_desc' })
+		if (defined($desc));
+	my $head = &_ui_block('div', $titles, { 'class' => 'ui_page_titles' });
+	$head .= &ui_tag('div', $help.$actions, { 'class' => 'ui_page_actions' })
+		if ($actions || $help);
+	$rv .= &_ui_block('header', $head, { 'class' => 'ui_page_head' });
+	}
+return $rv;
+}
+
+=head2 ui_page_end
+
+Returns HTML ending a page area started by ui_page_start.
+
+=cut
+sub ui_page_end
+{
+return &theme_ui_page_end(@_) if (defined(&theme_ui_page_end));
+return &ui_tag_end('div');
+}
+
+####################### layout functions
+
+=head2 ui_grid(&items, [&opts])
+
+Returns HTML for a responsive grid of the given HTML fragments, typically
+cards. By default columns are sized automatically to fit at least the
+minimum width, wrapping on narrow screens. Options are :
+
+=item cols - Fixed number of equal columns instead of automatic sizing.
+
+=item min - Minimum column width for automatic mode, such as 320px.
+
+=item template - Raw grid-template-columns value for unequal column
+layouts, such as "minmax(280px,1fr) minmax(0,2fr)". Overrides cols. On
+narrow screens the grid always collapses to one column.
+
+=item gap - Gap between cells, as a CSS length.
+
+=item class - Additional CSS classes.
+
+=cut
+sub ui_grid
+{
+return &theme_ui_grid(@_) if (defined(&theme_ui_grid));
+my ($items, $opts) = @_;
+$opts ||= {};
+my @items = grep { defined($_) && $_ ne '' } @$items;
+return "" if (!@items);
+my $fixed = $opts->{'cols'} || $opts->{'template'};
+my @style;
+push(@style, "--ui-grid-cols:".int($opts->{'cols'}))
+	if ($opts->{'cols'} && !$opts->{'template'});
+push(@style, "--ui-grid-template:".$opts->{'template'})
+	if ($opts->{'template'});
+push(@style, "--ui-grid-min:".$opts->{'min'}) if ($opts->{'min'});
+push(@style, "--ui-gap:".$opts->{'gap'}) if ($opts->{'gap'});
+return &_ui_block('div', join("\n", @items), &_ui_attrs({
+	'class' => &_ui_class('ui_grid', $fixed ? 'ui_grid_fixed' : undef,
+			      $opts->{'class'}),
+	'style' => @style ? join(";", @style) : undef }));
+}
+
+=head2 ui_stack(&items, [&opts])
+
+Returns HTML stacking the given fragments vertically with consistent
+spacing. Options are C<gap> and C<class>.
+
+=cut
+sub ui_stack
+{
+return &theme_ui_stack(@_) if (defined(&theme_ui_stack));
+my ($items, $opts) = @_;
+$opts ||= {};
+my @items = grep { defined($_) && $_ ne '' } @$items;
+return "" if (!@items);
+return &_ui_block('div', join("\n", @items), &_ui_attrs({
+	'class' => &_ui_class('ui_stack', $opts->{'class'}),
+	'style' => $opts->{'gap'} ? "--ui-gap:".$opts->{'gap'} : undef }));
+}
+
+=head2 ui_cluster(&items, [&opts])
+
+Returns HTML for a horizontal row of the given fragments — typically
+buttons or badges — which wraps on narrow screens. Options are :
+
+=item align - Horizontal alignment : start (default), center, end or
+between.
+
+=item gap - Gap between items, as a CSS length.
+
+=item class - Additional CSS classes.
+
+=cut
+sub ui_cluster
+{
+return &theme_ui_cluster(@_) if (defined(&theme_ui_cluster));
+my ($items, $opts) = @_;
+$opts ||= {};
+my @items = grep { defined($_) && $_ ne '' } @$items;
+return "" if (!@items);
+my $align = $opts->{'align'} || '';
+return &_ui_block('div', join("\n", @items), &_ui_attrs({
+	'class' => &_ui_class('ui_cluster',
+			      $align =~ /^(center|end|between)$/ ?
+				"ui_cluster_$align" : undef,
+			      $opts->{'class'}),
+	'style' => $opts->{'gap'} ? "--ui-gap:".$opts->{'gap'} : undef }));
+}
+
+=head2 ui_section_title(title, [&opts])
+
+Returns HTML for a small uppercase heading above a group of widgets,
+such as a card or a list, with optional links or buttons at its right.
+It names a part of a page without the weight of a card header. Options
+are :
+
+=item title_html - Pre-built HTML in place of the title text.
+
+=item actions - HTML (or array ref of fragments) shown at the right,
+such as a link that clears or adds to the group below.
+
+=item class - Additional CSS classes.
+
+=item id - HTML id for the heading row.
+
+=cut
+sub ui_section_title
+{
+return &theme_ui_section_title(@_) if (defined(&theme_ui_section_title));
+my ($title, $opts) = @_;
+$opts ||= {};
+my $text = &_ui_text({ 'title' => $title,
+		       'title_html' => $opts->{'title_html'} }, 'title');
+my $actions = &_ui_join($opts->{'actions'});
+return "" if (!defined($text) && !$actions);
+my $rv = &ui_tag('h2', defined($text) ? $text : "",
+		 { 'class' => 'ui_section_title_text' });
+$rv .= &ui_tag('div', $actions, { 'class' => 'ui_section_title_actions' })
+	if ($actions);
+return &_ui_block('div', $rv, &_ui_attrs({
+	'class' => &_ui_class('ui_section_title', $opts->{'class'}),
+	'id' => $opts->{'id'} }));
+}
+
+####################### card functions
+
+# _ui_card_head(&opts)
+# Builds the optional header section of a card from title, desc and
+# actions options
+sub _ui_card_head
+{
+my ($opts) = @_;
+my $title = &_ui_text($opts, 'title');
+my $desc = &_ui_text($opts, 'desc');
+my $actions = &_ui_join($opts->{'actions'});
+return "" if (!defined($title) && !defined($desc) && !$actions);
+my $titles = "";
+$titles .= &ui_tag('h2', $title, { 'class' => 'ui_card_title' })
+	if (defined($title));
+$titles .= &ui_tag('p', $desc, { 'class' => 'ui_card_desc' })
+	if (defined($desc));
+my $head = &_ui_block('div', $titles, { 'class' => 'ui_card_titles' });
+$head .= &ui_tag('div', $actions, { 'class' => 'ui_card_actions' })
+	if ($actions);
+return &_ui_block('header', $head, { 'class' => 'ui_card_head' });
+}
+
+=head2 ui_card(&opts)
+
+Returns HTML for a card — the primary container widget, drawn as a
+surface with a border. Options are :
+
+=item title - Card heading text.
+
+=item desc - Short description under the heading.
+
+=item actions - HTML (or array ref of fragments) shown at the top right
+of the card, such as buttons, links or a badge.
+
+=item body - HTML for the card content, which may include forms and
+tables built with the existing ui functions.
+
+=item footer - HTML shown in a separated footer area.
+
+=item flush - Set to 1 to remove horizontal body padding, for full-bleed content
+such as lists. Tables keep their own border and look better with the
+padding.
+
+=item state - Optional state name, which adds a colored accent border.
+
+=item class - Additional CSS classes.
+
+=item id - HTML id for the card element.
+
+=cut
+sub ui_card
+{
+return &theme_ui_card(@_) if (defined(&theme_ui_card));
+my ($opts) = @_;
+$opts ||= {};
+my $rv = &ui_card_start($opts);
+$rv .= defined($opts->{'body'}) ? $opts->{'body'} : "";
+$rv .= &ui_card_end($opts->{'footer'});
+return $rv;
+}
+
+=head2 ui_card_start(&opts)
+
+Returns HTML for the start of a card, for callers that print content
+progressively. Takes the same options as ui_card except body and
+footer, and must be followed by ui_card_end.
+
+=cut
+sub ui_card_start
+{
+return &theme_ui_card_start(@_) if (defined(&theme_ui_card_start));
+my ($opts) = @_;
+$opts ||= {};
+my $rv = &ui_tag_start('section', &_ui_attrs({
+	'class' => &_ui_class('ui_card',
+			      $opts->{'state'} ?
+				"ui_card_".&_ui_state($opts->{'state'}) : undef,
+			      $opts->{'class'}),
+	'id' => $opts->{'id'} }))."\n";
+$rv .= &_ui_card_head($opts);
+$rv .= &ui_tag_start('div', {
+	'class' => &_ui_class('ui_card_body',
+			      $opts->{'flush'} ? 'ui_card_flush' : undef) })."\n";
+return $rv;
+}
+
+=head2 ui_card_end([footer])
+
+Returns HTML for the end of a card started by ui_card_start, with an
+optional HTML footer area.
+
+=cut
+sub ui_card_end
+{
+return &theme_ui_card_end(@_) if (defined(&theme_ui_card_end));
+my ($footer) = @_;
+my $rv = &ui_tag_end('div');
+$rv .= &ui_tag('footer', $footer, { 'class' => 'ui_card_foot' })
+	if (defined($footer) && $footer ne '');
+$rv .= &ui_tag_end('section');
+return $rv;
+}
+
+####################### data display functions
+
+=head2 ui_stat(&opts)
+
+Returns HTML for a single statistic tile with a large value and a label.
+Options are :
+
+=item value - The number or short value to display prominently.
+
+=item label - Label text under the value.
+
+=item desc - Smaller muted description under the label.
+
+=item state - Optional state name to color the value.
+
+=item href - Optional URL, making the whole tile a link.
+
+=item icon - Optional icon name shown before the value.
+
+=item shape - Square corners (square, the default) or rounded corners (rounded).
+
+=cut
+sub ui_stat
+{
+return &theme_ui_stat(@_) if (defined(&theme_ui_stat));
+my ($opts) = @_;
+$opts ||= {};
+my $value = &_ui_text($opts, 'value');
+$value = "0" if (!defined($value));
+my $body = &ui_tag('span',
+	($opts->{'icon'} ?
+		&ui_svg_icon($opts->{'icon'}, { 'size' => 20 })." " : "").$value,
+	{ 'class' => &_ui_class('ui_stat_value',
+				$opts->{'state'} ?
+				  "ui_fg_".&_ui_state($opts->{'state'}) : undef) });
+my $label = &_ui_text($opts, 'label');
+$body .= &ui_tag('span', $label, { 'class' => 'ui_stat_label' })
+	if (defined($label));
+my $desc = &_ui_text($opts, 'desc');
+$body .= &ui_tag('span', $desc, { 'class' => 'ui_stat_desc' })
+	if (defined($desc));
+return &_ui_block($opts->{'href'} ? 'a' : 'div', $body, &_ui_attrs({
+	'class' => &_ui_class('ui_stat', ($opts->{'shape'} || '') eq 'rounded' ?
+		'ui_stat_rounded' : 'ui_stat_square'),
+	'href' => $opts->{'href'} }));
+}
+
+=head2 ui_stats(&stats, [&opts])
+
+Returns HTML for a responsive row of statistic tiles. Each element of the
+stats array is a hash reference in ui_stat format. Options are C<class>
+and C<min> for the minimum tile width, and C<shape> for the default corner
+shape. An individual tile's C<shape> overrides the row's setting.
+
+=cut
+sub ui_stats
+{
+return &theme_ui_stats(@_) if (defined(&theme_ui_stats));
+my ($stats, $opts) = @_;
+$opts ||= {};
+return "" if (!$stats || !@$stats);
+# Apply row defaults to a copy so caller-owned tile options stay unchanged.
+return &_ui_block('div', join("", map {
+	&ui_stat({ 'shape' => $opts->{'shape'}, %$_ }) } @$stats),
+	&_ui_attrs({
+		'class' => &_ui_class('ui_stats', $opts->{'class'}),
+		'style' => $opts->{'min'} ?
+			"--ui-grid-min:".$opts->{'min'} : undef }));
+}
+
+=head2 ui_dl(&rows, [&opts])
+
+Returns HTML for a description list of label and value pairs, for
+displaying (rather than editing) information. Each row is either a two
+or three element array reference of C<[ label, value-html, help-text ]>,
+or a hash reference with keys :
+
+=item label - Plain label text.
+
+=item label_html - Pre-built HTML for the label, used instead of label.
+
+=item value - Plain value text, which will be escaped.
+
+=item value_html - Pre-built HTML for the value, used instead of value.
+
+=item help - Plain help text shown as a question-mark tooltip after the
+label.
+
+Options are :
+
+=item cols - Set to 2 to fit up to two pairs per line. Longer pairs take a full line before moving the value below its label.
+
+=item wide - CSS width reserved for each label, such as 40%.
+
+=item class - Additional CSS classes.
+
+=cut
+sub ui_dl
+{
+return &theme_ui_dl(@_) if (defined(&theme_ui_dl));
+my ($rows, $opts) = @_;
+$opts ||= {};
+return "" if (!$rows || !@$rows);
+my $body = "";
+foreach my $row (@$rows) {
+	next if (!defined($row));
+	my ($label, $value, $help);
+	if (ref($row) eq 'HASH') {
+		# Row given as named parts, escaped unless supplied as HTML
+		$label = defined($row->{'label_html'}) ? $row->{'label_html'}
+			   : &html_escape($row->{'label'});
+		$value = defined($row->{'value_html'}) ? $row->{'value_html'}
+			   : &html_escape($row->{'value'});
+		$help = $row->{'help'};
+		}
+	else {
+		# Row given as a [ label, value-html, help ] array
+		$label = &html_escape($row->[0]);
+		$value = defined($row->[1]) ? $row->[1] : "";
+		$help = $row->[2];
+		}
+	$body .= &ui_tag('div',
+		&ui_tag('dt', $label.($help ? " ".&ui_help($help) : "")).
+		&ui_tag('dd', $value),
+		{ 'class' => 'ui_dl_row' });
+	}
+return &_ui_block('dl', $body, &_ui_attrs({
+	'class' => &_ui_class('ui_dl',
+			      $opts->{'cols'} && $opts->{'cols'} > 1 ?
+				'ui_dl_cols' : undef,
+			      $opts->{'class'}),
+	'style' => $opts->{'wide'} ? "--ui-dl-label:".$opts->{'wide'} : undef }));
+}
+
+=head2 ui_badge(text, [state], [&opts])
+
+Returns HTML for a status badge, such as "Running" in green. The state
+is one of success, warning, danger, info or neutral. Options are :
+
+=item icon - Icon name to show before the text, replacing the state's
+default icon. Set to an empty string for no icon at all.
+
+=item dot - Set to 1 to show a plain colored dot instead of an icon.
+
+=item title - Tooltip text for the badge.
+
+=item small - Set to 1 for a smaller badge, so it does not outweigh the text next to it. List rows already draw their badges small.
+
+=item rounded - Set to 1 for rounded ends, instead of the square corners badges use by default.
+
+=item class - Extra CSS class names for the badge.
+
+=cut
+sub ui_badge
+{
+return &theme_ui_badge(@_) if (defined(&theme_ui_badge));
+my ($label, $state, $opts) = @_;
+$opts ||= {};
+$state = &_ui_state($state);
+my $icon = "";
+if ($opts->{'dot'}) {
+	$icon = &ui_svg_icon('dot', { 'size' => 10 });
+	}
+elsif (defined($opts->{'icon'})) {
+	$icon = $opts->{'icon'} eq '' ? "" :
+		&ui_svg_icon($opts->{'icon'}, { 'size' => 13 });
+	}
+elsif ($ui_state_icons{$state}) {
+	$icon = &ui_svg_icon($ui_state_icons{$state}, { 'size' => 13 });
+	}
+return &ui_tag('span', $icon.&ui_tag('span', &html_escape($label)),
+	&_ui_attrs({ 'class' => &_ui_class('ui_badge', 'ui_badge_'.$state,
+			$opts->{'small'} ? 'ui_badge_small' : undef,
+			$opts->{'rounded'} ? 'ui_badge_rounded' : undef,
+			$opts->{'class'}),
+		     'title' => $opts->{'title'} }));
+}
+
+=head2 ui_action_button(label, [state], [&opts])
+
+Returns a native button, or a link when href is supplied, using the
+current theme's button styles. State accepts the same values and aliases
+as ui_badge and defaults to neutral; the extra state primary uses the
+theme's informational action style for the one main action of a form.
+Labels are plain text. Options are :
+
+=item href - Destination URL. When present, renders an <a> instead of a
+<button>. Use links for navigation and buttons for form actions.
+
+=item type - Button type: button (the default), submit or reset. Ignored
+for links. An ordinary button needs a caller-provided event handler.
+
+=item size - small, normal (the default), or large.
+
+=item shape - square corners (square, the default), rounded corners
+(rounded), or rounded ends (pill).
+
+=item icon - SVG icon name. Defaults to the state's badge icon. An empty
+string suppresses the icon. Set dot to 1 to use a dot instead.
+
+=item icon_after - Set to 1 to show the icon after the label, as for a
+forward arrow.
+
+=item disabled - Disables a button. A disabled link has no destination,
+is marked aria-disabled and is removed from keyboard navigation.
+
+=item name, value, form, id, title - Native HTML attributes. A submit
+button's name and value are included only when it submits the form.
+
+=item class - Additional CSS classes.
+
+=item attrs - Additional HTML attributes, such as data-ui-confirm,
+aria-label or target. Generated classes, type, href and disabled behavior
+take precedence. Attribute values are escaped; event handlers are trusted
+code supplied by the calling module.
+
+Loads ui_page_assets once, and can also be used outside a ui_page.
+
+=cut
+
+# _ui_action_theme_classes(state, size)
+# Returns the native theme classes for a normalized action state and size.
+sub _ui_action_theme_classes
+{
+my ($state, $size) = @_;
+my $button_class = {
+	'neutral' => 'btn-default',
+	'success' => 'btn-success',
+	'warning' => 'btn-warning',
+	'danger' => 'btn-danger',
+	'info' => 'btn-info',
+	'primary' => 'btn-info',
+	}->{$state};
+my $button_size = $size eq 'small' ? 'btn-xs' :
+	$size eq 'large' ? 'btn-lg' : undef;
+return ('btn', $button_class, $button_size);
+}
+
+sub ui_action_button
+{
+return &theme_ui_action_button(@_) if (defined(&theme_ui_action_button));
+my ($label, $state, $opts) = @_;
+$opts ||= {};
+# Keep primary distinct from the badge states.
+$state = ($state || '') eq 'primary' ? 'primary' : &_ui_state($state);
+my $size = ($opts->{'size'} || '') =~ /\A(?:small|normal|large)\z/
+	? $opts->{'size'} : 'normal';
+my $shape = ($opts->{'shape'} || '') =~ /\A(?:square|rounded|pill)\z/
+	? $opts->{'shape'} : 'square';
+my $tag = defined($opts->{'href'}) ? 'a' : 'button';
+my %attrs = %{$opts->{'attrs'} || {}};
+my $disabled = $opts->{'disabled'} || exists($attrs{'disabled'});
+my @theme_classes = &_ui_action_theme_classes($state, $size);
+$attrs{'class'} = &_ui_class('ui_action', 'ui_action_'.$state,
+	'ui_action_'.$size, 'ui_action_'.$shape, @theme_classes,
+	$opts->{'class'}, $attrs{'class'});
+# Preserve empty and zero values, which can be meaningful form values.
+foreach my $name (qw(name value form id title)) {
+	$attrs{$name} = $opts->{$name} if (defined($opts->{$name}));
+	}
+if ($tag eq 'a') {
+	# Native links retain browser navigation and SPA link handling.
+	delete(@attrs{qw(type disabled)});
+	$attrs{'href'} = $opts->{'href'};
+	if ($disabled) {
+		# Removing href also prevents navigation when JavaScript is unavailable.
+		delete($attrs{'href'});
+		$attrs{'role'} = 'link';
+		$attrs{'aria-disabled'} = 'true';
+		$attrs{'tabindex'} = -1;
+		}
+	}
+else {
+	# Default to a non-submitting button even inside an existing form.
+	delete($attrs{'href'});
+	$attrs{'type'} = ($opts->{'type'} || '') =~ /\A(?:button|submit|reset)\z/
+		? $opts->{'type'} : 'button';
+	$attrs{'disabled'} = undef if ($disabled);
+	}
+# Match badge icons without borrowing badge or legacy button classes.
+my $icon = '';
+if ($opts->{'dot'}) {
+	$icon = &ui_svg_icon('dot');
+	}
+else {
+	my $name = defined($opts->{'icon'}) ? $opts->{'icon'} : $ui_state_icons{$state};
+	$icon = &ui_svg_icon($name) if ($name);
+	}
+my $label_html = &ui_tag('span', &html_escape($label));
+return &ui_page_assets().&ui_tag($tag,
+	&ui_tag('span', $opts->{'icon_after'} ? $label_html.$icon : $icon.$label_html,
+		{ 'class' => 'ui_action_content' }), \%attrs);
+}
+
+=head2 ui_chip(text, [&opts])
+
+Returns HTML for a small muted chip, such as a category or source label
+next to a list entry, or one fact in a summary line. Options are :
+
+=item state - Shows a colored dot before the text : success, warning,
+danger, info or neutral, as for ui_badge. The chip itself stays muted,
+so a row of chips reads as one line rather than a row of alerts.
+
+=item icon - Icon name shown before the text instead of a dot.
+
+=item title - Tooltip text for the chip.
+
+=item id - HTML id for the chip.
+
+=item attrs - Hash reference of additional attributes, such as data-*
+values for a script that updates or hides the chip. The text sits in a
+span with the ui_chip_text class, so a script can replace it without
+touching the dot.
+
+=item class - Additional CSS classes.
+
+=cut
+sub ui_chip
+{
+return &theme_ui_chip(@_) if (defined(&theme_ui_chip));
+my ($label, $opts) = @_;
+$opts ||= {};
+my $icon = "";
+if ($opts->{'state'}) {
+	$icon = &ui_tag('span', &ui_svg_icon('dot', { 'size' => 12 }),
+		{ 'class' => 'ui_chip_dot ui_fg_'.&_ui_state($opts->{'state'}) });
+	}
+elsif ($opts->{'icon'}) {
+	$icon = &ui_svg_icon($opts->{'icon'}, { 'size' => 12 });
+	}
+return &ui_tag('span',
+	$icon.&ui_tag('span', &html_escape($label), { 'class' => 'ui_chip_text' }),
+	&_ui_attrs({ %{$opts->{'attrs'} || {}},
+		     'class' => &_ui_class('ui_chip', $opts->{'class'}),
+		     'id' => $opts->{'id'}, 'title' => $opts->{'title'} }));
+}
+
+=head2 ui_list(&items, [&opts])
+
+Returns HTML for a stacked list of entries with titles, descriptions and
+trailing details. Each item is a hash reference with keys :
+
+=item title - Entry title text (or title_html for pre-built HTML).
+
+=item desc - Secondary description line (or desc_html).
+
+=item href - Optional URL, making the title a link.
+
+=item badge - Optional array ref of [ text, state ] shown after the
+title, or badge_html for arbitrary HTML.
+
+=item tags - Optional array ref of plain strings shown as small chips
+after the description.
+
+=item meta - Muted text aligned to the right, such as a time or count.
+
+=item actions - HTML for buttons or links aligned to the right.
+
+=item icon - Optional icon name shown before the title.
+
+=item state - Optional state name, which colors the icon.
+
+=item chevron - Set to 1 to end the row with a chevron and make the whole
+row open href, for entries that lead to another page.
+
+Options are :
+
+=item flush - Set to 1 when the list fills a flush card body, extending
+row separators to the card edges.
+
+=item icon_box - Set to 1 to draw each entry's icon in a small square
+tile, which gives rows of files or databases more weight.
+
+=item stacked - Set to 1 to put each entry's actions under its meta text,
+aligned to the right, instead of beside it.
+
+=item class - Additional CSS classes.
+
+=cut
+sub ui_list
+{
+return &theme_ui_list(@_) if (defined(&theme_ui_list));
+my ($items, $opts) = @_;
+$opts ||= {};
+return "" if (!$items || !@$items);
+my $body = "";
+foreach my $item (@$items) {
+	next if (!defined($item));
+
+	# Title line, with optional link and badge
+	my $title = &_ui_text($item, 'title');
+	$title = &ui_tag('a', $title,
+			 { 'class' => 'ui_list_link', 'href' => $item->{'href'} })
+		if (defined($title) && $item->{'href'});
+	my $badge = defined($item->{'badge_html'}) ? $item->{'badge_html'} :
+		    $item->{'badge'} ? &ui_badge(@{$item->{'badge'}}) : "";
+	my $main = &ui_tag('div',
+		(defined($title) ? $title : "").($badge ? " ".$badge : ""),
+		{ 'class' => 'ui_list_title' });
+
+	# Description line with chips
+	my $desc = &_ui_text($item, 'desc');
+	my $tags = $item->{'tags'} && @{$item->{'tags'}} ?
+		join(" ", map { &ui_chip($_) } @{$item->{'tags'}}) : "";
+	$main .= &ui_tag('div',
+		(defined($desc) ? $desc : "").($tags ? " ".$tags : ""),
+		{ 'class' => 'ui_list_desc' }) if (defined($desc) || $tags);
+
+	# Leading icon, and trailing meta text and actions
+	my $row = "";
+	$row .= &ui_tag('span', &ui_svg_icon($item->{'icon'}),
+		{ 'class' => &_ui_class('ui_list_icon',
+					$item->{'state'} ?
+					  "ui_fg_".&_ui_state($item->{'state'}) :
+					  undef) }) if ($item->{'icon'});
+	$row .= &_ui_block('div', $main, { 'class' => 'ui_list_main' });
+	my $meta = &_ui_text($item, 'meta');
+	my $actions = &_ui_join($item->{'actions'});
+	$row .= &ui_tag('div',
+		(defined($meta) ?
+			&ui_tag('span', $meta, { 'class' => 'ui_list_meta' }) : "").
+		$actions,
+		{ 'class' => 'ui_list_side' }) if (defined($meta) || $actions);
+
+	# A chevron repeating the title link, hidden from assistive technology
+	# since the title already carries it; the stylesheet stretches it over
+	# the row so the whole entry is clickable
+	$row .= &ui_tag('a', &ui_svg_icon('chevron-right'),
+		{ 'class' => 'ui_list_chevron', 'href' => $item->{'href'},
+		  'aria-hidden' => 'true', 'tabindex' => '-1' })
+		if ($item->{'chevron'} && $item->{'href'});
+	$body .= &_ui_block('div', $row, { 'class' => 'ui_list_item' });
+	}
+return &_ui_block('div', $body, {
+	'class' => &_ui_class('ui_list', $opts->{'flush'} ? 'ui_list_flush' : undef,
+			      $opts->{'icon_box'} ? 'ui_list_icon_box' : undef,
+			      $opts->{'stacked'} ? 'ui_list_stacked' : undef,
+			      $opts->{'class'}) });
+}
+
+=head2 ui_feed(&events, [&opts])
+
+Returns HTML for a simple activity feed of timestamped events in the
+supplied order. Pass the newest event first for a reverse-chronological
+feed. Each event is a hash reference with keys :
+
+=item when - Time label, such as "5 minutes ago".
+
+=item text - Event text (or text_html for pre-built HTML).
+
+=item state - Optional state name, coloring the event marker.
+
+Options are C<flush> and C<class>, as for ui_list.
+
+=cut
+sub ui_feed
+{
+return &theme_ui_feed(@_) if (defined(&theme_ui_feed));
+my ($events, $opts) = @_;
+$opts ||= {};
+return "" if (!$events || !@$events);
+my $body = "";
+foreach my $e (@$events) {
+	next if (!defined($e));
+	my $state = $e->{'state'} ? &_ui_state($e->{'state'}) : undef;
+	my $when = &_ui_text($e, 'when');
+	my $etext = &_ui_text($e, 'text');
+	my $item = "";
+	$item .= &ui_tag('div', $when, { 'class' => 'ui_feed_when' })
+		if (defined($when));
+	$item .= &ui_tag('div', $etext, { 'class' => 'ui_feed_text' })
+		if (defined($etext));
+	$body .= &_ui_block('div', $item, {
+		'class' => &_ui_class('ui_feed_item',
+				      $state ? "ui_feed_$state" : undef) });
+	}
+return &_ui_block('div', $body, {
+	'class' => &_ui_class('ui_feed', $opts->{'flush'} ? 'ui_feed_flush' : undef,
+			      $opts->{'class'}) });
+}
+
+=head2 ui_empty_state(&opts)
+
+Returns HTML for an empty-state message, used when a table or list has
+nothing to show. Options are :
+
+=item title - Main message text.
+
+=item desc - Secondary explanation text.
+
+=item icon - Icon name shown above the message.
+
+=item actions - HTML for buttons or links offering a next step.
+
+=cut
+sub ui_empty_state
+{
+return &theme_ui_empty_state(@_) if (defined(&theme_ui_empty_state));
+my ($opts) = @_;
+$opts ||= {};
+my $title = &_ui_text($opts, 'title');
+$title = &html_escape($text{'ui_empty_state'} || 'Nothing to display')
+	if (!defined($title));
+my $desc = &_ui_text($opts, 'desc');
+my $actions = &_ui_join($opts->{'actions'});
+my $body = "";
+$body .= &ui_tag('span', &ui_svg_icon($opts->{'icon'}, { 'size' => 22 }),
+		 { 'class' => 'ui_empty_icon' }) if ($opts->{'icon'});
+$body .= &ui_tag('div', $title, { 'class' => 'ui_empty_title' });
+$body .= &ui_tag('div', $desc, { 'class' => 'ui_empty_desc' })
+	if (defined($desc));
+$body .= &ui_tag('div', $actions, { 'class' => 'ui_empty_actions' })
+	if ($actions);
+return &_ui_block('div', $body, { 'class' => 'ui_empty' });
+}
+
+=head2 ui_progress(value, [&opts])
+
+Returns HTML for a progress bar showing the given value as a percentage
+of 100, or of the max option. The result is clamped to the range 0 to
+100. Options are :
+
+=item label - Text shown above the bar, or before it in the inline
+layout, or under the ring.
+
+=item state - State name coloring the bar, defaulting to info.
+
+=item thresholds - Colors the bar by its value instead : success below
+the first threshold, warning from there, danger from the second. Set to
+1 for the defaults of 70 and 90, or to an array ref of two percentages.
+
+=item max - The value that counts as 100%, defaulting to 100. Use it to
+pass raw numbers such as bytes.
+
+=item value - Text shown with the bar instead of the percentage, such as
+"3.4 GB of 10 GB".
+
+=item small - Set to 1 for a bare bar with no text at all.
+
+=item inline - Set to 1 to show label, bar and value on one line, as in
+a table cell or a list row.
+
+=item inside - Set to 1 to show the value as a small marker riding on the
+end of the bar, instead of at the right of the label row.
+
+=item segments - Array ref of hash refs with pct (or value, against max),
+state and label, drawn as consecutive segments of one bar, with a legend
+under it when segments have labels. The main value is then their sum.
+
+=item indeterminate - Set to 1 for a task of unknown progress, drawn as
+a moving bar. The value is ignored.
+
+=item ring - Set to 1 for a circular gauge with the value in its center,
+sized by the size option in pixels, defaulting to 56.
+
+=cut
+sub ui_progress
+{
+return &theme_ui_progress(@_) if (defined(&theme_ui_progress));
+my ($value, $opts) = @_;
+$opts ||= {};
+my $max = $opts->{'max'};
+my $label = &_ui_text($opts, 'label');
+
+# Segments each get a percentage, and together make up the total
+my @segments;
+if ($opts->{'segments'} && ref($opts->{'segments'}) eq 'ARRAY') {
+	foreach my $s (@{$opts->{'segments'}}) {
+		next if (ref($s) ne 'HASH');
+		push(@segments, {
+			'pct' => defined($s->{'pct'}) ?
+				&_ui_progress_pct($s->{'pct'}) :
+				&_ui_progress_pct($s->{'value'}, $max),
+			'state' => &_ui_state($s->{'state'} || 'info'),
+			'label' => &_ui_text($s, 'label') });
+		}
+	}
+my $pct = 0;
+if (@segments) {
+	$pct += $_->{'pct'} foreach (@segments);
+	$pct = 100 if ($pct > 100);
+	}
+else {
+	$pct = &_ui_progress_pct($value, $max);
+	}
+
+# The color comes from the state, or from the thresholds the value crosses
+my $state;
+if ($opts->{'state'}) {
+	$state = &_ui_state($opts->{'state'});
+	}
+elsif ($opts->{'thresholds'}) {
+	my ($warn, $danger) = ref($opts->{'thresholds'}) eq 'ARRAY' ?
+		@{$opts->{'thresholds'}} : (70, 90);
+	$state = $pct >= $danger ? 'danger' :
+		 $pct >= $warn ? 'warning' : 'success';
+	}
+else {
+	$state = 'info';
+	}
+my $vtext = defined($opts->{'value'}) ? &html_escape($opts->{'value'})
+				      : $pct."%";
+my $indet = $opts->{'indeterminate'} ? 1 : 0;
+my %aria = ( 'role' => 'progressbar',
+	     'aria-valuemin' => 0,
+	     'aria-valuemax' => 100 );
+if ($indet) {
+	$aria{'aria-busy'} = 'true';
+	}
+else {
+	$aria{'aria-valuenow'} = $pct;
+	}
+
+# A ring is an SVG circle whose dash length is the percentage, drawn on a
+# circle with a circumference of 100 units
+if ($opts->{'ring'}) {
+	my $size = int($opts->{'size'} || 56);
+	# Invalid or subpixel sizes cannot be used to scale the stroke
+	$size = 56 if ($size < 1);
+	# The circle is 36 units across, so a stroke of 3 pixels is 3*36/size
+	# units whatever the size
+	my $stroke = sprintf("%.2f", 108 / $size);
+	my $svg = &ui_tag_start('svg', {
+			'class' => 'ui_progress_ring_svg',
+			'width' => $size, 'height' => $size,
+			'viewBox' => '0 0 36 36', 'aria-hidden' => 'true' }).
+		  &ui_tag('circle', undef, {
+			'class' => 'ui_progress_ring_track',
+			'cx' => 18, 'cy' => 18, 'r' => 15.9155,
+			'stroke-width' => $stroke }).
+		  &ui_tag('circle', undef, {
+			'class' => "ui_progress_ring_bar ui_fg_$state",
+			'cx' => 18, 'cy' => 18, 'r' => 15.9155,
+			'stroke-width' => $stroke,
+			'stroke-dasharray' => ($indet ? 25 : $pct)." 100" }).
+		  &ui_tag_end('svg');
+	my $body = &ui_tag('span',
+		$svg.&ui_tag('span', $indet ? "" : $vtext,
+			     { 'class' => 'ui_progress_value' }),
+		{ 'class' => 'ui_progress_ring_box' });
+	$body .= &ui_tag('span', $label, { 'class' => 'ui_progress_label' })
+		if (defined($label));
+	return &_ui_block('div', $body, {
+		'class' => &_ui_class('ui_progress', 'ui_progress_ring',
+				      $indet ? 'ui_progress_indeterminate' :
+					       undef),
+		%aria });
+	}
+
+# The bar itself, or the bars of a segmented one
+my $bars = "";
+if ($indet) {
+	$bars = &ui_tag('div', undef,
+			{ 'class' => "ui_progress_bar ui_bg_$state" });
+	}
+elsif (@segments) {
+	foreach my $s (@segments) {
+		$bars .= &ui_tag('div', undef, {
+			'class' => "ui_progress_bar ui_bg_$s->{'state'}",
+			'style' => "width:$s->{'pct'}%" });
+		}
+	}
+else {
+	$bars = &ui_tag('div',
+		$opts->{'inside'} ?
+			&ui_tag('span', $vtext,
+				{ 'class' => 'ui_progress_inside_value' }) : undef,
+		{ 'class' => "ui_progress_bar ui_bg_$state",
+		  'style' => "width:$pct%" });
+	}
+my $track = &ui_tag('div', $bars, { 'class' => 'ui_progress_track' });
+
+# Legend for labelled segments
+my $legend = "";
+if (grep { defined($_->{'label'}) } @segments) {
+	my $keys = "";
+	foreach my $s (@segments) {
+		$keys .= &ui_tag('span',
+			&ui_tag('span', undef,
+				{ 'class' => "ui_progress_dot ui_bg_$s->{'state'}" }).
+			(defined($s->{'label'}) ? $s->{'label'} : "")." ".
+			&ui_tag('span', $s->{'pct'}."%",
+				{ 'class' => 'ui_progress_value' }),
+			{ 'class' => 'ui_progress_key' });
+		}
+	$legend = &ui_tag('div', $keys, { 'class' => 'ui_progress_legend' });
+	}
+
+# Put the text around the track according to the layout
+my $body;
+if ($opts->{'small'}) {
+	$body = $track;
+	}
+elsif ($opts->{'inline'}) {
+	$body = (defined($label) ?
+		 &ui_tag('span', $label, { 'class' => 'ui_progress_label' }) :
+		 "").
+		$track.
+		($indet ? "" :
+		 &ui_tag('span', $vtext, { 'class' => 'ui_progress_value' }));
+	}
+else {
+	my $head = &ui_tag('span', defined($label) ? $label : "");
+	$head .= &ui_tag('span', $vtext, { 'class' => 'ui_progress_value' })
+		if (!$opts->{'inside'} && !$indet);
+	$body = &ui_tag('div', $head, { 'class' => 'ui_progress_head' }).
+		$track.$legend;
+	}
+return &_ui_block('div', $body, {
+	'class' => &_ui_class('ui_progress',
+		$opts->{'small'} ? 'ui_progress_sm' : undef,
+		$opts->{'inline'} ? 'ui_progress_inline' : undef,
+		$opts->{'inside'} ? 'ui_progress_inside' : undef,
+		# Keep the marker within the track at either end
+		$opts->{'inside'} && $pct < 8 ? 'ui_progress_inside_start' :
+		$opts->{'inside'} && $pct > 92 ? 'ui_progress_inside_end' : undef,
+		@segments ? 'ui_progress_segmented' : undef,
+		$indet ? 'ui_progress_indeterminate' : undef),
+	%aria });
+}
+
+# _ui_progress_pct(value, [max])
+# Converts a value into a whole percentage of max (100 by default),
+# clamped to 0..100, treating anything that is not a number as 0
+sub _ui_progress_pct
+{
+my ($value, $max) = @_;
+$value = 0 if (!defined($value) ||
+	      $value !~ /\A-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\z/);
+$max = 100 if (!defined($max) ||
+	       $max !~ /\A(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\z/ || $max <= 0);
+my $pct = $value * 100 / $max;
+$pct = 0 if ($pct < 0);
+$pct = 100 if ($pct > 100);
+return int($pct + 0.5);
+}
+
+####################### new form controls
+
+=head2 ui_toggle(&opts)
+
+Returns HTML for an on/off switch, submitted like a checkbox. Options
+are :
+
+=item name - Name for this input.
+
+=item value - Value submitted when on, defaulting to 1.
+
+=item label - Text shown next to the switch.
+
+=item checked - Set to 1 if on by default.
+
+=item state - Color for the checked track: primary, success, warning, danger,
+info or neutral (the default). C<error> aliases danger; secondary, gray and grey
+alias neutral. Use primary for the theme's blue/accent toggle color.
+
+=item outline - Set to 1 for a transparent track with a matching border and
+thumb, using the state color when on.
+
+=item round - Set to 1 for a fully rounded track and thumb. The default is
+smaller with softened corners. Works with filled and outline styles.
+
+=item disabled - Set to 1 to disable the switch.
+
+=item attrs - Hash reference of additional attributes for the input, such
+as a data-ui-confirm message.
+
+=item class, id, form - As for other widgets.
+
+=cut
+sub ui_toggle
+{
+return &theme_ui_toggle(@_) if (defined(&theme_ui_toggle));
+my ($opts) = @_;
+$opts ||= {};
+my $state = ($opts->{'state'} || '') eq 'primary' ? 'primary' :
+	    &_ui_state($opts->{'state'});
+my $value = defined($opts->{'value'}) ? $opts->{'value'} : 1;
+my $attrs = &_ui_attrs({
+	%{ $opts->{'attrs'} || {} },
+	'type' => 'checkbox',
+	'name' => $opts->{'name'},
+	'value' => $value,
+	'id' => defined($opts->{'id'}) ? $opts->{'id'} :
+		defined($opts->{'name'}) ? $opts->{'name'}."_".$value : undef,
+	'form' => $opts->{'form'} });
+# An explicit empty value must be submitted as empty, not the browser's
+# default checkbox value of "on"
+$attrs->{'value'} = $value;
+$attrs->{'checked'} = undef if ($opts->{'checked'});
+$attrs->{'disabled'} = undef if ($opts->{'disabled'});
+my $body = &ui_tag('input', undef, $attrs);
+$body .= &ui_tag('span', &ui_tag('span', undef, { 'class' => 'ui_toggle_thumb' }),
+		 { 'class' => 'ui_toggle_track', 'aria-hidden' => 'true' });
+my $label = &_ui_text($opts, 'label');
+$body .= &ui_tag('span', $label, { 'class' => 'ui_toggle_label' })
+	if (defined($label));
+return &ui_tag('label', $body,
+	{ 'class' => &_ui_class('ui_toggle', 'ui_toggle_'.$state,
+		$opts->{'outline'} ? 'ui_toggle_outline' : undef,
+		$opts->{'round'} ? 'ui_toggle_round' : undef,
+		$opts->{'class'}) });
+}
+
+=head2 ui_segmented(name, value, &options, [&opts])
+
+Returns HTML for a row of joined buttons of which one is selected,
+submitted like a group of radio buttons : the compact form of ui_radio
+for two to four short choices, such as a mode or a view, which fits in
+a card header or a toolbar. Each option is C<[ value, label ]> or a hash
+reference with keys :
+
+=item value - Value submitted when this option is selected.
+
+=item label - Option text (or label_html for pre-built HTML).
+
+=item icon - Optional icon name shown before the label.
+
+=item title - Tooltip for the option.
+
+=item disabled - Set to 1 to disable this option.
+
+The first option is selected when the value matches none of them, so
+one button is always down. Options are :
+
+=item size - small or normal (the default).
+
+=item disabled - Set to 1 to disable the whole control.
+
+=item form - Id of the form the buttons belong to, when outside it.
+
+=item class, id - As for other widgets.
+
+The buttons are native radio inputs, parked invisibly over their labels
+as the toggle switch does, so themes that wrap radio inputs in their own
+markup keep working, and the arrow keys move between options.
+
+=cut
+sub ui_segmented
+{
+return &theme_ui_segmented(@_) if (defined(&theme_ui_segmented));
+my ($name, $value, $options, $opts) = @_;
+$opts ||= {};
+# Accept [ value, label ] pairs as well as option hashes.
+my @options = map { ref($_) eq 'ARRAY' ?
+			{ 'value' => $_->[0], 'label' => $_->[1] } : $_ }
+		  grep { ref($_) eq 'ARRAY' || ref($_) eq 'HASH' }
+		       @{$options || []};
+return "" if (!@options);
+# Fall back to the first option so that one button is always selected.
+if (!defined($value) ||
+    !(grep { (defined($_->{'value'}) ? $_->{'value'} : '') eq $value }
+	   @options)) {
+	$value = defined($options[0]->{'value'}) ? $options[0]->{'value'} : '';
+	}
+my $body = "";
+foreach my $o (@options) {
+	my $oval = defined($o->{'value'}) ? $o->{'value'} : '';
+	my $disabled = $opts->{'disabled'} || $o->{'disabled'};
+	my $attrs = &_ui_attrs({
+		'type' => 'radio',
+		'name' => $name,
+		'form' => $opts->{'form'} });
+	# An empty value must be submitted as empty, not as the browser's
+	# default of "on"
+	$attrs->{'value'} = $oval;
+	$attrs->{'checked'} = undef if ($oval eq $value);
+	$attrs->{'disabled'} = undef if ($disabled);
+	my $label = &_ui_text($o, 'label');
+	$label = &html_escape($oval) if (!defined($label));
+	$label = &ui_svg_icon($o->{'icon'}).$label if ($o->{'icon'});
+	$body .= &ui_tag('label',
+		&ui_tag('input', undef, $attrs).
+		&ui_tag('span', $label, { 'class' => 'ui_segment_label' }),
+		&_ui_attrs({
+			'class' => &_ui_class('ui_segment',
+				$disabled ? 'ui_segment_disabled' : undef),
+			'title' => $o->{'title'} }));
+	}
+return &ui_tag('div', $body, &_ui_attrs({
+	'class' => &_ui_class('ui_segmented',
+			      ($opts->{'size'} || '') eq 'small' ?
+				'ui_segmented_small' : undef,
+			      $opts->{'class'}),
+	'role' => 'radiogroup',
+	'id' => $opts->{'id'} }));
+}
+
+=head2 ui_search(&opts)
+
+Returns HTML for a search input with a magnifying-glass icon. Options
+are :
+
+=item name - Name for this input.
+
+=item value - Initial contents.
+
+=item placeholder - Hint text, defaulting to "Search".
+
+=item filter - CSS selector of a container whose table rows or list
+entries are filtered client-side as the user types, with no server
+round-trip.
+
+=item width - CSS width for the input.
+
+=item size - Approximate width in characters, when width is not set.
+
+=item attrs - Hash reference of additional attributes for the input.
+
+=item disabled, class, id, form - As for other widgets.
+
+=cut
+sub ui_search
+{
+return &theme_ui_search(@_) if (defined(&theme_ui_search));
+my ($opts) = @_;
+$opts ||= {};
+my $attrs = &_ui_attrs({
+	%{ $opts->{'attrs'} || {} },
+	'type' => 'search',
+	'name' => $opts->{'name'},
+	'id' => defined($opts->{'id'}) ? $opts->{'id'} : $opts->{'name'},
+	'class' => &_ui_class('ui_input', 'ui_search_input', $opts->{'class'}),
+	'value' => $opts->{'value'},
+	'placeholder' => defined($opts->{'placeholder'}) ?
+		$opts->{'placeholder'} : $text{'ui_search'},
+	'size' => $opts->{'size'} ? int($opts->{'size'}) : undef,
+	'form' => $opts->{'form'},
+	'data-ui-filter' => $opts->{'filter'} });
+$attrs->{'disabled'} = undef if ($opts->{'disabled'});
+return &ui_tag('span',
+	&ui_svg_icon('search', { 'size' => 14, 'class' => 'ui_search_icon' }).
+	&ui_tag('input', undef, $attrs),
+	&_ui_attrs({ 'class' => 'ui_search',
+		     'style' => $opts->{'width'} ?
+				"width:".$opts->{'width'} : undef }));
+}
+
+=head2 ui_field(label, input-html, [&opts])
+
+Returns HTML for one form field laid out vertically : the label above
+the control and an optional help line under it, as the fields of a card
+or a dialog are laid out when a label column would waste the width. The
+control is raw HTML from ui_textbox, ui_select and friends, and may hold
+several inputs, such as a text box followed by a chooser button; text
+inputs stretch to the available width and buttons keep their size.
+Options are :
+
+=item for - Id of the input the label is for, which ui_textbox and most
+input functions set to the input name.
+
+=item help - Explanation shown under the control (or help_html).
+
+=item label_html - Pre-built HTML in place of the label text.
+
+=item class, id - As for other widgets.
+
+=cut
+sub ui_field
+{
+return &theme_ui_field(@_) if (defined(&theme_ui_field));
+my ($label, $input, $opts) = @_;
+$opts ||= {};
+my $text = &_ui_text({ 'label' => $label,
+		       'label_html' => $opts->{'label_html'} }, 'label');
+my $rv = "";
+$rv .= &ui_tag('label', $text, &_ui_attrs({
+	'class' => 'ui_field_label', 'for' => $opts->{'for'} }))
+	if (defined($text));
+$rv .= &ui_tag('div', defined($input) ? $input : "",
+	       { 'class' => 'ui_field_control' });
+my $help = &_ui_text($opts, 'help');
+$rv .= &ui_tag('div', $help, { 'class' => 'ui_field_help' })
+	if (defined($help));
+return &_ui_block('div', $rv, &_ui_attrs({
+	'class' => &_ui_class('ui_field', $opts->{'class'}),
+	'id' => $opts->{'id'} }));
+}
+
+####################### choice lists
+
+=head2 ui_choice(name, value, &options, [&opts])
+
+Returns HTML for a boxed list of options with a radio button each, where
+an option can carry its own inputs next to its label and further fields
+under it. It replaces the hand-built tables of radios and inputs of pages
+like the backup destination selector : every option is a row that wraps
+on narrow screens instead of a nested table, and all inputs stay visible,
+so nothing moves when the choice changes; focusing an input selects its
+option (done by ui-lib.js). For a plain list of radios with at most one
+input each, use ui_radio_list; when the options are many or their fields
+long, ui_select_switch shows only the fields of the chosen option. Each
+option is a hash reference with keys :
+
+=item value - Value submitted when this option is selected.
+
+=item label - Option text (or label_html for pre-built HTML).
+
+=item desc - Optional muted explanation under the label.
+
+=item content - HTML for inputs shown right after the label, such as the
+textbox or select the option needs.
+
+=item fields - Array ref of further inputs shown under the option, each
+as C<[ label, html ]> or a hash with label (or label_html) and html, laid
+out in as many columns as fit.
+
+=item disabled - Set to 1 to disable this option.
+
+Options are :
+
+=item class - Additional CSS classes.
+
+=item id - HTML id for the list element.
+
+The buttons themselves come from ui_oneradio, so a theme styles them as
+it styles every other radio button; for that reason a label is plain
+text, and anything else goes in content. A ui_radio_table row
+C<[ value, label, html ]> becomes
+C<{ 'value' => value, 'label' => label, 'content' => html }>.
+
+=cut
+sub ui_choice
+{
+return &theme_ui_choice(@_) if (defined(&theme_ui_choice));
+my ($name, $value, $options, $opts) = @_;
+$opts ||= {};
+return "" if (!$options || !@$options);
+my $body = "";
+foreach my $o (@$options) {
+	next if (ref($o) ne 'HASH');
+	my $oval = defined($o->{'value'}) ? $o->{'value'} : '';
+
+	# The button with its label, then the inline inputs, on the first line
+	my $label = &_ui_text($o, 'label');
+	my $head = &ui_oneradio($name, $oval,
+				defined($label) ? $label : &html_escape($oval),
+				defined($value) && $value eq $oval ? 1 : 0,
+				undef, $o->{'disabled'} ? 1 : 0);
+	my $content = &_ui_join($o->{'content'});
+	$head .= &ui_tag('span', $content, { 'class' => 'ui_choice_content' })
+		if ($content);
+	my $item = &ui_tag('div', $head, { 'class' => 'ui_choice_head' });
+
+	# Description and further fields under it
+	my $desc = &_ui_text($o, 'desc');
+	$item .= &ui_tag('div', $desc, { 'class' => 'ui_choice_desc' })
+		if (defined($desc));
+	$item .= &_ui_fields($o->{'fields'}, 'ui_choice');
+	$body .= &_ui_block('div', $item, {
+		'class' => &_ui_class('ui_choice_item',
+			$o->{'disabled'} ? 'ui_choice_disabled' : undef) });
+	}
+return &_ui_block('div', $body, &_ui_attrs({
+	'class' => &_ui_class('ui_choice', $opts->{'class'}),
+	'role' => 'radiogroup',
+	'id' => $opts->{'id'} }));
+}
+
+# _ui_fields(&fields, class-prefix)
+# Returns the grid of labelled inputs under an option of ui_choice or
+# ui_select_switch, or an empty string when there are none. Each field is
+# [ label, html ] or a hash with label (or label_html) and html.
+sub _ui_fields
+{
+my ($fields, $prefix) = @_;
+return "" if (ref($fields) ne 'ARRAY' || !@$fields);
+my $rv = "";
+foreach my $f (@$fields) {
+	my ($flabel, $fhtml);
+	if (ref($f) eq 'HASH') {
+		$flabel = &_ui_text($f, 'label');
+		$fhtml = $f->{'html'};
+		}
+	elsif (ref($f) eq 'ARRAY') {
+		$flabel = defined($f->[0]) ? &html_escape($f->[0]) : undef;
+		$fhtml = $f->[1];
+		}
+	else {
+		next;
+		}
+	$rv .= &ui_tag('div',
+		(defined($flabel) ?
+		 &ui_tag('span', $flabel,
+			 { 'class' => $prefix.'_field_label' }) : "").
+		&ui_tag('span', defined($fhtml) ? $fhtml : "",
+			{ 'class' => $prefix.'_field_input' }),
+		{ 'class' => $prefix.'_field' });
+	}
+return &_ui_block('div', $rv, { 'class' => $prefix.'_fields' });
+}
+
+=head2 ui_radio_list(name, value, &options, [&opts])
+
+Returns HTML for a compact boxed list of radio buttons, one per line, each
+with an optional input right after its label : the direct replacement of
+ui_radio_table. The buttons sit at the left edge of the box, close to one
+another. For options that need several fields or an explanation, use
+ui_choice. Each option is a hash reference with keys value, label (plain
+text), content (HTML shown after the label) and disabled, as for
+ui_choice; the buttons come from ui_oneradio so that the theme styles
+them. Options are class and id.
+
+=cut
+sub ui_radio_list
+{
+return &theme_ui_radio_list(@_) if (defined(&theme_ui_radio_list));
+my ($name, $value, $options, $opts) = @_;
+$opts ||= {};
+return "" if (!$options || !@$options);
+my $body = "";
+foreach my $o (@$options) {
+	next if (ref($o) ne 'HASH');
+	my $oval = defined($o->{'value'}) ? $o->{'value'} : '';
+	my $label = &_ui_text($o, 'label');
+	my $item = &ui_oneradio($name, $oval,
+				defined($label) ? $label : &html_escape($oval),
+				defined($value) && $value eq $oval ? 1 : 0,
+				undef, $o->{'disabled'} ? 1 : 0);
+	my $content = &_ui_join($o->{'content'});
+	$item .= &ui_tag('span', $content, { 'class' => 'ui_radio_list_content' })
+		if ($content);
+	$body .= &ui_tag('div', $item, {
+		'class' => &_ui_class('ui_radio_list_item',
+			$o->{'disabled'} ? 'ui_radio_list_disabled' : undef) });
+	}
+return &_ui_block('div', $body, &_ui_attrs({
+	'class' => &_ui_class('ui_radio_list', $opts->{'class'}),
+	'role' => 'radiogroup',
+	'id' => $opts->{'id'} }));
+}
+
+=head2 ui_select_switch(name, value, &options, [&opts])
+
+Returns HTML for a select whose choice decides which block of inputs is
+shown under it : the alternative to ui_choice when the options are many
+or their fields long, since only the block of the current choice takes
+any space. Each option is a hash reference with keys value, label (the
+select entry), desc, content and fields as for ui_choice, the last three
+making up the option's block. The blocks of the other options are hidden,
+and ui-lib.js switches them when the select changes; the inputs of hidden
+blocks are still submitted with the form. Options are class and id for
+the wrapper.
+
+=cut
+sub ui_select_switch
+{
+return &theme_ui_select_switch(@_) if (defined(&theme_ui_select_switch));
+my ($name, $value, $options, $opts) = @_;
+$opts ||= {};
+my @options = grep { ref($_) eq 'HASH' } @{$options || []};
+return "" if (!@options);
+# A select defaults to its first option when the saved value is absent.
+# Use that same value for the panels so the visible fields always agree.
+if (!defined($value) ||
+    !(grep { (defined($_->{'value'}) ? $_->{'value'} : '') eq $value }
+	   @options)) {
+	$value = defined($options[0]->{'value'}) ? $options[0]->{'value'} : '';
+	}
+my @sel;
+my $panels = "";
+foreach my $o (@options) {
+	my $oval = defined($o->{'value'}) ? $o->{'value'} : '';
+	push(@sel, [ $oval,
+		     defined($o->{'label_html'}) ? $o->{'label_html'} :
+		     defined($o->{'label'}) ? &html_escape($o->{'label'}) :
+		     &html_escape($oval) ]);
+
+	# The block for this option, hidden unless it is the current one. Its
+	# inline content is shown as a first field labelled with the option
+	# name, since the button that would have named it is not there
+	my $panel = "";
+	my $desc = &_ui_text($o, 'desc');
+	$panel .= &ui_tag('div', $desc, { 'class' => 'ui_select_switch_desc' })
+		if (defined($desc));
+	my $content = &_ui_join($o->{'content'});
+	$panel .= &ui_tag('div',
+		&ui_tag('span', $sel[-1]->[1],
+			{ 'class' => 'ui_select_switch_field_label' }).
+		&ui_tag('span', $content,
+			{ 'class' => 'ui_select_switch_field_input' }),
+		{ 'class' => 'ui_select_switch_field ui_select_switch_content' })
+		if ($content);
+	$panel .= &_ui_fields($o->{'fields'}, 'ui_select_switch');
+	next if ($panel eq '');
+	my $attrs = { 'class' => 'ui_select_switch_panel',
+		      'data-ui-switch-value' => $oval };
+	$attrs->{'hidden'} = undef if ($oval ne $value);
+	$panels .= &_ui_block('div', $panel, $attrs);
+	}
+my $select = &ui_select($name, $value, \@sel, undef, undef, undef, 0,
+			"data-ui-switch='1'");
+return &_ui_block('div', $select.$panels, &_ui_attrs({
+	'class' => &_ui_class('ui_select_switch', $opts->{'class'}),
+	'id' => $opts->{'id'} }));
+}
+
+####################### multiple selection
+
+=head2 ui_multi_select_list(name, &values, &options, [&opts] | [size], [add-if-missing], [disabled?], [options-title], [values-title], [width])
+
+Returns a scrolling checkbox list with selection links, an expandable filter
+and a selection count beside the mode selector or links. It submits
+newline-joined values under name; ui-lib.js keeps them in sync.
+Missing selected values are added automatically. Labels are plain text by
+default; positional calls also accept pre-escaped labels. Set html to 1 for
+trusted label markup.
+
+With no entries, it shows only empty_label, preserving the selection, mode
+and children form values in hidden inputs. Nonempty lists load their assets
+even outside ui_page_start.
+
+Shift-click applies the clicked state from the last clicked entry to the
+current one, skipping filtered, folded and disabled entries. Labels and row
+backgrounds work too.
+
+Accepts an options hash or the legacy trailing positional arguments.
+Calls without an options hash preserve selected labels, attributes, value
+order and pre-escaped label text. Newly selected entries are prepended as in the old
+widget. Pass an options hash (even empty) for plain labels and option ordering.
+Size, add-if-missing, titles and width are ignored.
+
+=item name - HTML name for the input.
+
+=item values - Array reference of selected scalars or [ value, label, attributes ] entries. Attributes are also retained when a selected entry is missing from options.
+
+=item options - Array reference of [ value, label, attributes ] entries or hashes with keys value, label, suffix (muted text after the label), level (indentation depth), tag (chip at the right), disabled and attrs. Attributes may be a hash or trusted HTML attribute string, as in ui_select. disabled applies to the checkbox; other attributes, such as title, style and class, apply to the row. Widget identity and selection remain controlled by the library.
+
+=item badges - An option hash may also contain a badges array. Each entry holds ui_badge arguments: [ label, state, options ]. Badges appear separately at the right, beside any tag. Their labels are escaped and included in filtering.
+
+=item metadata - An option hash may contain an array of hashes with label, icon, title and state. These appear together in one compact badge at the right. Labels and tooltip titles are plain text and included in filtering. Unknown metadata should be omitted.
+
+=item group - An option hash may contain a hash with label, icon and state. Consecutive options with the same group share a heading. Group labels are plain text and included in filtering. Empty groups disappear when filtering; headings do not affect selection or submission order.
+
+=item opts - Optional hash reference with the keys :
+
+=item search - Show or hide the filter button; defaults to on above eight entries. The input opens to its left in reserved space.
+
+=item bulk - Set to 0 to omit Select all and Invert selection. By default, these links appear above eight entries, affect visible, enabled entries and are omitted when disabled.
+
+=item count - Show the selection count; defaults to on. Set to 0 to omit it.
+
+=item html - Set to 1 to render labels as trusted HTML. Labels are escaped by default; values, suffixes and tags remain escaped.
+
+=item placeholder - Hint text of the filter box.
+
+=item empty_label - Plain text shown when there are no entries, defaulting to "No entries".
+
+=item height - Height beyond which the list scrolls : a CSS length, 170px by default.
+
+=item compact - Opt into tighter rows and a highlight for selected entries. Other callers keep their existing layout.
+
+=item summary - Optional plain text displayed at the start of the toolbar. summary_icon adds an icon before it.
+
+=item modes - Hash with name, value and options as for ui_select. The hide array lists modes that hide the list, such as "all servers". Set radios to 1 to use radio buttons.
+
+=item children - Hash defining a switch that folds indented entries under their parent. Keys: name, value, checked, label or label_html, and note (a language key with $1 for the child count, shown beside the parent while folded). Folded selections are retained but excluded from the count.
+
+=item disabled - Set to 1 to disable every input of the widget.
+
+=item class - Extra CSS class names for the widget.
+
+=item id - Widget HTML ID, ui_multi_ followed by the name by default. Explicit IDs also separate checkbox and filter IDs when forms reuse a field name.
+
+=cut
+sub ui_multi_select_list
+{
+return &theme_ui_multi_select_list(@_) if (defined(&theme_ui_multi_select_list));
+my ($name, $values, $options, $opts) = @_;
+my $legacy = ref($opts) ne 'HASH';
+if (ref($opts) ne 'HASH') {
+	# Retain the legacy positional disabled argument.
+	$opts = { 'disabled' => $_[5] };
+	}
+my $dis = $opts->{'disabled'} ? 1 : 0;
+# Separate controls in forms that share a submitted field name.
+my $inputname = defined($opts->{'id'}) ? $opts->{'id'} : $name;
+
+# Normalize options without changing the caller's data.
+my @items;
+foreach my $o (@{$options || []}) {
+	if (ref($o) eq 'HASH') {
+		push(@items, { %$o });
+		}
+	elsif (ref($o) eq 'ARRAY') {
+		push(@items, { 'value' => $o->[0], 'label' => $o->[1],
+			      'attrs' => $o->[2] });
+		}
+	}
+# Index options to add missing selections without repeated scans.
+my %offered = map { defined($_->{'value'}) ? ($_->{'value'}, $_) : () } @items;
+my %selected;
+my @chosen;
+foreach my $v (@{$values || []}) {
+	my ($val, $label, $attrs) = ref($v) eq 'ARRAY' ? @$v : ($v);
+	next if (!defined($val));
+	next if ($selected{$val}++);
+	my $item = $offered{$val};
+	if (!$item) {
+		$item = { 'value' => $val, 'label' => $label, 'attrs' => $attrs };
+		push(@items, $item);
+		$offered{$val} = $item;
+		}
+	# The old selected pane uses the label and attributes supplied in values.
+	if ($legacy && ref($v) eq 'ARRAY') {
+		$item->{'label'} = defined($label) && $label ne '' ? $label : $val;
+		$item->{'attrs'} = $attrs;
+		}
+	push(@chosen, $item);
+	}
+foreach my $it (@items) {
+	$it->{'value'} = '' if (!defined($it->{'value'}));
+	$it->{'label'} = $it->{'value'}
+		if (!defined($it->{'label'}) || $it->{'label'} eq '');
+	my $tags = $it->{'attrs'};
+	my %attrs;
+	if (ref($tags) eq 'HASH') {
+		# Copy and normalize attribute names without changing caller data.
+		%attrs = map { lc($_), $tags->{$_} } keys %$tags;
+		}
+	else {
+		# Parse legacy tags without splitting quoted values.
+		$tags ||= '';
+		while ($tags =~ /\G\s*([a-z_:][a-z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gci) {
+			my ($name, $double, $single, $bare) = ($1, $2, $3, $4);
+			$attrs{lc($name)} = defined($double) ? $double :
+					   defined($single) ? $single : $bare;
+			}
+		}
+	# HTML boolean attributes are true whenever present, even disabled="false".
+	$it->{'disabled'} ||= exists($attrs{'disabled'});
+	delete($attrs{'disabled'});
+	$it->{'attrs'} = \%attrs;
+	}
+@chosen = grep { $selected{$_->{'value'}} } @items if (!$legacy);
+
+# Resolve the mode selector and initial list visibility.
+my $modes = $opts->{'modes'};
+my $hasmodes = ref($modes) eq 'HASH' && defined($modes->{'name'}) &&
+	       ref($modes->{'options'}) eq 'ARRAY';
+my @hide = $hasmodes ? @{$modes->{'hide'} || []} : ();
+my $hidden = $hasmodes && defined($modes->{'value'}) &&
+	     (grep { $_ eq $modes->{'value'} } @hide) ? 1 : 0;
+
+# Resolve the optional child-folding switch.
+my $children = ref($opts->{'children'}) eq 'HASH' &&
+	       defined($opts->{'children'}->{'name'}) ?
+			$opts->{'children'} : undef;
+my $folded = $children && $children->{'checked'} ? 1 : 0;
+
+my $count = '';
+if (!defined($opts->{'count'}) || $opts->{'count'}) {
+	# Exclude folded children, retaining their submitted values.
+	my $nchosen = grep { !$folded || !$_->{'level'} } @chosen;
+	my $cattrs = { 'class' => 'ui_multi_count' };
+	$cattrs->{'hidden'} = undef if (!$nchosen || $hidden);
+	$count = &ui_tag('span',
+		&html_escape(&text('ui_multi_selected', $nchosen)), $cattrs);
+	}
+my $counted = 0;
+my $search = defined($opts->{'search'}) ? $opts->{'search'} : @items > 8;
+
+# Empty lists need only a plain label; retain their submitted values.
+if (!@items) {
+	my $empty = &ui_tag('span', &html_escape(
+		defined($opts->{'empty_label'}) ? $opts->{'empty_label'} :
+		$text{'ui_multi_noentries'})).
+		&ui_hidden($name, '');
+	if (!$dis) {
+		$empty .= &ui_hidden($modes->{'name'}, $modes->{'value'})
+			if ($hasmodes && defined($modes->{'value'}));
+		$empty .= &ui_hidden($children->{'name'},
+			defined($children->{'value'}) ? $children->{'value'} : 1)
+			if ($folded);
+		}
+	return $empty;
+	}
+
+my $note = $children ? $children->{'note'} : undef;
+# Count children for each parent's folded summary.
+my $last;
+foreach my $it (@items) {
+	if ($it->{'level'}) {
+		$last->{'kids'}++ if ($last);
+		}
+	else {
+		$last = $it;
+		}
+	}
+
+# Render the mode selector and count.
+my $rv = "";
+if ($hasmodes) {
+	# ui_radio accepts HTML, so escape these plain-text labels first.
+	my @radios = map {
+		ref($_) eq 'ARRAY' ?
+			[ $_->[0], &html_escape($_->[1] || $_->[0]), $_->[2] ] :
+			[ $_, &html_escape($_) ]
+		} @{$modes->{'options'}};
+	$rv .= &ui_tag('div',
+		($modes->{'radios'} ?
+		    &ui_radio($modes->{'name'}, $modes->{'value'},
+			      \@radios, $dis) :
+		    &ui_select($modes->{'name'}, $modes->{'value'},
+			       $modes->{'options'}, 1, 0, 0, $dis)).
+		$count,
+		{ 'class' => 'ui_multi_modes' });
+	$counted = 1;
+	}
+
+# Larger lists get themed selection links, with actions scoped to this list.
+my $tools = "";
+if (defined($opts->{'summary'}) && $opts->{'summary'} ne '') {
+	# Shared context belongs in the toolbar instead of every option.
+	$tools .= &ui_tag('span',
+		($opts->{'summary_icon'} ? &ui_svg_icon($opts->{'summary_icon'},
+			{ 'size' => 14 }) : '').&html_escape($opts->{'summary'}),
+		{ 'class' => 'ui_multi_summary' });
+	}
+if (!$dis && @items > 8 && (!defined($opts->{'bulk'}) || $opts->{'bulk'})) {
+	my $links = &ui_links_row([
+		&ui_tag('a', &html_escape($text{'ui_selall'}),
+			{ 'href' => '#', 'class' => 'select_all',
+			  'data-ui-multi-action' => 'all' }),
+		&ui_tag('a', &html_escape($text{'ui_selinv'}),
+			{ 'href' => '#', 'class' => 'select_invert',
+			  'data-ui-multi-action' => 'invert' }) ]);
+	# Keep the links and filter on the same toolbar.
+	$links =~ s/<br>\s*$//i;
+	# Keep link separators inside one flex item.
+	$tools .= &ui_tag('div', $links, { 'class' => 'ui_multi_links' });
+	}
+$tools .= $count if (!$counted);
+if ($search) {
+	# Render the filter with clear and toggle buttons.
+	my $hint = defined($opts->{'placeholder'}) ? $opts->{'placeholder'} :
+		$text{'ui_multi_filter'};
+	my $attrs = { 'type' => 'search', 'name' => $name.'_search',
+		'id' => $inputname.'_search', 'class' => 'ui_input ui_search_input',
+		'placeholder' => $hint, 'aria-label' => $hint,
+		'data-ui-multi-search' => 1, 'autocomplete' => 'off' };
+	$attrs->{'disabled'} = undef if ($dis);
+	my $filter = &ui_tag('input', undef, $attrs);
+	foreach my $action ( 'filter-clear', 'filter' ) {
+		my $clear = $action eq 'filter-clear';
+		my $battrs = {
+			'type' => 'button',
+			'class' => 'ui_multi_filter_button ui_multi_'.
+				($clear ? 'filter_clear' : 'filter_toggle'),
+			'data-ui-multi-action' => $action,
+			'aria-label' => $text{$clear ? 'ui_multi_filter_clear' :
+				'ui_multi_filter'},
+			'aria-controls' => $inputname.'_search' };
+		$battrs->{'aria-expanded'} = 'false' if (!$clear);
+		$battrs->{'disabled'} = undef if ($dis);
+		$filter .= &ui_tag('button',
+			&ui_svg_icon($clear ? 'x-circle' : 'filter', { 'size' => 14 }),
+			$battrs);
+		}
+	$tools .= &ui_tag('span', $filter,
+		{ 'class' => 'ui_search ui_multi_filter' });
+	}
+my $body = $tools ? &ui_tag('div', $tools, { 'class' => 'ui_multi_tools' }) : '';
+
+# Render themed checkboxes with optional suffixes, child counts and tags.
+my $rows = "";
+my ($lastgroup, $groupnum) = ('', 0);
+foreach my $it (@items) {
+	# Group headings never become selectable items or change option order.
+	my $group = ref($it->{'group'}) eq 'HASH' ? $it->{'group'} : {};
+	my $group_label = defined($group->{'label'}) ? $group->{'label'} : '';
+	my $group_key = $group_label eq '' ? '' :
+		join("\0", $group_label, $group->{'state'} || '', $group->{'icon'} || '');
+	if ($group_key ne '' && $group_key ne $lastgroup) {
+		$groupnum++;
+		$rows .= &ui_tag('div',
+			&ui_svg_icon($group->{'icon'} || 'dot', { 'size' => 14 }).
+			&ui_tag('span', &html_escape($group_label)),
+			{ 'class' => 'ui_multi_group ui_multi_group_' .
+				&_ui_state($group->{'state'}),
+			  'role' => 'heading', 'aria-level' => 3,
+			  'data-ui-multi-heading' => $groupnum });
+		}
+	$lastgroup = $group_key;
+	my $val = $it->{'value'};
+	my $label = $opts->{'html'} ? $it->{'label'} :
+		&html_escape($it->{'label'}, $legacy);
+	# Filter on label text, excluding markup while retaining literal entities.
+	my $filter_label = $opts->{'html'} ?
+		&html_escape(&html_strip($label), 1) : $label;
+	$label .= &ui_tag('span', &html_escape($it->{'suffix'}),
+			  { 'class' => 'ui_multi_suffix' })
+		if (defined($it->{'suffix'}) && $it->{'suffix'} ne '');
+	# Checkbox renderers may place HTML outside their label element.
+	my $ctags = "data-ui-multi-item='1'";
+	$ctags .= ' aria-label="'.$filter_label.'"' if ($opts->{'html'});
+	my $row = &ui_checkbox($inputname.'_item', $val, $label,
+			       $selected{$val} ? 1 : 0,
+			       $ctags,
+			       $dis || $it->{'disabled'} ? 1 : 0);
+	if ($note && $it->{'kids'}) {
+		my $nattrs = { 'class' => 'ui_multi_note' };
+		$nattrs->{'hidden'} = undef if (!$folded);
+		$row .= &ui_tag('span',
+			&html_escape(&text($note, $it->{'kids'})), $nattrs);
+		}
+	# Keep plain tags compatible while allowing separate state badges.
+	my @badges = ref($it->{'badges'}) eq 'ARRAY' ?
+		grep { ref($_) eq 'ARRAY' && defined($_->[0]) } @{$it->{'badges'}} : ();
+	my $side = defined($it->{'tag'}) && $it->{'tag'} ne '' ?
+		&ui_chip($it->{'tag'}) : '';
+	$side .= join('', map { &ui_badge(@$_) } @badges);
+	# Several facts share one badge, with plain labels and accessible tooltips.
+	my @metadata = ref($it->{'metadata'}) eq 'ARRAY' ?
+		grep { ref($_) eq 'HASH' && defined($_->{'label'}) &&
+			$_->{'label'} ne '' } @{$it->{'metadata'}} : ();
+	if (@metadata) {
+		my $parts = join('', map {
+			&ui_tag('span',
+				($_->{'icon'} ? &ui_svg_icon($_->{'icon'}, { 'size' => 13 }) : '').
+				&ui_tag('span', &html_escape($_->{'label'})),
+				&_ui_attrs({ 'class' => 'ui_multi_meta ui_multi_meta_' .
+					&_ui_state($_->{'state'}),
+					'title' => &html_escape($_->{'title'}) }))
+			} @metadata);
+		$side .= &ui_tag('span', $parts,
+			{ 'class' => 'ui_badge ui_badge_neutral ui_badge_small '.
+				'ui_badge_rounded ui_multi_metadata' });
+		}
+	$row .= &ui_tag('span', $side,
+		{ 'class' => &_ui_class('ui_multi_side', @badges ? 'ui_multi_badges' : undef) })
+		if (length($side));
+	# Lowercase in the browser, after UTF-8 bytes have been decoded.
+	my $attrs = { %{$it->{'attrs'}}, %{&_ui_attrs({
+		'class' => &_ui_class('ui_multi_item',
+			$it->{'attrs'}->{'class'},
+			$it->{'level'} ? 'ui_multi_level'.int($it->{'level'})
+				       : undef,
+			$it->{'disabled'} ? 'ui_multi_disabled' : undef),
+		'data-ui-multi-level' => $it->{'level'} ? int($it->{'level'})
+						       : undef,
+		'data-ui-multi-group' => $group_key ne '' ? $groupnum : undef,
+		'data-ui-multi-text' => join(" ",
+			grep { defined($_) && $_ ne '' }
+			     $filter_label.&html_escape($it->{'suffix'}, $legacy),
+			     &html_escape($it->{'tag'}, $legacy),
+			     &html_escape($group_label),
+			     (map { &html_escape($_->[0]) } @badges),
+			     (map { &html_escape($_->{'label'}).' '.
+				&html_escape($_->{'title'}) } @metadata)) }) } };
+	$attrs->{'hidden'} = undef if ($folded && $it->{'level'});
+	$rows .= &ui_tag('div', $row, $attrs);
+	}
+
+# Include the initially hidden no-matches message.
+$body .= &_ui_block('div',
+	&_ui_block('div', $rows, { 'class' => 'ui_multi_items' }).
+	&ui_tag('div', &ui_svg_icon('search', { 'size' => 14 })." ".
+		&html_escape($text{'ui_multi_nomatch'}),
+		{ 'class' => 'ui_multi_empty', 'hidden' => undef }),
+	{ 'class' => 'ui_multi_list' });
+
+# Render the child-folding switch.
+if ($children) {
+	$body .= &ui_tag('div',
+		&ui_toggle({ 'name' => $children->{'name'},
+			     'value' => defined($children->{'value'}) ?
+					$children->{'value'} : 1,
+			     'checked' => $folded,
+			     'state' => 'primary',
+			     'outline' => 1,
+			     'label' => $children->{'label'},
+			     'label_html' => $children->{'label_html'},
+			     'attrs' => { 'data-ui-multi-action' => 'children' },
+			     'disabled' => $dis }),
+		{ 'class' => 'ui_multi_foot' });
+	}
+
+# Submit the selected values in the established newline-separated format.
+$body .= &ui_hidden($name, join("\n", map { $_->{'value'} } @chosen));
+my $battrs = { 'class' => 'ui_multi_body' };
+$battrs->{'hidden'} = undef if ($hidden);
+$rv .= &_ui_block('div', $body, $battrs);
+my $attrs = &_ui_attrs({
+	'class' => &_ui_class('ui_multi', $opts->{'class'},
+			      $opts->{'compact'} ? 'ui_multi_compact' : undef,
+			      $dis ? 'ui_multi_disabled' : undef),
+	'id' => defined($opts->{'id'}) ? $opts->{'id'} : 'ui_multi_'.$name,
+	'style' => $opts->{'height'} ?
+		"--ui-multi-height:".$opts->{'height'} : undef,
+	'data-ui-multi' => $name,
+	'data-ui-multi-hide' => &html_escape(
+		&convert_to_json([ map { "$_" } @hide ])),
+	'data-ui-multi-text-selected' => $text{'ui_multi_selected'} });
+# Have JavaScript retain the hidden input's initial order for resets.
+$attrs->{'data-ui-multi-order'} = '' if ($legacy);
+return &ui_page_assets().&_ui_block('div', $rv, $attrs);
+}
+
+####################### menus, dialogs and navigation
+
+=head2 ui_dropdown(label, &items, [&opts])
+
+Returns HTML for a drop-down menu : a button that opens a list of actions
+under it. The menu is a native <details> element, so it opens and closes
+without JavaScript; ui-lib.js adds closing on a click elsewhere or on
+Escape, moving between the entries with the arrow keys, one open menu at
+a time, and keeping the open menu inside the window. The button is drawn
+like ui_action_button, so menus and buttons line up in a toolbar. Each
+entry of the items array is a hash reference with keys :
+
+=item label - Entry text (or label_html for pre-built HTML).
+
+=item href - URL, making the entry a link. Without it the entry is a
+button, which does something through the dialog option, a submit type,
+or an event handler given in attrs.
+
+=item icon - Icon name shown before the text.
+
+=item desc - Muted second line under the text.
+
+=item dialog - ID of a ui_dialog that the entry opens.
+
+=item values - Hash reference of field names and values filled into
+that dialog before it opens, as for ui_dialog_button.
+
+=item state - danger, warning, success or info to color the entry, as for
+an action that removes something.
+
+=item disabled - Set to 1 to disable the entry.
+
+=item type, name, value, form - For a button entry that submits a form,
+as for ui_action_button.
+
+=item attrs - Additional HTML attributes, such as data-ui-confirm.
+
+An entry given as the string C<-> or as a hash with C<sep> set draws a
+separator line; a hash with C<heading> set draws a small heading above
+the entries that follow; a hash with C<html> set is inserted as given,
+for an entry built elsewhere.
+
+Options are :
+
+=item icon - Icon name shown on the button before the label.
+
+=item state, size, shape - As for ui_action_button.
+
+=item caret - Set to 0 to leave out the arrow after the label.
+
+=item align - Set to end to line the menu up with the right edge of the
+button, for a menu at the right end of a toolbar.
+
+=item title - Tooltip for the button, which also names it for screen
+readers when the label is empty, as for an icon-only menu.
+
+=item label_html - Pre-built HTML for the label.
+
+=item width - Minimum width of the open menu, as a CSS length.
+
+=item menu_class - Additional CSS classes for the menu panel.
+
+=item class, id - As for other widgets.
+
+Loads ui_page_assets once, and can also be used outside a ui_page.
+
+=cut
+sub ui_dropdown
+{
+return &theme_ui_dropdown(@_) if (defined(&theme_ui_dropdown));
+my ($label, $items, $opts) = @_;
+$opts ||= {};
+my $state = &_ui_state($opts->{'state'});
+my $size = ($opts->{'size'} || '') =~ /\A(?:small|normal|large)\z/ ?
+		$opts->{'size'} : 'normal';
+my $shape = ($opts->{'shape'} || '') =~ /\A(?:square|rounded|pill)\z/ ?
+		$opts->{'shape'} : 'square';
+
+# The button : an icon, the label and the arrow, inside the same surface
+# as an action button
+my $text = &_ui_text({ 'label' => $label,
+		       'label_html' => $opts->{'label_html'} }, 'label');
+my $content = "";
+$content .= &ui_svg_icon($opts->{'icon'}) if ($opts->{'icon'});
+$content .= &ui_tag('span', $text) if (defined($text));
+$content .= &ui_svg_icon('chevron-down', { 'class' => 'ui_dropdown_caret' })
+	if (!defined($opts->{'caret'}) || $opts->{'caret'});
+my @theme_classes = &_ui_action_theme_classes($state, $size);
+my $toggle = &ui_tag('summary',
+	&ui_tag('span', $content, { 'class' => 'ui_action_content' }),
+	&_ui_attrs({
+		'class' => &_ui_class('ui_dropdown_toggle', 'ui_action',
+				      'ui_action_'.$state, 'ui_action_'.$size,
+				      'ui_action_'.$shape, @theme_classes),
+		'role' => 'button',
+		'aria-haspopup' => 'menu',
+		'title' => $opts->{'title'},
+		# An icon-only button is named by its tooltip
+		'aria-label' => defined($text) ? undef : $opts->{'title'} }));
+
+# The entries, separators and headings
+my $menu = "";
+foreach my $item (@{$items || []}) {
+	next if (!defined($item));
+	if (!ref($item)) {
+		# A dash between entries is a separator
+		$menu .= &ui_tag('hr', undef, { 'class' => 'ui_dropdown_sep' })
+			if ($item eq '-');
+		}
+	elsif (ref($item) ne 'HASH') {
+		next;
+		}
+	elsif ($item->{'sep'}) {
+		$menu .= &ui_tag('hr', undef, { 'class' => 'ui_dropdown_sep' });
+		}
+	elsif (defined($item->{'heading'})) {
+		$menu .= &ui_tag('div', &html_escape($item->{'heading'}),
+			{ 'class' => 'ui_dropdown_heading',
+			  'role' => 'presentation' });
+		}
+	elsif (defined($item->{'html'})) {
+		$menu .= $item->{'html'};
+		}
+	else {
+		$menu .= &_ui_dropdown_item($item);
+		}
+	}
+my $panel = &_ui_block('div', $menu, &_ui_attrs({
+	'class' => &_ui_class('ui_dropdown_menu', $opts->{'menu_class'}),
+	'role' => 'menu',
+	'style' => $opts->{'width'} ? "min-width:".$opts->{'width'} : undef }));
+my $attrs = &_ui_attrs({
+	'class' => &_ui_class('ui_dropdown',
+			      ($opts->{'align'} || '') eq 'end' ?
+				'ui_dropdown_end' : undef,
+			      $opts->{'class'}),
+	'id' => $opts->{'id'} });
+$attrs->{'data-ui-dropdown'} = '1';
+return &ui_page_assets().&_ui_block('details', $toggle.$panel, $attrs);
+}
+
+# _ui_dropdown_item(&item)
+# Returns one entry of a ui_dropdown menu : a link when it has a URL,
+# otherwise a button
+sub _ui_dropdown_item
+{
+my ($item) = @_;
+my $label = &_ui_text($item, 'label');
+my $desc = &_ui_text($item, 'desc');
+my $body = "";
+$body .= &ui_svg_icon($item->{'icon'}, { 'class' => 'ui_dropdown_icon' })
+	if ($item->{'icon'});
+my $texts = defined($label) ?
+	&ui_tag('span', $label, { 'class' => 'ui_dropdown_label' }) : "";
+$texts .= &ui_tag('span', $desc, { 'class' => 'ui_dropdown_desc' })
+	if (defined($desc));
+$body .= &ui_tag('span', $texts, { 'class' => 'ui_dropdown_text' });
+my %attrs = %{$item->{'attrs'} || {}};
+my $disabled = $item->{'disabled'} || exists($attrs{'disabled'});
+$attrs{'class'} = &_ui_class('ui_dropdown_item',
+	$item->{'state'} ? 'ui_dropdown_'.&_ui_state($item->{'state'}) : undef,
+	$item->{'class'}, $attrs{'class'});
+$attrs{'role'} = 'menuitem';
+if (defined($item->{'dialog'}) && $item->{'dialog'} ne '') {
+	$attrs{'data-ui-dialog'} = $item->{'dialog'};
+	$attrs{'data-ui-dialog-values'} = &convert_to_json($item->{'values'})
+		if (ref($item->{'values'}) eq 'HASH');
+	}
+foreach my $name (qw(name value form id title)) {
+	$attrs{$name} = $item->{$name} if (defined($item->{$name}));
+	}
+my $tag;
+if (defined($item->{'href'})) {
+	# A link entry, which loses its destination when disabled
+	$tag = 'a';
+	delete(@attrs{qw(type disabled)});
+	if ($disabled) {
+		$attrs{'aria-disabled'} = 'true';
+		$attrs{'tabindex'} = -1;
+		}
+	else {
+		$attrs{'href'} = $item->{'href'};
+		}
+	}
+else {
+	# A button entry, which does not submit a form unless asked to
+	$tag = 'button';
+	delete($attrs{'href'});
+	$attrs{'type'} = ($item->{'type'} || '') =~ /\A(?:button|submit|reset)\z/ ?
+			 $item->{'type'} : 'button';
+	$attrs{'disabled'} = undef if ($disabled);
+	}
+return &ui_tag($tag, $body, \%attrs);
+}
+
+=head2 ui_dialog(&opts)
+
+Returns HTML for a modal dialog, hidden until it is opened. The dialog is
+a native <dialog> element, opened by any button or link carrying a
+data-ui-dialog attribute holding the dialog's ID, as ui_dialog_button and
+the dialog option of a ui_dropdown entry produce, and closed by its cross,
+by Escape, by a click outside it, or by any control inside it carrying a
+data-ui-dialog-close attribute. An opening control may carry a
+data-ui-dialog-values attribute with a JSON object of field names and
+values, which are filled into the dialog's inputs before it opens. The
+dialog also receives a ui-dialog-open event then, whose detail holds the
+opening element. Options are :
+
+=item id - ID of the dialog, which the opening controls refer to.
+
+=item title - Heading text (or title_html for pre-built HTML).
+
+=item desc - Muted text under the heading, also read out with it.
+
+=item text - Plain text for the contents, shown as a paragraph. Enough
+for a notice or a confirmation.
+
+=item body - HTML for the contents, usually inputs built with the
+existing form functions, such as a ui_table_start table of rows. Shown
+after the text when both are given.
+
+=item buttons - Array reference of the buttons at the bottom, each a
+hash reference with the keys of ui_action_button (label, state, icon,
+type, name, value, disabled, attrs) plus C<close>, set to 1 for a button
+that only closes the dialog, and C<autofocus>, set to 1 for the button
+that should take the focus when the dialog opens. A button in a dialog
+with a form submits it unless given another type. A plain string in
+the array is inserted as given.
+
+=item footer - Pre-built HTML (or array ref of fragments) for the
+bottom, after the buttons.
+
+=item close - Label for a button closing the dialog, added last; set
+to 1 for the default "Close".
+
+=item focus - Set to close to give that closing button the focus when
+the dialog opens, so that Enter does not confirm a destructive action.
+By default the first input, or else the first button, takes it.
+
+=item form - Wraps the whole dialog in a <form>, so that Enter and the
+submit buttons send it : the URL of the script to post to, or a hash
+reference with keys action, method (post by default, or form-data for an
+upload, or dialog for a form that only closes), id, name, target and
+attrs. The body must then not open a form of its own.
+
+=item icon - Icon name shown before the heading.
+
+=item state - Colors the heading icon and the top edge of the dialog,
+danger for a confirmation before something is removed, for instance.
+Without an icon option the state's badge icon is shown.
+
+=item size - small, normal (the default) or large, setting the width.
+
+=item width - A CSS length for the width, instead of a size.
+
+=item class, attrs - As for other widgets.
+
+A notice is
+
+ ui_dialog({ 'id' => 'oops', 'title' => $text{'warn'}, 'state' => 'warning',
+             'text' => $text{'nothing'}, 'close' => 'OK' })
+
+and a confirmation before something is removed is
+
+ ui_dialog({ 'id' => 'rm', 'title' => $text{'delete'}, 'state' => 'danger',
+             'form' => 'delete.cgi', 'text' => $text{'sure'},
+             'buttons' => [ { 'label' => $text{'delete'}, 'state' => 'danger',
+                              'icon' => 'trash' } ],
+             'close' => $text{'cancel'}, 'focus' => 'close' })
+
+Loads ui_page_assets once, and can also be used outside a ui_page.
+
+=cut
+sub ui_dialog
+{
+return &theme_ui_dialog(@_) if (defined(&theme_ui_dialog));
+my ($opts) = @_;
+$opts ||= {};
+my $id = defined($opts->{'id'}) && $opts->{'id'} ne '' ? $opts->{'id'} :
+		'ui_dialog_'.(++$main::ui_dialog_count);
+my $size = ($opts->{'size'} || '') =~ /\A(?:small|normal|large)\z/ ?
+		$opts->{'size'} : 'normal';
+my $state = $opts->{'state'} ? &_ui_state($opts->{'state'}) : undef;
+my $close_label = $text{'ui_close'} || 'Close';
+# A form given as a URL is a form posting to that script
+my $form = $opts->{'form'};
+$form = { 'action' => $form } if (defined($form) && !ref($form) && $form ne '');
+$form = undef if (ref($form) ne 'HASH');
+
+# Heading with its icon, and the closing cross
+my $title = &_ui_text($opts, 'title');
+my $desc = &_ui_text($opts, 'desc');
+my $icon = $opts->{'icon'} ||
+	   ($state && $ui_state_icons{$state} ? $ui_state_icons{$state} : undef);
+my $titles = &ui_tag('h2',
+	($icon ? &ui_svg_icon($icon, { 'size' => 18 }) : "").
+	&ui_tag('span', defined($title) ? $title : ""),
+	{ 'class' => 'ui_dialog_title', 'id' => $id.'_title' });
+$titles .= &ui_tag('p', $desc, { 'class' => 'ui_dialog_desc',
+				 'id' => $id.'_desc' })
+	if (defined($desc));
+my $head = &_ui_block('div', $titles, { 'class' => 'ui_dialog_titles' });
+$head .= &ui_tag('button', &ui_svg_icon('x'), {
+	'type' => 'button',
+	'class' => 'ui_dialog_x',
+	'data-ui-dialog-close' => '1',
+	'aria-label' => $close_label,
+	'title' => $close_label });
+my $inner = &_ui_block('header', $head, { 'class' => 'ui_dialog_head' });
+
+# Contents : the plain text paragraph, then the HTML
+my $body = "";
+my $text_body = &_ui_text($opts, 'text');
+$body .= &ui_tag('p', $text_body, { 'class' => 'ui_dialog_text' })
+	if (defined($text_body));
+$body .= $opts->{'body'} if (defined($opts->{'body'}));
+$inner .= &_ui_block('div', $body, { 'class' => 'ui_dialog_body' });
+
+# Footer : the buttons given as data, the pre-built HTML, then the
+# closing button
+my @footer;
+foreach my $b (@{ref($opts->{'buttons'}) eq 'ARRAY' ? $opts->{'buttons'} : []}) {
+	next if (!defined($b) || $b eq '');
+	if (!ref($b)) {
+		push(@footer, $b);
+		}
+	elsif (ref($b) eq 'HASH') {
+		push(@footer, &_ui_dialog_button($b, $form ? 1 : 0));
+		}
+	}
+push(@footer, &_ui_join($opts->{'footer'}));
+if ($opts->{'close'}) {
+	my $label = $opts->{'close'} eq '1' ? $close_label : $opts->{'close'};
+	my %cattrs = ( 'data-ui-dialog-close' => '1' );
+	$cattrs{'autofocus'} = undef if (($opts->{'focus'} || '') eq 'close');
+	push(@footer, &ui_action_button($label, 'neutral',
+		{ 'icon' => '', 'attrs' => \%cattrs }));
+	}
+my $footer = join("\n", grep { defined($_) && $_ ne '' } @footer);
+$inner .= &_ui_block('footer', $footer, { 'class' => 'ui_dialog_foot' })
+	if ($footer ne '');
+
+# The optional form around everything
+if ($form) {
+	my %fattrs = %{$form->{'attrs'} || {}};
+	$fattrs{'action'} = $form->{'action'} if (defined($form->{'action'}));
+	my $method = $form->{'method'} || 'post';
+	if ($method eq 'form-data') {
+		# An upload form, as ui_form_start names it
+		$fattrs{'method'} = 'post';
+		$fattrs{'enctype'} = 'multipart/form-data';
+		}
+	else {
+		$fattrs{'method'} = $method;
+		}
+	foreach my $name (qw(id name target)) {
+		$fattrs{$name} = $form->{$name} if (defined($form->{$name}));
+		}
+	$fattrs{'class'} = &_ui_class('ui_dialog_form', $fattrs{'class'});
+	$inner = &_ui_block('form', $inner, \%fattrs);
+	}
+my %attrs = %{$opts->{'attrs'} || {}};
+$attrs{'class'} = &_ui_class('ui_dialog', 'ui_dialog_'.$size,
+			     $state ? 'ui_dialog_'.$state : undef,
+			     $opts->{'class'}, $attrs{'class'});
+$attrs{'id'} = $id;
+$attrs{'aria-labelledby'} = $id.'_title';
+$attrs{'aria-describedby'} = $id.'_desc' if (defined($desc));
+$attrs{'style'} = join(";", grep { defined($_) && $_ ne '' }
+			($attrs{'style'}, "--ui-dialog-width:".$opts->{'width'}))
+	if ($opts->{'width'});
+return &ui_page_assets().&_ui_block('dialog', $inner, \%attrs);
+}
+
+# _ui_dialog_button(&button, has-form)
+# Returns one footer button of a ui_dialog from its hash : an action
+# button that submits the dialog's form, closes the dialog, or does what
+# its own attributes say
+sub _ui_dialog_button
+{
+my ($b, $has_form) = @_;
+my %o = %$b;
+my %attrs = %{$o{'attrs'} || {}};
+$attrs{'data-ui-dialog-close'} = '1' if ($o{'close'});
+$attrs{'autofocus'} = undef if ($o{'autofocus'});
+$o{'attrs'} = \%attrs;
+# A button in a form submits it, unless it only closes the dialog
+$o{'type'} ||= $has_form && !$o{'close'} && !defined($o{'href'}) ?
+		'submit' : 'button';
+# A closing button has no icon unless given one
+$o{'icon'} = '' if (!defined($o{'icon'}) && $o{'close'});
+delete(@o{qw(label state close autofocus)});
+return &ui_action_button($b->{'label'}, $b->{'state'}, \%o);
+}
+
+=head2 ui_dialog_button(label, dialog-id, [state], [&opts])
+
+Returns a button that opens the ui_dialog with the given ID, drawn by
+ui_action_button with the same state and options. The extra option
+C<values> is a hash reference of field names and values to fill into the
+dialog's inputs when it opens, as a rename button passes the current
+name. Checkboxes and radios are checked when their value matches.
+
+=cut
+sub ui_dialog_button
+{
+return &theme_ui_dialog_button(@_) if (defined(&theme_ui_dialog_button));
+my ($label, $dialog, $state, $opts) = @_;
+my %o = %{$opts || {}};
+my %attrs = %{$o{'attrs'} || {}};
+$attrs{'data-ui-dialog'} = $dialog;
+$attrs{'data-ui-dialog-values'} = &convert_to_json($o{'values'})
+	if (ref($o{'values'}) eq 'HASH');
+delete(@o{qw(values href)});
+$o{'attrs'} = \%attrs;
+return &ui_action_button($label, $state, \%o);
+}
+
+=head2 ui_breadcrumb(&items, [&opts])
+
+Returns HTML for a breadcrumb trail, the path to the current location as
+a row of links. Each item is a C<[ label, url ]> array reference, or a
+hash reference with keys label (or label_html), href, icon and title.
+An item without a URL is plain text. The last item is the current
+location and is marked as such, whether or not it is a link. Options are :
+
+=item label - Accessible name of the trail, "Breadcrumb" by default.
+
+=item class, id - As for other widgets.
+
+=cut
+sub ui_breadcrumb
+{
+return &theme_ui_breadcrumb(@_) if (defined(&theme_ui_breadcrumb));
+my ($items, $opts) = @_;
+$opts ||= {};
+my @items = grep { defined($_) && ref($_) } @{$items || []};
+return "" if (!@items);
+my $body = "";
+for(my $i=0; $i<@items; $i++) {
+	my $item = $items[$i];
+	$item = { 'label' => $item->[0], 'href' => $item->[1] }
+		if (ref($item) eq 'ARRAY');
+	next if (ref($item) ne 'HASH');
+	my $label = &_ui_text($item, 'label');
+	my $content = "";
+	$content .= &ui_svg_icon($item->{'icon'},
+				 { 'class' => 'ui_breadcrumb_icon' })
+		if ($item->{'icon'});
+	$content .= &ui_tag('span', $label) if (defined($label));
+	my $attrs = &_ui_attrs({
+		'title' => $item->{'title'},
+		# An icon-only item is named by its tooltip
+		'aria-label' => defined($label) ? undef : $item->{'title'} });
+	my $el;
+	if (defined($item->{'href'}) && $item->{'href'} ne '') {
+		$attrs->{'href'} = $item->{'href'};
+		$el = &ui_tag('a', $content, $attrs);
+		}
+	else {
+		$el = &ui_tag('span', $content, $attrs);
+		}
+	my $last = $i == $#items;
+	my $li = { 'class' => &_ui_class('ui_breadcrumb_item',
+					 $last ? 'ui_breadcrumb_current' : undef) };
+	$li->{'aria-current'} = 'page' if ($last);
+	$body .= &ui_tag('li', $el, $li);
+	}
+return &ui_page_assets().&ui_tag('nav',
+	&ui_tag('ol', $body, { 'class' => 'ui_breadcrumb_list' }),
+	&_ui_attrs({
+		'class' => &_ui_class('ui_breadcrumb', $opts->{'class'}),
+		'id' => $opts->{'id'},
+		'aria-label' => defined($opts->{'label'}) ? $opts->{'label'} :
+				$text{'ui_breadcrumb'} || 'Breadcrumb' }));
+}
+
+=head2 ui_pager(&opts)
+
+Returns HTML for the page links of a long listing : arrows to the
+previous and next pages, the first and last pages, and the pages around
+the current one, with a gap where pages are left out. Returns nothing
+when there is only one page. Options are :
+
+=item page - The current page number, counting from 1.
+
+=item pages - The number of pages.
+
+=item href - URL to which a page number is appended, such as
+C<index.cgi?dir=/etc&page=>.
+
+=item url - Instead of href, a code reference called with a page number
+and returning the URL of that page.
+
+=item window - How many pages to show on each side of the current one,
+2 by default.
+
+=item label - Accessible name of the pager, "Pages" by default.
+
+=item class, id - As for other widgets.
+
+=cut
+sub ui_pager
+{
+return &theme_ui_pager(@_) if (defined(&theme_ui_pager));
+my ($opts) = @_;
+$opts ||= {};
+my $pages = int($opts->{'pages'} || 0);
+return "" if ($pages < 2);
+my $page = int($opts->{'page'} || 1);
+$page = 1 if ($page < 1);
+$page = $pages if ($page > $pages);
+my $window = defined($opts->{'window'}) ? int($opts->{'window'}) : 2;
+$window = 0 if ($window < 0);
+my $url = ref($opts->{'url'}) eq 'CODE' ? $opts->{'url'} :
+	  sub { (defined($opts->{'href'}) ? $opts->{'href'} : '').$_[0] };
+my $link = sub {
+	my ($p, $label, $class, $aria) = @_;
+	return &ui_tag('a', $label, &_ui_attrs({
+		'class' => &_ui_class('ui_pager_link', $class),
+		'href' => &$url($p),
+		'aria-label' => $aria }));
+	};
+my $dead = sub {
+	my ($label, $class) = @_;
+	return &ui_tag('span', $label, {
+		'class' => &_ui_class('ui_pager_link', $class, 'ui_pager_disabled'),
+		'aria-disabled' => 'true' });
+	};
+
+# The first and last pages, and those around the current one
+my %show = ( 1 => 1, $pages => 1 );
+for(my $p=$page-$window; $p<=$page+$window; $p++) {
+	$show{$p} = 1 if ($p >= 1 && $p <= $pages);
+	}
+my $body = "";
+my $prev_icon = &ui_svg_icon('chevron-left');
+my $next_icon = &ui_svg_icon('chevron-right');
+$body .= $page > 1 ?
+	&$link($page-1, $prev_icon, 'ui_pager_prev',
+	       $text{'ui_pager_prev'} || 'Previous page') :
+	&$dead($prev_icon, 'ui_pager_prev');
+my $prev = 0;
+foreach my $p (sort { $a <=> $b } keys %show) {
+	if ($prev && $p - $prev == 2) {
+		# A single page left out is shown rather than a gap
+		$body .= &$link($prev+1, $prev+1);
+		}
+	elsif ($prev && $p - $prev > 2) {
+		$body .= &ui_tag('span', '&hellip;',
+			{ 'class' => 'ui_pager_gap', 'aria-hidden' => 'true' });
+		}
+	if ($p == $page) {
+		$body .= &ui_tag('span', $p,
+			{ 'class' => 'ui_pager_link ui_pager_current',
+			  'aria-current' => 'page' });
+		}
+	else {
+		$body .= &$link($p, $p);
+		}
+	$prev = $p;
+	}
+$body .= $page < $pages ?
+	&$link($page+1, $next_icon, 'ui_pager_next',
+	       $text{'ui_pager_next'} || 'Next page') :
+	&$dead($next_icon, 'ui_pager_next');
+return &ui_page_assets().&ui_tag('nav', $body, &_ui_attrs({
+	'class' => &_ui_class('ui_pager', $opts->{'class'}),
+	'id' => $opts->{'id'},
+	'aria-label' => defined($opts->{'label'}) ? $opts->{'label'} :
+			$text{'ui_pager'} || 'Pages' }));
+}
+
+1;

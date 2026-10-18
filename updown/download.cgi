@@ -6,6 +6,7 @@ require './updown-lib.pl';
 use Time::Local;
 &ReadParse();
 &error_setup($text{'download_err'});
+$can_download || &error($text{'download_ecannot'});
 
 # Validate and store inputs
 $i = 0;
@@ -64,7 +65,7 @@ else {
 		$download{'gid'} = $uinfo[3];
 		}
 	}
-if ($in{'bg'} && $can_schedule) {
+if ($in{'bg'} == 1 && $can_schedule) {
 	# Validate time
 	$in{'hour'} =~ /^\d+$/ && $in{'min'} =~ /^\d+$/ &&
 		$in{'day'} =~ /^\d+$/ && $in{'year'} =~ /^\d+$/ ||
@@ -72,6 +73,15 @@ if ($in{'bg'} && $can_schedule) {
 	eval { $download{'time'} = timelocal(0, $in{'min'}, $in{'hour'},
 			 $in{'day'}, $in{'month'}, $in{'year'}-1900) };
 	$@ && &error($text{'download_edate2'});
+
+	# Validate that atd is running, if needed
+	if (&foreign_installed("at") && !$module_info{'usermin'}) {
+		&foreign_require("at");
+		my ($init, $r, $atboot) = &at::get_init_status();
+		if ($init && $r == 0) {
+			&error(&text('download_eatd', &get_webprefix().'/at/'));
+			}
+		}
 	}
 if (defined($in{'email_def'}) && !$in{'email_def'}) {
 	# Validate email
@@ -87,6 +97,7 @@ if (!-d $download{'dir'} && $in{'mkdir'}) {
 	}
 
 # Save the settings
+$download{'webmin_user'} = $base_remote_user if (!$module_info{'usermin'});
 if ($module_info{'usermin'}) {
 	&lock_file("$user_module_config_directory/config");
 	$userconfig{'ddir'} = $in{'dir'};
@@ -111,27 +122,24 @@ if ($in{'bg'} && $can_background) {
 	&unlock_file($atjob_cmd);
 	&save_download(\%download);
 
-	if (!$can_schedule) {
+	if (!$can_schedule || $in{'bg'} == 2) {
 		# Just run this script right now
 		&execute_command("$atjob_cmd $download{'id'} &");
 		}
 	else {
 		# Create an At job to do the download
 		&foreign_require("at", "at-lib.pl");
-			{
-			local %ENV;
-			delete($ENV{'FOREIGN_MODULE_NAME'});
-			delete($ENV{'FOREIGN_ROOT_DIRECTORY'});
-			&clean_environment();
-			$ENV{'REMOTE_USER'} = $remote_user;	# For usermin
-			$ENV{'BASE_REMOTE_USER'} = $base_remote_user;
-			&at::create_atjob(
-				$module_info{'usermin'} ? $remote_user : "root",
-				$download{'time'},
-				"$atjob_cmd $download{'id'}",
-				"/");
-			&reset_environment();
-			}
+		&clean_environment();
+		delete($ENV{'FOREIGN_MODULE_NAME'});
+		delete($ENV{'FOREIGN_ROOT_DIRECTORY'});
+		$ENV{'REMOTE_USER'} = $remote_user;	# For usermin
+		$ENV{'BASE_REMOTE_USER'} = $base_remote_user;
+		&at::create_atjob(
+			$module_info{'usermin'} ? $remote_user : "root",
+			$download{'time'},
+			"$atjob_cmd $download{'id'}",
+			"/");
+		&reset_environment();
 		}
 
 	&redirect("index.cgi?mode=download");

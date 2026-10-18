@@ -7,6 +7,7 @@ require './cron-lib.pl';
 
 @jobs = &list_cron_jobs();
 $job = $jobs[$in{'idx'}];
+$job && !$job->{'name'} || &error($text{'edit_egone'});
 &can_edit_user(\%access, $job->{'user'}) || &error($text{'exec_ecannot'});
 &foreign_require("proc", "proc-lib.pl");
 
@@ -39,12 +40,13 @@ foreach $e (&read_envs($job->{'user'})) {
 	}
 
 if (&supports_users()) {
-	# Get command and switch uid/gid
+	# Get command and switch uid/gid and home directory
 	@uinfo = getpwnam($job->{'user'});
 	$ENV{"HOME"} = $uinfo[7];
 	$ENV{"SHELL"} = "/bin/sh";
 	$ENV{"LOGNAME"} = $ENV{"USER"} = $job->{'user'};
 	&switch_to_unix_user(\@uinfo);
+	chdir($uinfo[7]);
 	}
 
 if ($in{'bg'}) {
@@ -56,7 +58,7 @@ if ($in{'bg'}) {
 		&open_tempfile(TEMP, ">$temp");
 		&print_tempfile(TEMP, $input);
 		&close_tempfile(TEMP);
-		&execute_command("(($lines[0]) ; rm -f $temp) &", $temp,
+		&execute_command("(($lines[0]) ; rm -f ".quotemeta($temp).") &", $temp,
 				 undef, undef);
 		}
 	else {

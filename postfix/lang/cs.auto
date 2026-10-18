@@ -129,9 +129,13 @@ smtpd_nomap2=Dosud nebyla zadána žádná mapa pro omezení adres odesílatele.
 smtpd_map=Povolené adresy pro předávání
 smtpd_map2=Omezení adres odesílatele
 
-opts_smtp_use_tls=Pro připojení SMTP použijte TLS
 opts_smtp_sasl_security_options=Možnosti zabezpečení SASL
 opts_smtp_tls_security_level=Úroveň zabezpečení klienta SMTP TLS
+opts_inet_protocols=Povolit internetové protokoly
+opts_inet_protocols_all=Vše k dispozici
+opts_smtp_address_preference=Preferovaný klientský protokol SMTP
+opts_smtp_address_preference_any=Buď
+opts_smtp_balance_inet_protocols=Ověřte protokoly klienta SMTP
 
 opts_edebug=Chybějící nebo neplatná úroveň podrobného protokolování - musí být číslo větší než nula
 
@@ -153,10 +157,13 @@ mapping_find=Zobrazit mapování odpovídající:
 mapping_search=Vyhledávání
 mapping_match=Položky mapových souborů odpovídající <tt>$1</tt> ..
 
-opts_virtual_alias_maps=Vyhledávací tabulky mapování domén
+virtual_title=Virtuální mapy aliasů
+virtual_ecannot=Nemáte oprávnění upravovat konfiguraci mapování virtuálních aliasů
+opts_virtual_maps=Vyhledávací tabulky virtuálních aliasů
+opts_virtual_alias_maps=Vyhledávací tabulky virtuálních aliasů
 opts_virtual_alias_domains=Domény k provedení virtuálního mapování
-virtual_same=Z tabulek mapování domény
-virtual_return=virtuální domény
+virtual_same=Z vyhledávacích tabulek virtuálních aliasů
+virtual_return=mapy virtuálních aliasů
 
 transport_return=dopravní mapy
 
@@ -173,6 +180,7 @@ opts_content_filter=Filtr obsahu e-mailu
 start_efailed=Postfix se nepodařilo spustit
 start_ecannot=Není dovoleno spustit Postfix
 
+acl_virtual=Lze upravovat virtuální aliasy?
 acl_sni=Mohou certifikáty upravovat?
 acl_header=Lze upravit kontrolu záhlaví?
 acl_sasl=Lze upravit ověřování SMTP?
@@ -184,9 +192,20 @@ acl_postfinger=Lze zkontrolovat konfiguraci postfixu?
 acl_manual=Lze upravit konfigurační soubor?
 acl_dir=Povolený adresář pro soubory mapy
 acl_bcc=Lze upravit mapování BCC?
+acl_body=Lze upravovat tělesné kontroly?
+acl_dependent=Lze upravovat dopravní mapy závislé na odesílateli?
 
 mail_move=Přesunout do:
 mail_eexists=Zpráva již neexistuje!
+mail_qfile=Soubor fronty pošty
+mail_qlast=Naposledy opakován v
+mail_qdir=Stav fronty pošty
+mail_qdir_active=Aktivní
+mail_qdir_incoming=Přicházející
+mail_qdir_deferred=Odložený
+mail_qdir_corrupt=Zkorumpovaný
+mail_qdir_hold=Podrženo
+mail_qdir_maildrop=Pošta
 
 view_flush=Vyplachování
 view_body=Text zprávy
@@ -229,9 +248,11 @@ mailq_active=Aktivní
 mailq_deferred=Odložený
 mailq_hold=Vybrat
 mailq_unhold=Un-Hold Selected
+mailq_dir=Stav fronty
 
 flushq_title=Flush Queue
 flushq_desc=Vynucení pokusu o doručení pošty příkazem $1 ..
+flushq_desc2=.. zkontrolujte výsledky v protokolu pošty
 
 qview_title=Zpráva ve frontě
 qview_desc=Ze souboru $1
@@ -251,6 +272,7 @@ opts_mime_header_checks=Kontrolní tabulky MIME záhlaví
 opts_header_checks_no_map=(Aktuálně není definována žádná mapa pro kontrolu záhlaví. Nejprve definujte mapu a poté ji můžete upravovat)
 
 opts_mime_header_checks_no_map=(Aktuálně není definována žádná mapa pro kontrolu záhlaví MIME. Nejprve definujte mapu a poté ji můžete upravovat)
+opts_mime_header_checks_same_map=(Kontroly MIME hlaviček jsou stejné jako běžné kontroly hlaviček. Nejprve definujte jinou mapu a poté ji můžete upravovat.)
 header_name=Regulární výraz
 header_value=Akce pro zápasy
 header_discard=Zahodit (se zprávou protokolu..)
@@ -349,7 +371,7 @@ log_misc=Změněny obecné možnosti
 log_opts=Změna přepisování adresy a maskování
 log_aliases=Změněné možnosti aliasu
 log_canonical=Změna možností kanonického mapování
-log_virtual=Změněny možnosti virtuální domény
+log_virtual=Změněné možnosti mapování virtuálních aliasů
 log_bcc=Změněné možnosti mapy BCC
 log_transport=Změněné možnosti mapování dopravy
 log_sni=Změňte možnosti mapování certifikátu
@@ -439,6 +461,10 @@ opts_broken_sasl_auth_clients=Manipulace s klienty SMTP, kteří nejsou v soulad
 sasl_opts=Možnosti zabezpečení SMTP
 sasl_noanonymous=Odmítnout anonymní přihlášení
 sasl_noplaintext=Odmítnout přihlašování prostého textu
+sasl_noactive=Odmítnout Zakázat s výhradou aktivního (neslovníkového) útoku
+sasl_nodictionary=Metody odmítnutí podléhající pasivnímu (slovníkovému) útoku
+sasl_forward_secrecy=Povolte pouze metody, které podporují dopředné utajení
+sasl_mutual_auth=Povolte pouze metody, které poskytují vzájemné ověření
 opts_smtpd_delay_reject=Zpoždění klientů při neúspěšných přihlášeních?
 sasl_recip=Omezení příjemce SMTP
 sasl_relay=Omezení relé SMTP
@@ -460,6 +486,7 @@ opts_smtpd_tls_key_file=Soubor soukromého klíče TLS
 opts_smtpd_tls_CAfile=Soubor certifikační autority TLS
 opts_smtpd_use_tls=Povolit šifrování TLS?
 opts_smtp_enforce_tls=Vyžadujete šifrování TLS?
+opts_smtputf8_enable=Povolit podporu SMTPUTF8?
 sasl_err=Uložení ověřování a šifrování SMTP se nezdařilo
 sasl_ecert=Chybějící nebo neplatný soubor certifikátu TLS
 sasl_ekey=Chybějící nebo neplatný soubor klíče TLS
@@ -548,7 +575,7 @@ mysql_ecfile=Konfigurační soubor MySQL $1 nebyl nalezen
 mysql_ecfile2=Nelze najít tabulku v konfiguračním souboru MySQL $1
 mysql_edriver=Nepodařilo se načíst ovladač databáze $1
 mysql_elogin=Nepodařilo se přihlásit do databáze $1:$2.
-mysql_equery=Nepodařilo se dotazovat tabulku $1 : $2 
+mysql_equery=Nepodařilo se dotazovat tabulku $1 : $2
 mysql_eadd=Vložení SQL se nezdařilo : $1
 mysql_edelete=Odstranění SQL se nezdařilo : $1
 mysql_eupdate=Aktualizace SQL se nezdařila : $1
@@ -559,7 +586,7 @@ mysql_eneed=Konfigurační parametr MySQL $1 nebyl nalezen. Webmin to potřebuje
 ldap_ecfile=Konfigurační soubor LDAP $1 nebyl nalezen
 ldap_eldapmod=Modul Perl $1 potřebný pro komunikaci s LDAP není nainstalován nebo nelze načíst
 ldap_eldap=Nepodařilo se připojit k serveru LDAP $1 na portu $2
-ldap_eldaplogin=Nepodařilo se přihlásit k serveru LDAP $1 jako $2 : $3 
+ldap_eldaplogin=Nepodařilo se přihlásit k serveru LDAP $1 jako $2 : $3
 ldap_ebase=LDAP základní DN $1 není platný : $2
 ldap_eadd=Přidání LDAP $1 se nezdařilo : $2
 ldap_edelete=Odstranění LDAP $1 se nezdařilo : $2

@@ -7,6 +7,10 @@ $access{'edit'} || &error($text{'mon_ecannot'});
 &foreign_require("servers", "servers-lib.pl");
 &ReadParse();
 @handlers = &list_handlers();
+&error_setup($text{'mon_err'});
+if (!$in{'type'} && !$in{'id'}) {
+	&error($text{'mon_etype2'});
+	}
 if ($in{'type'}) {
 	# Create a new monitor
 	$in{'type'} =~ /^[a-zA-Z0-9\_\-\.\:]+$/ || &error($text{'mon_etype'});
@@ -53,16 +57,11 @@ print &ui_hidden("id", $in{'id'}),"\n";
 print &ui_table_start($text{'mon_header'}, "width=100%", 2, \@tds);
 
 # Check for clone modules of the monitor type
-if (-d "../$type") {
-	local @st = stat("../$type");
-	opendir(DIR, "..");
-	foreach $m (readdir(DIR)) {
-		local @lst = stat("../$m");
-		if (-l "../$m" && $st[1] == $lst[1]) {
-			# found a clone
-			push(@clones, $m);
-			}
-		}
+($mod = $type) =~ s/::.*$//;
+@minfos = &get_all_module_infos();
+($minfo) = grep { $_->{'dir'} eq $mod } @minfos;
+if ($minfo) {
+	@clones = grep { $_->{'cloneof'} eq $minfo->{'dir'} } @minfos;
 	}
 
 # Show input for description
@@ -88,7 +87,7 @@ if (!$in{'type'}) {
 		      ($stat->{'desc'} && $stat->{'up'} == 0 ?
 			 "<font color=#ff0000>$stat->{'desc'}</font>" :
 		       $stat->{'desc'} ? $stat->{'desc'}
-				       : &status_to_string($stat->{'up'})).
+				       : &status_to_string($stat->{'up'}, $serv)).
 			"</td>\n";
 		$stable .= "</tr>\n";
 		}
@@ -117,43 +116,46 @@ else {
 		}
 	}
 
-# Show servers to run on
+# Show where checks run, including the local host when no remotes are configured
 @servs = grep { $_->{'user'} } &servers::list_servers_sorted();
 @servs = sort { $a->{'host'} cmp $b->{'host'} } @servs;
-if (@servs) {
-	# Show list of remote servers, and maybe groups
-	$s = &ui_select("remotes", [ split(/\s+/, $serv->{'remote'}) ],
-			 [ [ "*", "&lt;$text{'mon_local'}&gt;" ],
-			   map { [ $_->{'host'}, $_->{'host'} ] } @servs ],
-			 5, 1, 1),
-	@groups = &servers::list_all_groups(\@servs);
-	@groups = sort { $a->{'name'} cmp $b->{'name'} } @groups;
-	if (@groups) {
-		$s .= &ui_select("groups", [ split(/\s+/, $serv->{'groups'}) ],
-			 [ map { [ $_->{'name'}, &group_desc($_) ] } @groups ],
-			 5, 1, 1),
-		}
-	print &ui_table_row($text{'mon_remotes2'}, $s, undef, \@tds);
+$hasremotes = @servs || $serv->{'groups'} ||
+	grep { $_ ne "*" } split(/\s+/, $serv->{'remote'});
+$s = &ui_select("remotes", [ split(/\s+/, $serv->{'remote'}) ],
+		 [ [ "*", "&lt;$text{'mon_local'}&gt;" ],
+		   map { [ $_->{'host'}, $_->{'host'} ] } @servs ],
+		 5, 1, 1);
+@groups = &servers::list_all_groups(\@servs);
+@groups = sort { $a->{'name'} cmp $b->{'name'} } @groups;
+if (@groups) {
+	# Groups let one monitor check all their member hosts
+	$s .= &ui_select("groups", [ split(/\s+/, $serv->{'groups'}) ],
+		 [ map { [ $_->{'name'}, &group_desc($_) ] } @groups ],
+		 5, 1, 1);
 	}
-else {
-	# Only local is available
-	print &ui_hidden("remotes", "*"),"\n";
-	}
+print &ui_table_row($text{'mon_remotes2'}, $s, undef, \@tds);
 
 print &ui_table_end();
 
 print &ui_table_start($text{'mon_header5'}, "width=100%", 2, \@tds);
 
-# Show emailing schedule
+# Show if monitoring is enabled
 print &ui_table_row($text{'mon_nosched'},
-		    &ui_select("nosched", int($serv->{'nosched'}),
-			       [ [ 1, $text{'no'} ],
-				 [ 0, $text{'mon_warndef'} ],
-				 [ 3,  $text{'mon_warn1'} ],
-				 [ 2,  $text{'mon_warn0'} ],
-				 [ 4,  $text{'mon_warn2'} ],
-				 [ 5,  $text{'mon_warn3'} ] ]),
-		    undef, \@tds);
+	&ui_yesno_radio("nosched", $serv->{'nosched'} == 1 ? 0 : 1),
+	undef, \@tds);
+
+# Show when to report
+my $report = $serv->{'nosched'} != 1 ? $serv->{'nosched'} :
+	     defined($serv->{'old_nosched'}) ? $serv->{'old_nosched'} : 0;
+print &ui_table_row($text{'mon_report'},
+	&ui_select("report", $report,
+	       [ [ 0, $text{'mon_warndef'} ],
+		 [ 3, $text{'mon_warn1'} ],
+		 [ 2, $text{'mon_warn0'} ],
+		 [ 4, $text{'mon_warn2'} ],
+		 [ 5, $text{'mon_warn3'} ],
+		 [ 6, $text{'mon_quiet'} ] ]),
+	undef, \@tds);
 
 # Show number of failures
 print &ui_table_row($text{'mon_fails'},
@@ -172,7 +174,7 @@ foreach $n (keys %notify) {
 	# Don't clear set but un-usable modes
 	print &ui_hidden("notify", $n);
 	}
-print &ui_table_row($text{'mon_notify'}, $notify,
+print &ui_table_row(&hlink($text{'mon_notify'}, "notify"), $notify,
 		    undef, \@tds);
 
 # Show extra address to email
@@ -200,12 +202,10 @@ if (@tmpls) {
 
 # Which clone module to use
 if (@clones) {
-	local %minfo = &get_module_info($type);
 	print &ui_table_row($text{'mon_clone'},
 		   &ui_select("clone", $serv->{'clone'},
-			      [ [ "", $minfo{'desc'} ],
-				map { local %cminfo = &get_module_info($_);
-				      [ $_, $cminfo{'desc'} ] } @clones ]),
+		      [ [ "", $minfo->{'desc'} ],
+			map { [ $_->{'dir'}, $_->{'desc'} ] } @clones ]),
 		   undef, \@tds);
 	}
 
@@ -216,7 +216,7 @@ if (@servs) {
 	  &ui_select("depend", $serv->{'depend'},
 		 [ [ "", "&nbsp;" ],
 		   map { [ $_->{'id'}, $_->{'desc'}.
-				       " (".&nice_remotes($_).")" ] }
+				       " (".&html_strip(&nice_remotes($_), " ").")" ] }
 		     sort { $a->{'desc'} cmp $b->{'desc'} } @servs ]),
 	  undef, \@tds);
 	}
@@ -238,15 +238,28 @@ print &ui_table_row($text{'mon_ontimeout'},
 		    &ui_textbox("ontimeout", $serv->{'ontimeout'}, 60),
 		    undef, \@tds);
 
+# When to run commands?
+print &ui_table_row($text{'mon_cmdmode'},
+		    &ui_radio("cmdmode", $serv->{'cmdmode'} || 0,
+			      [ [ 0, $text{'mon_cmdmode0'} ],
+				[ 1, $text{'mon_cmdmode1'} ] ]));
+
 print &ui_table_row(" ", "<font size=-1>$text{'mon_oninfo'}</font>",
 		    undef, \@tds);
 
-# Radio button for where to run commands
-print &ui_table_row($text{'mon_runon'},
-		    &ui_radio("runon", $serv->{'runon'} ? 1 : 0,
-			      [ [ 0, $text{'mon_runon0'} ],
-				[ 1, $text{'mon_runon1'} ] ]),
-		    undef, \@tds);
+if ($hasremotes) {
+	# Commands can run here or on the host whose check triggered them
+	print &ui_table_row($text{'mon_runon'},
+		&ui_radio("runon", $serv->{'runon'} ? 1 : 0,
+			  [ [ 0, $text{'mon_runon0'} ],
+			    [ 1, $text{'mon_runonhost'} ] ]).
+		"<br>".$text{'mon_runonhelp'}, undef, \@tds);
+	}
+else {
+	# Both modes run locally, so just preserve the saved mode
+	print &ui_table_row($text{'mon_runon'}, $text{'mon_runon0'}.
+		&ui_hidden("runon", $serv->{'runon'} ? 1 : 0), undef, \@tds);
+	}
 
 print &ui_table_end();
 

@@ -38,10 +38,14 @@ print &ui_table_row($text{'view_module'},
 
 if ($act->{'module'} ne 'global') {
 	print &ui_table_row($text{'view_script'},
-			    "<tt>$act->{'module'}/$act->{'script'}</tt>");
+		    $act->{'script'} =~ /\// ?
+			"<tt>".&html_escape($act->{'script'})."</tt>" :
+			"<tt>".&html_escape($act->{'module'})."/".
+			       &html_escape($act->{'script'})."</tt>");
 	}
 else {
-	print &ui_table_row($text{'view_script'}, "<tt>$act->{'script'}</tt>");
+	print &ui_table_row($text{'view_script'},
+		"<tt>".&html_escape($act->{'script'})."</tt>");
 	}
 
 print &ui_table_row($text{'view_user'},
@@ -52,12 +56,14 @@ print &ui_table_row($text{'view_ip'},
 
 if ($act->{'sid'} ne '-') {
 	print &ui_table_row($text{'view_sid'},
-		&ui_link("search.cgi?sid=$act->{'sid'}&uall=1&mall=1&tall=1&fall=1&return=".
-        &urlize($in{'return'})."&returndesc=".
-        &urlize($in{'returndesc'}), $act->{'sid'}) );
+		&ui_link("search.cgi?sid=$act->{'sid'}&uall=1&mall=1&tall=1&".
+			 "fall=1&return=".&urlize($in{'return'}).
+			 "&returndesc=".&urlize($in{'returndesc'}),
+			 &html_escape($act->{'sid'})) );
 	}
 
-print &ui_table_row($text{'view_time'}, &make_date($act->{'time'}));
+print &ui_table_row($text{'view_time'}, &make_date($act->{'time'}).
+	" (".&make_date_relative($act->{'time'}).")");
 
 if ($act->{'webmin'}) {
 	print &ui_table_row($text{'view_host'},
@@ -128,10 +134,14 @@ foreach my $d (&list_diffs($act)) {
 	if ($t =~ /\$2/ || !$d->{'diff'}) {
 		# Diff is just a single line message
 		$fhtml .= &ui_hidden_table_start($cbox.
-		      &text("view_type_".$d->{'type'},
-			    "<tt>$d->{'object'}</tt>",
-			    "<tt>".&html_escape($d->{'diff'})."</tt>"),
-		      "width=100%", 2, "diff$i", $open);
+		      $text{"view_type_".$d->{'type'}."desc"},
+		      "width=100%", 2, "diff$i", 1);
+		$fhtml .= &ui_table_row(undef,
+			&ui_tag('pre',
+				&text("view_type_".$d->{'type'},
+				      "<tt>$d->{'object'}</tt>",
+				      "<tt>".&html_escape($d->{'diff'})."</tt>")
+			, {'data-text' => 1}), 2);
 		}
 	else {
 		# Show multi-line diff
@@ -157,7 +167,7 @@ if ($rbcount) {
 			          &select_invert_link("r") ]);
 	}
 print &ui_hidden_table_start($text{'view_files'}, "width=100%", 1, "files", 1);
-$fhtml .= "<b>$text{'view_nofiles'}</b><p>\n" if (!$anydiffs);
+$fhtml .= "<b>$text{'view_nofiles'}</b>\n" if (!$anydiffs);
 print &ui_table_row(undef, $fhtml, 2);
 print &ui_hidden_table_end("raw");
 

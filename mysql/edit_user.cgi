@@ -57,25 +57,48 @@ print &ui_table_row($text{'user_user'},
 			$text{'user_all'}));
 
 # Password field
-my $master_login = ($u->[1] eq ($config{'login'} || "root"));
-my $epassfield1 = $fieldmap{'Password'} || 1e10;
-my $epassfield2 = $fieldmap{'authentication_string'} || 1e10;
+my $epassfield1 = $fieldmap{'Password'};
+my $epassfield2 = $fieldmap{'authentication_string'};
 my $plugin = $fieldmap{'plugin'};
 my $unixsocket = $plugin && $u->[$plugin] eq 'unix_socket';
-my $nopass = (($epassfield1 && !$u->[$epassfield1]) &&
-		       ($epassfield2 && !$u->[$epassfield2]));
-my $lock_supported = $u->[$fieldmap{'account_locked'}] eq 'Y' || $u->[$fieldmap{'account_locked'}] eq 'N';
-$lock_supported = 0 if ($master_login);
+my $nopass = ((!defined($epassfield1) || !$u->[$epassfield1]) &&
+	      (!defined($epassfield2) || !$u->[$epassfield2]));
+my $hashpass = $u->[$epassfield2] || $u->[$epassfield1];
+my $lock_supported = &get_account_lock_support();
+# Old way for checking account locking
 my $locked = $u->[$fieldmap{'account_locked'}] eq 'Y';
+# New account locking check
+if (!$in{'new'} &&
+    (!exists($fieldmap{'account_locked'}) ||
+     !defined($u->[$fieldmap{'account_locked'}]))) {
+	$locked = &get_account_lock_status($u->[1], $u->[0]);
+	}
 print &ui_table_row($text{'user_pass'},
 	&ui_radio("mysqlpass_mode", $in{'new'} ? 0 :
 		       $lock_supported && $locked ? 4 : 
 		       $nopass && !$unixsocket ? 2 : 1,
-		  [ (($lock_supported && $locked) || $master_login) ? () : [ 2, $text{'user_none'} ],
+		  [ ($lock_supported && $locked) ? () : [ 2, $text{'user_none'} ],
 		    $in{'new'} ? ( ) : ($lock_supported && $locked) || $nopass && !$unixsocket ? () : ( [ 1, $text{'user_leave'} ] ),
 		  	($in{'new'} || !$lock_supported) ? ( ) : ( [ 4, $text{'user_locked'} ] ),
 		    [ 0, $text{'user_set'} ] ])." ".
 	&ui_password("mysqlpass", undef, 20));
+
+# Current hashed password
+if (!$in{'new'} && $hashpass) {
+	$hashpass =~ s/[^[:print:]\n]//g;   # keep printable and newline
+	$hashpass =~ s/\n/\\n/g;            # display newline as literal '\n'
+	print &ui_table_row($text{'user_hashpass'},
+		"<tt>".&html_escape($hashpass)."</tt>");
+	}
+
+# Plugin for setting password
+my $plugins = &list_authentication_plugins();
+if ($plugins) {
+	print &ui_table_row($text{'user_plugin'},
+		&ui_select("plugin", $plugin && $u->[$plugin], 
+			   [ [ '', $text{'default'} ],
+			     @{$plugins} ]));
+	}
 
 # Allowed host / network
 print &ui_table_row($text{'user_host'},

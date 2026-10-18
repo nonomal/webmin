@@ -17,7 +17,6 @@ our $module_name;
 our $strong_ssl_ciphers;
 our $pfs_ssl_ciphers;
 our $info;
-our $root_directory;
 our %config;
 our $letsencrypt_cmd;
 
@@ -29,7 +28,7 @@ get_miniserv_config(\%miniserv);
 $@ = undef;
 eval "use Net::SSLeay";
 if ($@) {
-	print text('ssl_essl', "http://www.webmin.com/ssl.html"),"<p>\n";
+	print text('ssl_essl', "https://webmin.com/ssl.html"),"<p>\n";
 	if (foreign_available("cpan")) {
 		print text('ssl_cpan', "../cpan/download.cgi?source=3&cpan=Net::SSLeay&mode=2&return=/$module_name/&returndesc=".urlize($text{'index_return'})),"<p>\n";
 		}
@@ -48,7 +47,6 @@ print ui_tabs_start(\@tabs, "mode", $in{'mode'} || $tabs[0]->[0], 1);
 # Basic SSL settings
 print ui_tabs_start_tab("mode", "ssl");
 print $text{'ssl_desc1'},"<p>\n";
-print $text{'ssl_desc2'},"<p>\n";
 
 print ui_form_start("change_ssl.cgi", "post");
 print ui_table_start($text{'ssl_header'}, undef, 2);
@@ -56,8 +54,11 @@ print ui_table_start($text{'ssl_header'}, undef, 2);
 print ui_table_row($text{'ssl_on'},
 	ui_yesno_radio("ssl", $miniserv{'ssl'}));
 
-print ui_table_row($text{'ssl_hsts'},
-	ui_yesno_radio("ssl_hsts", $miniserv{'ssl_hsts'}));
+print ui_table_row($text{'ssl_enforce'},
+	ui_radio("ssl_enforce", $miniserv{'ssl_enforce'} // 1,
+		[ [ 2, $text{'ssl_hsts'} ],
+		  [ 1, $text{'yes'} ],
+		  [ 0, $text{'no'} ] ]));
 
 print ui_table_row($text{'ssl_key'},
 	ui_textbox("key", $miniserv{'keyfile'}, 40)." ".
@@ -163,9 +164,7 @@ print ui_tabs_end_tab();
 # SSL key generation form
 print ui_tabs_start_tab("mode", "create");
 print "$text{'ssl_newkey'}<p>\n";
-my $curkey = read_file_contents($miniserv{'keyfile'});
-my $origkey = read_file_contents("$root_directory/miniserv.pem");
-if ($curkey eq $origkey) {
+if (miniserv_using_default_cert($miniserv{'keyfile'})) {
 	# System is using the original (insecure) Webmin key!
 	print "<b>$text{'ssl_hole'}</b><p>\n";
 	}
@@ -240,7 +239,8 @@ print ui_table_row($text{'ssl_privcert'},
 			  [ 0, $text{'ssl_below'} ] ])."<br>\n".
 		    ui_textarea("cert", undef, 7, 70)."<br>\n".
 		    "<b>$text{'ssl_upload'}</b>\n".
-		    ui_upload("certfile"));
+		    ui_upload("certfile", undef, undef,
+			      "onChange='form.cert_def.value = 0'"));
 
 print ui_table_row($text{'ssl_privchain'},
 		    ui_radio("chain_def", 1,
@@ -249,7 +249,8 @@ print ui_table_row($text{'ssl_privchain'},
 			  [ 0, $text{'ssl_below'} ] ])."<br>\n".
 		    ui_textarea("chain", undef, 7, 70)."<br>\n".
 		    "<b>$text{'ssl_upload'}</b>\n".
-		    ui_upload("chainfile"));
+		    ui_upload("chainfile", undef, undef,
+			      "onChange='form.chain_def.value = 0'"));
 
 print ui_table_end();
 print ui_form_end([ [ "save", $text{'save'} ] ]);
@@ -257,9 +258,13 @@ print ui_tabs_end_tab();
 
 # Let's Encrypt form
 print ui_tabs_start_tab("mode", "lets");
-print "$text{'ssl_letsdesc'}<p>\n";
-
 my $err = &check_letsencrypt();
+print $text{'ssl_letsdesc'};
+if (!$err) {
+	print "<p>", $text{'ssl_letsdesc2'}, "</p>\n";
+	}
+print "<p>\n";
+
 if ($err) {
 	print "<b>",&text('ssl_letserr', $err),"</b><p>\n";
 	print &get_letsencrypt_install_message(
@@ -269,22 +274,35 @@ if ($err) {
 	}
 else {
 	# Show form to create a cert
-	print "$text{'ssl_letsdesc2'}<p>\n";
-	print &ui_form_start("letsencrypt.cgi");
+	print &ui_form_start("letsencrypt.cgi", "post");
 	print &ui_table_start($text{'ssl_letsheader'}, undef, 2);
 
 	# For domain names
 	my @doms = $config{'letsencrypt_doms'} ?
 			split(/\s+/, $config{'letsencrypt_doms'}) : ( $host );
 	print &ui_table_row($text{'ssl_letsdoms'},
-		&ui_textarea("dom", join("\n", @doms), 5, 40));
+		&ui_textarea("dom", join("\n", @doms), 5, 40)."<br>\n".
+		&ui_checkbox("subset", 1, $text{'ssl_subset'},
+			     $config{'letsencrypt_subset'}));
 
 	# Apache vhost or other path
 	my @opts;
+	my $certbot_by_webmin = $letsencrypt_cmd
+		? &is_webmin_listening_on_port(80)
+		: 0;
+	my $certbot_warning = $letsencrypt_cmd
+		? &get_letsencrypt_certbot_port_error()
+		: undef;
 
 	my $webroot = $config{'letsencrypt_webroot'};
-	my $mode = $webroot eq 'dns' ? 3 : $webroot ? 2 : 0;
-	if (&foreign_installed("apache")) {
+	my $hasapache = &foreign_installed("apache");
+	my $saved_mode = $config{'letsencrypt_mode'} || "web";
+	my $mode = $saved_mode eq 'dns' ? 3 :
+		   $saved_mode eq 'certbot' ? 4 :
+		   $webroot ? 2 :
+		   $hasapache ? 0 :
+		   $letsencrypt_cmd ? 4 : 2;
+	if ($hasapache) {
 		&foreign_require("apache");
 		my $conf = &apache::get_config();
 		my @snames;
@@ -315,17 +333,32 @@ else {
 	if ($letsencrypt_cmd) {
 		push(@opts, [ 4, $text{'ssl_letsmode4'} ]);
 		}
+	my $mode_html = &ui_radio_table("webroot_mode", $mode, \@opts);
+	if ($certbot_warning) {
+		# Keep the warning aligned with the validation options (hacky as
+		# we have no API for this yet)
+		$certbot_warning .= " ".$text{'ssl_certbotprehook'}
+		    if (!$certbot_by_webmin && $config{'letsencrypt_before'});
+		my $warning_note = &ui_note($certbot_warning, 0);
+		my $warning_html =
+			"<tr><td colspan='2'>".
+			&ui_tag('div', $warning_note,
+				{ 'style' => 'padding-left: 19px; '.
+					     'margin-top: -8px !important' }).
+			"</td></tr>\n";
+		$mode_html =~ s#</table>\s*$#$warning_html</table>#;
+		}
 	print &ui_table_row($text{'ssl_letsmode'},
-		&ui_radio_table("webroot_mode", $mode, \@opts));
+		$mode_html);
 
 	# Install in Webmin now?
 	print &ui_table_row($text{'ssl_usewebmin'},
-		&ui_yesno_radio("use", 1));
+		&ui_yesno_radio("use", !$config{'letsencrypt_nouse'}));
 
 	# SSL key size
 	print &ui_table_row($text{'ssl_size'},
-		&ui_opt_textbox("size", undef, 6, $text{'default'}).
-				" ".$text{'ssl_bits'});
+		&ui_opt_textbox("size", $config{'letsencrypt_size'}, 6,
+				$text{'default'})." ".$text{'ssl_bits'});
 
 	# Staging mode
 	print &ui_table_row($text{'ssl_staging'},
@@ -333,11 +366,60 @@ else {
 			  [ [ 0, $text{'ssl_staging0'} ],
 			    [ 1, $text{'ssl_staging1'} ] ]));
 
+	# Provider settings are ordinary rows in the certificate form
+	print &ui_table_row($text{'ssl_acmedir'},
+		&ui_textbox("directory_url",
+			    $config{'letsencrypt_directory_url'}, 40)."<br>\n".
+		&ui_note($text{'ssl_acmedirdesc'}, 0));
+	# Keep both EAB credentials controlled by the same choice
+	my $eab_disabled = $config{'letsencrypt_eab_kid'} eq '';
+	print &ui_table_row($text{'ssl_acmeeab'},
+		&ui_radio_table("eab_kid_def", $eab_disabled ? 1 : 0,
+			[ [ 1, $text{'config_none'}, undef,
+			    &js_disable_inputs([ "eab_kid", "eab_hmac" ],
+					       [ ], "onClick") ],
+			  [ 0, $text{'config_setto'},
+			    &ui_textbox("eab_kid",
+				$config{'letsencrypt_eab_kid'}, 32,
+				$eab_disabled, undef, 'autocomplete="off" '.
+				'placeholder="'.&quote_escape($text{'ssl_acmekid'}).'" '.
+				'aria-label="'.&quote_escape($text{'ssl_acmekid'}).'"')."<br>\n".
+			    &ui_textbox("eab_hmac",
+				$config{'letsencrypt_eab_hmac'}, 32,
+				$eab_disabled, undef,
+				'autocomplete="new-password" '.
+				'placeholder="'.&quote_escape($text{'ssl_acmehmac'}).'" '.
+				'aria-label="'.&quote_escape($text{'ssl_acmehmac'}).'"'),
+			    &js_disable_inputs([ ], [ "eab_kid", "eab_hmac" ],
+					       "onClick") ] ], 1)."<br>\n".
+		&ui_note($text{'ssl_acmekiddesc'}, 0)."<br>\n".
+		&ui_note($text{'ssl_acmehmacdesc'}, 0));
+
 	# Renewal option
 	my $job = &find_letsencrypt_cron_job();
-	my $renew = $job && $job->{'months'} =~ /^\*\/(\d+)$/ ? $1 : undef;
-	print &ui_table_row($text{'ssl_letsrenew'},
-		&ui_opt_textbox("renew", $renew, 4, $text{'ssl_letsnotrenew'}));
+	my $has_ip_doms = &letsencrypt_doms_have_ips(\@doms);
+	my $renew_unit = $has_ip_doms ? "days" :
+			 ($config{'letsencrypt_renew_unit'} || "months");
+	my $renew;
+	if ($job && $renew_unit eq "days" && $job->{'interval'}) {
+		$renew = int($job->{'interval'} / (24*60*60));
+		}
+	elsif ($job && $job->{'months'} =~ /^\*\/(\d+)$/) {
+		$renew_unit = "months";
+		$renew = $1;
+		}
+	elsif ($job && $job->{'interval'}) {
+		$renew_unit = "months";
+		$renew = int($job->{'interval'} / (30*24*60*60));
+		}
+	my @renew_units = ( [ "months", $text{'ssl_letsrenew_months'} ],
+			    [ "days", $text{'ssl_letsrenew_days'} ] );
+	my $renew_disabled = $renew eq '';
+	print &ui_table_row(&hlink($text{'ssl_letsrenew'}, "letsrenew"),
+		&ui_opt_textbox("renew", $renew, 4, $text{'ssl_letsnotrenew'},
+				undef, undef, [ "renew_unit" ])." ".
+		&ui_select("renew_unit", $renew_unit, \@renew_units,
+			   undef, undef, undef, $renew_disabled));
 
 	print &ui_table_end();
 	print &ui_form_end([ [ undef, $text{'ssl_letsok'} ],
@@ -349,4 +431,3 @@ print ui_tabs_end_tab();
 print ui_tabs_end(1);
 
 ui_print_footer("", $text{'index_return'});
-

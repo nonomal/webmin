@@ -13,8 +13,8 @@ sub update_system_install
 local $update = $_[0] || $in{'update'};
 local (@rv, @newpacks);
 local $cmd = "urpmi --force --auto";
-print "<b>",&text('urpmi_install', "<tt>$cmd $update</tt>"),"</b><p>\n";
-print "<pre>";
+print &text('urpmi_install', "<tt>$cmd $update</tt>"),"\n";
+print "<pre data-installer>";
 &additional_log('exec', undef, "$cmd $update");
 local $qm = join(" ", map { quotemeta($_) } split(/\s+/, $update));
 &open_execute_command(CMD, "$cmd $qm </dev/null", 2);
@@ -31,11 +31,11 @@ while(<CMD>) {
 close(CMD);
 print "</pre>\n";
 if ($?) {
-	print "<b>$text{'urpmi_failed'}</b><p>\n";
+	print "$text{'urpmi_failed'}<p>\n";
 	return ( );
 	}
 else {
-	print "<b>$text{'urpmi_ok'}</b><p>\n";
+	print "$text{'urpmi_ok'}<p>\n";
 	return &unique(@rv);
 	}
 }

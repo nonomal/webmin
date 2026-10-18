@@ -11,7 +11,7 @@ no warnings 'uninitialized';
 # Globals
 our (%access, %text, %in, %config);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 &ReadParse();
 &error_setup($in{'type'} ? $text{'screate_err1'} : $text{'screate_err2'});
 $access{'slave'} || &error($in{'type'} ? $text{'screate_ecannot1'}
@@ -57,6 +57,7 @@ foreach my $z (&find("zone", $vconf)) {
 		}
 	}
 my $masterport = $in{'port_def'} ? undef : $in{'port'};
+my $masterkey = $in{'key_def'} ? undef : $in{'key'};
 my @masters = split(/\s+/, $in{'masters'});
 foreach my $m (@masters) {
 	&check_ipaddress($m) || &check_ip6address($m) ||
@@ -99,10 +100,18 @@ if ($file) {
 	}
 
 # Create the structure
-my @mdirs = map { { 'name' => $_ } } @masters;
+my @mdirs;
+foreach my $m (@masters) {
+	my $mdir = { 'name' => $m,
+		     'values' => [ ] };
+	if ($masterkey) {
+		push(@{$mdir->{'values'}}, 'key', $masterkey);
+		}
+	push(@mdirs, $mdir);
+	}
 my $masters = { 'name' => 'masters',
-	     'type' => 1,
-	     'members' => \@mdirs };
+	        'type' => 1,
+	        'members' => \@mdirs };
 if (defined($masterport)) {
 	$masters->{'values'} = [ 'port', $masterport ];
 	}

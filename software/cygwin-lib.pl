@@ -80,6 +80,14 @@ close(RPM);
 return ($tmp[0], $tmp[1], $d, $tmp[2], $tmp[3], $tmp[4], &make_date($tmp[5]));
 }
 
+# virtual_package_info(package)
+# Returns an array of package information for a virtual package, usually called
+# if "package_info" returns nothing.
+sub virtual_package_info
+{
+return ( );
+}
+
 # is_package(file)
 # Check if some file is a package file
 sub is_package
@@ -137,9 +145,11 @@ if (-d $real) {
 	}
 elsif ($_[0] =~ /\*|\?/) {
 	local @rv;
-	my @p = &backquote_command("ls $_[0]");
+	my $qm = quotemeta($_[0]);
+	$qm =~ s/\\([*?])/$1/g;
+	my @p = &backquote_command("ls $qm");
 	@rv = grep { s/.*\/([^\s]+)[_\-]((\d[^\s]*|src)-\d[^\s]*)\.tar\.bz2$/$1/ } @p;
-	&open_execute_command(RPM, "rpm -q -p $_[0] --queryformat \"%{NAME} %{SUMMARY}\\n\" 2>&1", 1);
+	&open_execute_command(RPM, "rpm -q -p $qm --queryformat \"%{NAME} %{SUMMARY}\\n\" 2>&1", 1);
 	while(<RPM>) {
 		chop;
 		push(@rv, $_) if (!/does not appear|query of.*failed|warning:/);
@@ -217,7 +227,7 @@ if ($in->{'root'} =~ /^\/.+/) {
 	if (!(-d $in{'root'})) {
 		return &text('rpm_eroot', $in->{'root'});
 		}
-	$opts .= " --root $in->{'root'}";
+	$opts .= " --root ".quotemeta($in->{'root'});
 	}
 if (-d $real) {
 	# Find the package in the directory
@@ -230,7 +240,8 @@ if (-d $real) {
 		$out = $1;
 	    } else {
 		next if ($f !~ /\.rpm$/);
-		$out = &backquote_command("rpm -q -p $file/$f --queryformat \"%{NAME}\\n\" 2>&1");
+		my $qf = quotemeta("$file/$f");
+		$out = &backquote_command("rpm -q -p $qf --queryformat \"%{NAME}\\n\" 2>&1");
 		$out =~ s/warning:.*\n//;
 		$out =~ s/\n//;
 	    }
@@ -252,7 +263,8 @@ elsif ($file =~ /\*|\?/) {
 	    } elsif ($f =~ /\/([^\s]+[_\-]\d[^\s]*-\d[^\s]*)\.tar\.bz2$/) {
 		$out = $1;
 	    } else {
-		$out = &backquote_command("rpm -q -p $f --queryformat \"%{NAME}\\n\" 2>&1", 1);
+		my $qf = quotemeta($f);
+		$out = &backquote_command("rpm -q -p $qf --queryformat \"%{NAME}\\n\" 2>&1", 1);
 		$out =~ s/warning:.*\n//;
 		$out =~ s/\n//;
 	    }

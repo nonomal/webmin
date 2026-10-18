@@ -15,6 +15,111 @@ use Time::Local;
 $dbm_index_min = 1000000;
 $dbm_index_version = 3;
 
+# supports_tnef_module()
+# Returns 1 if the Convert::TNEF module is available for decoding winmail.dat
+my $supports_tnef_module;
+sub supports_tnef_module
+{
+if (!defined($supports_tnef_module)) {
+	$supports_tnef_module = eval { require Convert::TNEF; 1; } ? 1 : 0;
+	}
+return $supports_tnef_module;
+}
+
+# decode_tnef_attachment(&attach)
+# Expands a TNEF attachment into a list of normal attachments, or returns
+# an error string if decoding is not possible
+sub decode_tnef_attachment
+{
+my ($attach) = @_;
+my @rv;
+return (undef, "Convert::TNEF module not installed")
+	if (!&supports_tnef_module());
+
+my $tempdir = &transname();
+mkdir($tempdir, 0700) || return (undef, $!);
+
+# Only try to de-privilege the parser when we are currently fully root;
+# In Usermin or already-switched contexts, just decode as the current user
+my $parse_user = !$< && !$> ? &get_mail_parse_user($attach) : undef;
+my $tnef;
+if ($parse_user) {
+	# Convert::TNEF may create temp files under output_dir, so hand it a
+	# private directory owned by the mailbox user and run the parser as
+	# that user instead of root
+	local $main::mail_open_user = $parse_user;
+	my @uinfo = &get_switch_user_info();
+	@uinfo || return (undef, "Mail open user $parse_user does not exist");
+	&set_ownership_permissions($uinfo[2], $uinfo[3], 0700, $tempdir);
+	my $switched = &switch_to_mail_user();
+	my $io;
+	my $ok = eval {
+		open($io, "<", \$attach->{'data'}) || die "$!";
+		binmode($io);
+		$tnef = Convert::TNEF->read($io,
+			{ 'output_dir' => $tempdir,
+			  'buffer_size' => &get_buffer_size() });
+		close($io) || die "$!";
+		1;
+		};
+	if ($switched) {
+		# Restore root after decoding so the rest of the mailbox code
+		# keeps running with its original privileges
+		$) = 0;
+		$> = 0;
+		}
+	return (undef, $@) if (!$ok);
+	}
+else {
+	my $io;
+	if (!open($io, "<", \$attach->{'data'})) {
+		return (undef, $!);
+		}
+	binmode($io);
+	$tnef = eval {
+		Convert::TNEF->read($io,
+			{ 'output_dir' => $tempdir,
+			  'buffer_size' => &get_buffer_size() })
+		};
+	close($io);
+	}
+if ($@) {
+	return (undef, $@);
+	}
+if (!$tnef) {
+	return (undef, $Convert::TNEF::errstr ||
+		       "failed to decode winmail.dat");
+	}
+foreach my $ta ($tnef->attachments) {
+	my $fn = $ta->longname() || $ta->name();
+	$fn =~ s/\x00+$// if (defined($fn));
+	my $data = $ta->data();
+	next if (!defined($data));
+	my $ct = $fn ? &guess_mime_type($fn)
+		     : "application/octet-stream";
+	push(@rv,
+	     { 'type' => $ct,
+	       'header' => { 'content-type' => $ct },
+	       'headers' => [ [ 'Content-Type', $ct ] ],
+	       'filename' => $fn,
+	       'data' => $data });
+	}
+$tnef->purge();
+return (\@rv, undef);
+}
+
+# get_mail_parse_user(&mail-or-attach)
+# Returns the Unix user, if any, that should be used for unsafe mail parsing
+sub get_mail_parse_user
+{
+my ($obj) = @_;
+while ($obj) {
+	return $obj->{'open_user'} if ($obj->{'open_user'});
+	$obj = $obj->{'parent'};
+	}
+return undef;
+}
+
 # list_mails(user|file, [start], [end])
 # Returns a subset of mail from a mbox format file
 sub list_mails
@@ -540,49 +645,18 @@ if ($ct =~ /boundary="([^"]+)"/i || $ct =~ /boundary=([^;\s]+)/i) {
 		elsif (lc($attach->{'type'}) eq 'application/ms-tnef') {
 			# This attachment is a winmail.dat file, which may
 			# contain multiple other attachments!
-			local ($opentnef, $tnef);
-			if (!($opentnef = &has_command("opentnef")) &&
-			    !($tnef = &has_command("tnef"))) {
-				$attach->{'error'} = "tnef command not installed";
+			local ($tattach, $terror) =
+				&decode_tnef_attachment($attach);
+			if ($tattach && @{$tattach}) {
+				pop(@attach);	# lose winmail.dat
+				foreach my $ta (@{$tattach}) {
+					$ta->{'idx'} = scalar(@attach);
+					push(@attach, $ta);
+					}
 				}
 			else {
-				# Can actually decode
-				local $tempfile = &transname();
-				open(TEMPFILE, ">$tempfile");
-				print TEMPFILE $attach->{'data'};
-				close(TEMPFILE);
-				local $tempdir = &transname();
-				mkdir($tempdir, 0700);
-				if ($opentnef) {
-					system("$opentnef -d $tempdir -i $tempfile >/dev/null 2>&1");
-					}
-				else {
-					system("$tnef -C $tempdir -f $tempfile >/dev/null 2>&1");
-					}
-				pop(@attach);	# lose winmail.dat
-				opendir(DIR, $tempdir);
-				while($f = readdir(DIR)) {
-					next if ($f eq '.' || $f eq '..');
-					local $data;
-					open(FILE, "<$tempdir/$f");
-					while(<FILE>) {
-						$data .= $_;
-						}
-					close(FILE);
-					local $ct = &guess_mime_type($f);
-					push(@attach,
-					  { 'type' => $ct,
-					    'idx' => scalar(@attach),
-					    'header' =>
-						{ 'content-type' => $ct },
-					    'headers' =>
-						[ [ 'Content-Type', $ct ] ],
-					    'filename' => $f,
-					    'data' => $data });
-					}
-				closedir(DIR);
-				unlink(glob("$tempdir/*"), $tempfile);
-				rmdir($tempdir);
+				$attach->{'error'} = $terror ||
+						     "failed to decode winmail.dat";
 				}
 			}
 		last if ($l >= $max || $lines[$l] eq "$bound--");
@@ -908,7 +982,14 @@ else {
 	$fromaddr .= '@'.&get_system_hostname();
 	}
 local $qfromaddr = quotemeta($fromaddr);
-local $esmtp = $flags ? 1 : 0;
+
+# Resolve SMTP credentials and the authentication method before choosing the
+# greeting because authenticated sessions require EHLO.
+$user ||= $userconfig{'smtp_user'} || $config{'smtp_user'};
+$pass ||= $userconfig{'smtp_pass'} || $config{'smtp_pass'};
+$auth ||= $userconfig{'smtp_auth'} ||
+	  $config{'smtp_auth'} || "Cram-MD5";
+local $esmtp = $flags || $user || $ssl ? 1 : 0;
 my $h = { 'fh' => 'mailboxes::MAIL' };
 if ($file) {
 	# Just append the email to a file using mbox format
@@ -930,28 +1011,25 @@ elsif ($sm) {
 
 	&smtp_command($h, undef, 0);
 
-	# Send SMTP HELO
+	# Send EHLO for ESMTP features, or HELO for basic SMTP
 	my $helo = $config{'helo_name'} || &get_system_hostname();
 	my $helocmd = $esmtp ? "ehlo $helo\r\n" : "helo $helo\r\n";
 	&smtp_command($h, $helocmd, 0);
 
 	if ($ssl == 2) {
-		# Switch to SSL with STARTTLS, if possible
+		# Request a TLS upgrade with STARTTLS
                 my $rv = &smtp_command($h, "starttls\r\n", 1);
                 if ($rv =~ /^2\d+/) {
+			# Enable TLS and repeat the greeting on the secure connection
                         &switch_smtp_to_ssl($h);
 			&smtp_command($h, $helocmd, 0);
                         }
                 else {
+			# Continue without TLS if STARTTLS is unavailable
                         $ssl = 0;
                         }
 		}
 
-	# Get username and password from parameters, or from module config
-	$user ||= $userconfig{'smtp_user'} || $config{'smtp_user'};
-	$pass ||= $userconfig{'smtp_pass'} || $config{'smtp_pass'};
-	$auth ||= $userconfig{'smtp_auth'} ||
-		  $config{'smtp_auth'} || "Cram-MD5";
 	if ($user) {
 		# Send authentication commands
 		eval "use Authen::SASL";
@@ -1471,7 +1549,8 @@ return $data;
 }
 
 # simplify_date(datestring, [format])
-# Given a date from an email header, convert to the user's preferred format
+# Given a date from an email header, convert to the user's preferred format and
+# return it as an HTML string
 sub simplify_date
 {
 local ($date, $fmt) = @_;
@@ -1494,12 +1573,12 @@ if ($u) {
 		}
 	}
 elsif ($date =~ /^(\S+),\s+0*(\d+)\s+(\S+)\s+(\d+)\s+(\d+):(\d+)/) {
-	return "$2/$3/$4 $5:$6";
+	return &html_escape("$2/$3/$4 $5:$6");
 	}
 elsif ($date =~ /^0*(\d+)\s+(\S+)\s+(\d+)\s+(\d+):(\d+)/) {
-	return "$1/$2/$3 $4:$5";
+	return &html_escape("$1/$2/$3 $4:$5");
 	}
-return $date;
+return &html_escape($date);
 }
 
 # simplify_from(from)
@@ -2012,10 +2091,20 @@ foreach $f (@files) {
 		$i++;
 		next;
 		}
+	local $idx = $i++;
 	local $mail = &read_mail_file($f, $_[3]);
-	$mail->{'idx'} = $i++;
-	$mail->{'id'} = $f;	# ID is relative path, like cur/4535534
-	$mail->{'id'} = substr($mail->{'id'}, length($_[0])+1);
+	if (!$mail && !$_[4]) {
+		# The cached Maildir file list can be stale if another client
+		# deleted or moved a message. Re-read it once before returning
+		# blank entries to the caller.
+		&flush_maildir_cachefile($_[0]);
+		return &list_maildir($_[0], $_[1], $_[2], $_[3], 1);
+		}
+	if ($mail) {
+		$mail->{'idx'} = $idx;
+		$mail->{'id'} = $f;	# ID is relative path, like cur/4535534
+		$mail->{'id'} = substr($mail->{'id'}, length($_[0])+1);
+		}
 	push(@rv, $mail);
 	}
 return @rv;
@@ -2035,9 +2124,11 @@ return map { substr($_, length($file)+1) } &get_maildir_files($file);
 sub select_maildir
 {
 local ($file, $ids, $headersonly) = @_;
+local $retried = $_[3];
 &mark_read_maildir($file);
 local @files = &get_maildir_files($file);
 local @rv;
+local $missing;
 foreach my $i (@$ids) {
 	local $path = "$file/$i";
 	local $mail = &read_mail_file($path, $headersonly);
@@ -2064,7 +2155,14 @@ foreach my $i (@$ids) {
 		# Get index in directory
 		$mail->{'idx'} = &indexof($path, @files);
 		}
+	else {
+		$missing = 1;
+		}
 	push(@rv, $mail);
+	}
+if ($missing && !$retried) {
+	&flush_maildir_cachefile($file);
+	return &select_maildir($file, $ids, $headersonly, 1);
 	}
 return @rv;
 }
@@ -2092,7 +2190,7 @@ else {
 	# Check the on-disk cache file
 	local $cachefile = &get_maildir_cachefile($_[0]);
 	local @cst = $cachefile ? stat($cachefile) : ( );
-	if ($cst[9] >= $newest) {
+	if ($cst[9] > $newest) {
 		# Can read the cache
 		open(CACHE, "<", $cachefile);
 		while(<CACHE>) {
@@ -2111,6 +2209,32 @@ else {
 				next if ($f eq "." || $f eq "..");
 				if ($skipt && $f =~ /:2,([A-Za-z]*T[A-Za-z]*)$/) {
 					# Flagged as deleted by IMAP .. skip
+					next;
+					}
+				# Skip entries that cannot be read as messages.
+				local $path = "$_[0]/$d/$f";
+				local @fst = stat($path);
+				if (!@fst) {
+					&error_stderr("Skipping Maildir file ".
+						      "$path : stat failed : ".
+						      "$!");
+					next;
+					}
+				if (!$fst[7]) {
+					&error_stderr("Skipping Maildir file ".
+						      "$path : file is zero ".
+						      "bytes");
+					next;
+					}
+				if (!-r _) {
+					my $m = sprintf("%04o",$fst[2] & 07777);
+					my $o = getpwuid($fst[4]) || $fst[4];
+					my $g = getgrgid($fst[5]) || $fst[5];
+					&error_stderr("Skipping Maildir file ".
+						      "$path : not readable by".
+						      " current user, owner=".
+						      "$o($fst[4]):$g($fst[5])".
+						      " mode=$m");
 					next;
 					}
 				push(@shorts, "$d/$f")
@@ -2387,7 +2511,11 @@ delete($main::list_maildir_cache_time{$dir});
 # Returns the number of messages in a maildir directory
 sub count_maildir
 {
-local @files = &get_maildir_files($_[0]);
+my $dir = $_[0];
+# A missing Maildir is empty until first delivery creates it. If a path
+# exists, including a dangling symlink, let the normal Maildir open fail.
+return 0 if (!-e $dir && !-l $dir);
+local @files = &get_maildir_files($dir);
 return scalar(@files);
 }
 
@@ -2586,13 +2714,16 @@ sub read_mail_file
 my ($file, $headersonly) = @_;
 
 # Open and read the mail file
+local @st = stat($file);
+return undef if (@st && !$st[7]);
 &open_as_mail_user(MAIL, $file) || return undef;
 my $mail = &read_mail_fh(MAIL, 0, $headersonly);
-$mail->{'file'} = $file;
 close(MAIL);
-local @st = stat($file);
+
+$mail->{'file'} = $file;
 $mail->{'size'} = $st[7];
 $mail->{'time'} = $st[9];
+$mail->{'ctime'} = $st[10];
 
 # Set read flags based on the name
 if ($_[0] =~ /:2,([A-Za-z]*)$/) {
@@ -2870,7 +3001,7 @@ my $rv = eval {
 		}
 	elsif ($str =~ /^(\d{4})\-(\d+)\-(\d+)\s+(\d+):(\d+)/) {
 		# Format like 2004-12-07 12:53
-		local $tm = timelocal(0, $4, $4, $3, $2-1,
+		local $tm = timelocal(0, $5, $4, $3, $2-1,
 				      $1 < 50 ? $1+100 : $1 < 1000 ? $1 : $1-1900);
 		return $tm;
 		}
@@ -2905,11 +3036,12 @@ if ($@) {
 return $rv;
 }
 
-# send_text_mail(from, to, cc, subject, body, [smtp-server])
+# send_text_mail(from, to, cc, subject, body, [smtp-server],
+# 		 [smtp-user, smtp-pass])
 # A convenience function for sending a email with just a text body
 sub send_text_mail
 {
-local ($from, $to, $cc, $subject, $body, $smtp) = @_;
+local ($from, $to, $cc, $subject, $body, $smtp, $user, $pass) = @_;
 local $cs = &get_charset();
 local $attach = 
 	{ 'headers' => [ [ 'Content-Type', 'text/plain; charset='.$cs ],
@@ -2921,7 +3053,7 @@ local $mail = { 'headers' =>
 		  [ 'Cc', $cc ],
 		  [ 'Subject', &encode_mimewords($subject) ] ],
 		'attach' => [ $attach ] };
-return &send_mail($mail, undef, 1, 0, $smtp);
+return &send_mail($mail, undef, 1, 0, $smtp, $user, $pass);
 }
 
 # make_from_line(address, [time])
@@ -3191,12 +3323,13 @@ return 0;
 # Returns the getpw* function array for the user to switch to
 sub get_switch_user_info
 {
-if ($main::mail_open_user =~ /^\d+$/) {
+my $user = @_ ? $_[0] : $main::mail_open_user;
+if ($user =~ /^\d+$/) {
 	# Could be by UID .. but fall back to by name if there is no such UID
-	my @rv = getpwuid($main::mail_open_user);
+	my @rv = getpwuid($user);
 	return @rv if (@rv > 0);
 	}
-return getpwnam($main::mail_open_user);
+return getpwnam($user);
 }
 
 # is_ascii()

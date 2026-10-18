@@ -7,15 +7,12 @@ use WebminCore;
 
 &init_config();
 &ReadParse();
+&PrintHeader();
 my $err = sub {
-    &PrintHeader();
     print("<tt>Cannot change theme : $_[0]</tt>\n");
     exit(1);
     };
-# Check if in debug mode
-&$err("Debug mode is not enabled!")
-    if (!$gconfig{'debug_enabled'} &&
-        !$gconfig{'debug_theme_switcher'});
+
 # Check if allowed to change theme,
 # otherwise throw an error
 if (!&foreign_available('theme') &&
@@ -41,5 +38,7 @@ my @users = &acl::list_users();
 my ($user) = grep { $_->{'name'} eq $remote_user } @users;
 $user->{'theme'} = $theme;
 &acl::modify_user($user->{'name'}, $user);
-&restart_miniserv();
-&redirect(&get_webprefix() . "/");
+&load_theme_library();
+&theme_post_change_theme() if (defined(&theme_post_change_theme));
+&reload_miniserv();
+print &js_redirect("/", "top");

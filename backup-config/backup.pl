@@ -5,7 +5,7 @@ use strict;
 use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
-our (%text, %config, $no_acl_check);
+our (%text, %config, $no_acl_check, %gconfig);
 $no_acl_check++;
 require './backup-config-lib.pl';
 &foreign_require("mailboxes", "mailboxes-lib.pl");
@@ -76,11 +76,15 @@ if (($err || $backup->{'emode'} == 0) && $backup->{'email'}) {
 		       $postmsg;
 		$subject = &text('email_sok', $host);
 		}
-	&mailboxes::send_text_mail($config{'from_addr'} ||
-				   &mailboxes::get_from_address(),
-				   $backup->{'email'},
-				   undef,
-				   $subject,
-				   $msg);
+	my $email = $backup->{'email'};
+	if ($email eq '*') {
+		$email = $gconfig{'webmin_email_to'};
+		if ($email && $gconfig{'webmin_email_to_name'}) {
+			$email = "$gconfig{'webmin_email_to_name'} <$email>";
+			}
+		}
+	&mailboxes::send_text_mail(
+		$config{'from_addr'} || &mailboxes::get_from_address(),
+		$email, undef, $subject, $msg);
 	}
 

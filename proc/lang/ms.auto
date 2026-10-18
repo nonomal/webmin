@@ -16,7 +16,9 @@ index_memtfc=$1 jumlah / $2 percuma / $3 dicache
 index_loadname=Purata beban CPU:
 index_loadnums=$1 (1 minit), $2 (5 minit), $3 (15 minit)
 index_cpuname=Jenis CPU:
-index_inzone=Dalam zon $1 
+index_inzone=Dalam zon $1
+index_core=$1 teras
+index_cores=$1 teras
 
 pid=ID
 owner=Pemilik
@@ -38,7 +40,6 @@ search_fs=Menggunakan sistem fail
 search_files=Menggunakan fail
 search_submit=Carian
 search_none=Tiada proses sepadan yang dijumpai.
-search_kill=Hantar Isyarat
 search_ignore=Abaikan proses carian dalam hasil
 search_return=borang carian
 search_sigterm=Tamatkan Proses
@@ -66,8 +67,6 @@ edit_gone=Proses ini tidak lagi berjalan
 edit_sub=Subprocesses
 edit_subid=ID
 edit_subcmd=Perintah sub-proses
-edit_kill=Hantar Isyarat
-edit_change=Ubah
 edit_prilow=Keutamaan rendah
 edit_prihigh=Keutamaan yang tinggi
 edit_pridef=Lalai
@@ -81,12 +80,11 @@ edit_open=Fail dan Sambungan
 edit_trace=Melacak Proses
 edit_return=butiran proses
 
-kill_err=Gagal menghantar isyarat $1 untuk memproses $2 
-kill_title=Hantar Isyarat
+kill_err=Gagal menghantar isyarat $1 untuk memproses $2
 kill_sent=dihantar
 kill_ecannot=Anda tidak dibenarkan membunuh proses
 
-renice_err=Gagal merombak proses $1 
+renice_err=Gagal merombak proses $1
 renice_ecannot=Anda tidak dibenarkan mengubah proses
 
 linux_pri=Keutamaan
@@ -144,11 +142,11 @@ sysv_task=ID Petugas
 sysv_zone=Nama zon
 
 log_run=Perintah Ran "$1"
-log_kill=Isyarat dihantar $1 untuk memproses $2 
+log_kill=Isyarat dihantar $1 untuk memproses $2
 log_kills=Hantar isyarat $1 hingga $2 proses
-log_kill_l=Isyarat dihantar $1 untuk memproses $2 
-log_kills_l=Isyarat dihantar $1 ke proses $2 
-log_renice=Mengganti keutamaan proses $2 hingga $1 
+log_kill_l=Isyarat dihantar $1 untuk memproses $2
+log_kills_l=Isyarat dihantar $1 ke proses $2
+log_renice=Mengganti keutamaan proses $2 hingga $1
 
 acl_manage=Menguruskan proses sebagai pengguna
 acl_manage_def=Pengguna Webmin semasa
@@ -174,10 +172,10 @@ open_type=Taipkan
 open_proto=Protokol
 open_desc=Butiran
 open_fd=Deskriptor Fail
-open_listen1=Mendengar pada port $1 
-open_listen2=Mendengar alamat $1 port $2 
-open_recv=Menerima pada $1:$2 
-open_conn=Disambungkan dari $1 hingga $2 dalam keadaan $3 
+open_listen1=Mendengar pada port $1
+open_listen2=Mendengar alamat $1 port $2
+open_recv=Menerima pada $1:$2
+open_conn=Disambungkan dari $1 hingga $2 dalam keadaan $3
 open_cwd=Dir dir
 open_rtd=Root dir
 open_txt=Kod program
@@ -192,15 +190,18 @@ open_file=Jalan
 
 trace_title=Melacak Proses
 trace_start=Memulakan jejak panggilan sistem untuk $1 ..
-trace_doing=Jejak panggilan sistem untuk $1  :
+trace_doing=Jejak panggilan sistem untuk $1 :
 trace_done=.. proses telah ditamatkan.
 trace_failed=.. tracing gagal!
 trace_sorry=Halaman ini memerlukan sokongan Java dalam penyemak imbas anda. Untuk menggunakan jejak proses teks sahaja, laraskan konfigurasi modul.
 trace_syscalls=Panggilan sistem jejak:
 trace_all=Semua
 trace_sel=Disenaraikan ..
-trace_change=Ubah
 
 windows_threads=Thread dalam proses
 
 syslog_dmesg=Mesej kernel
+
+proc_kill=Hantar Isyarat
+proc_submit=Tetapkan
+proc_filter=Penapis

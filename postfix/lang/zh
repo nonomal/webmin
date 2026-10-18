@@ -138,7 +138,6 @@ opts_mydomain_default=缺省 (系统提供)
 opts_myhostname=此邮件系统的因特网主机名
 opts_myhostname_default=缺省 (系统提供)
 opts_mynetworks=本地网络
-opts_mynetworks_default=缺省 (所有连接的网络)
 opts_bounce_notice_recipient=在退回时发送通知给psotmaster...
 opts_2bounce_notice_recipient=在两次退回时发送通知给psotmaster...
 opts_delay_notice_recipient=在延迟时发送通知给psotmaster...
@@ -244,10 +243,6 @@ map_delete_create=不能删除正在创建的映射
 maps_internal_error=映射：内部错误
 maps_cant_write=不能写入
 help_map_format=我应该使用什么格式？
-
-virtual_title=虚拟域
-virtual_ecannot=你没有编辑虚拟域映射配置的权力
-opts_virtual_maps=域映射查找表
 
 transport_title=传输映射
 transport_ecannot=你没有编辑传输映射配置的权力

@@ -43,8 +43,21 @@ $templates_dir = "$module_config_directory/templates";
 %monitor_os_support = ( 'traffic' => { 'os_support' => '*-linux freebsd' },
 		      );
 
+%monitor_deprecated = ( 'dnsadmin' => 1 );
+
 @monitor_statuses = ( 'up', 'down', 'un', 'webmin', 'timed', 'isdown' );
 
+$mysql_variant = "mysql";
+if (&foreign_check("mysql")) {
+	# Fix MySQL / MariaDB
+	&foreign_require("mysql");
+	if ($mysql::mysql_version =~ /mariadb/i) {
+		$mysql_variant = "mariadb";
+		}
+	}
+if ($mysql_variant eq "mariadb") {
+	$text{'type_mysql'} =~ s/MySQL/MariaDB/g;
+	}
 
 # list_services()
 # Returns a list of all services this module knows how to get status on.
@@ -57,7 +70,7 @@ if (!-d $services_dir) {
 	# setup initial services
 	mkdir($module_config_directory, 0700);
 	mkdir($services_dir, 0700);
-	system("cp services/* $services_dir");
+	system("cp $module_root_directory/services/* $services_dir");
 	}
 map { $mod{$_}++ } &list_modules();
 opendir(DIR, $services_dir);
@@ -65,6 +78,10 @@ while($f = readdir(DIR)) {
 	next if ($f !~ /^(.*)\.serv$/);
 	my $serv = &get_service($1);
 	next if (!$serv || !$serv->{'type'} || !$serv->{'id'});
+	if ($serv->{'default'} && $serv->{'id'} eq 'mysql' &&
+	    $mysql_variant eq "mariadb") {
+		$serv->{'desc'} =~ s/MySQL/MariaDB/g;
+		}
 	if ($serv->{'depends'}) {
 		my $d;
 		map { $d++ if (!$mod{$_}) } split(/\s+/, $serv->{'depends'});
@@ -136,9 +153,10 @@ return &unique(@remote);
 # an array content, the status of all hosts for this monitor are returned.
 sub service_status
 {
-my $t = $_[0]->{'type'};
+my ($serv, $fromcgi) = @_;
+my $t = $serv->{'type'};
 my @rv;
-foreach $r (&expand_remotes($_[0])) {
+foreach $r (&expand_remotes($serv)) {
 	my $rv;
 	local $main::error_must_die = 1;
 	eval {
@@ -150,17 +168,17 @@ foreach $r (&expand_remotes($_[0])) {
 			$remote_error_msg = undef;
 			&remote_foreign_require($r, 'status', 'status-lib.pl')
 				if (!$done_remote_status{$r}++);
-			my $webmindown = $s->{'type'} eq 'alive' ? 0 : -2;
+			my $webmindown = $serv->{'type'} eq 'alive' ? 0 : -2;
 			if ($remote_error_msg) {
 				$rv = { 'up' => $webmindown,
 					 'desc' => "$text{'mon_webmin'} : $remote_error_msg" };
 				}
 			else {
-				my %s = %{$_[0]};
+				my %s = %{$serv};
 				$s{'remote'} = '*';
 				$s{'groups'} = undef;
 				($rv) = &remote_foreign_call($r, 'status',
-					    'service_status', \%s, $_[1]);
+					    'service_status', \%s, $fromcgi);
 				if ($remote_error_msg) {
 					$rv = { 'up' => $webmindown, 'desc' =>
 					    "$text{'mon_webmin'} : $remote_error_msg" };
@@ -170,17 +188,32 @@ foreach $r (&expand_remotes($_[0])) {
 		elsif ($t =~ /^(\S+)::(\S+)$/) {
 			# Call to another module
 			my ($mod, $mtype) = ($1, $2);
+			$mod = $serv->{'clone'} if ($serv->{'clone'});
 			&foreign_require($mod, "status_monitor.pl");
 			$rv = &foreign_call($mod, "status_monitor_status",
-					    $mtype, $_[0], $_[1]);
+					    $mtype, $serv, $fromcgi);
 			}
 		else {
 			# Just include and use the local monitor library
-			do "${t}-monitor.pl" if (!$done_monitor{$t}++);
+			my $mfile = "$module_root_directory/${t}-monitor.pl";
+			if (-r $mfile && !$done_monitor{$t}++) {
+				do $mfile;
+				$done_monitor_err{$t} = "$@" if ($@);
+				}
 			my $func = "get_${t}_status";
-			$rv = &$func($_[0],
-				     $_[0]->{'clone'} ? $_[0]->{'clone'} : $t,
-				     $_[1]);
+			if (defined(&$func)) {
+				$rv = &$func($serv,
+				     $serv->{'clone'} ? $serv->{'clone'} : $t,
+				     $fromcgi);
+				}
+			else {
+				# Monitor type is unknown, or its program
+				# failed to load
+				$rv = { 'up' => -1 };
+				$rv->{'desc'} = &text('mon_eload', $mfile,
+						      $done_monitor_err{$t})
+					if ($done_monitor_err{$t});
+				}
 			}
 		alarm(0);
 		};
@@ -215,7 +248,8 @@ return map { $_->{'dir'} } grep { &check_os_support($_) }
 
 # list_handlers()
 # Returns a list of the module's monitor type handlers, and those
-# defined in other modules.
+# defined in other modules. Each is a array ref with ID, description
+# and deprecated fields.
 sub list_handlers
 {
 my ($f, @rv);
@@ -225,19 +259,19 @@ while($f = readdir(DIR)) {
 		my $m = $1;
 		my $oss = $monitor_os_support{$m};
 		next if ($oss && !&check_os_support($oss));
-		push(@rv, [ $m, $text{"type_$m"} ]);
+		my $dep = $monitor_deprecated{$m} ? 1 : 0;
+		push(@rv, [ $m, $text{"type_$m"}, $dep ]);
 		}
 	}
 closedir(DIR);
 foreach my $m (&get_all_module_infos()) {
-	my $mdir = defined(&module_root_directory) ?
-		&module_root_directory($m->{'dir'}) :
-		"$root_directory/$m->{'dir'}";
+	my $mdir = &module_root_directory($m->{'dir'});
 	if (-r "$mdir/status_monitor.pl" &&
-	    &check_os_support($m)) {
+	    &check_os_support($m) &&
+	    !$m->{'cloneof'}) {
 		&foreign_require($m->{'dir'}, "status_monitor.pl");
 		my @mms = &foreign_call($m->{'dir'}, "status_monitor_list");
-		push(@rv, map { [ $m->{'dir'}."::".$_->[0], $_->[1] ] } @mms);
+		push(@rv, map { [ $m->{'dir'}."::".$_->[0], $_->[1], $_->[2] ] } @mms);
 		}
 	}
 return @rv;
@@ -246,24 +280,25 @@ return @rv;
 # depends_check(&service, [module]+)
 sub depends_check
 {
-return if ($_[0]->{'id'});	# only check for new services
-if ($_[0]->{'remote'}) {
+my ($serv, @mods) = @_;
+return if ($serv->{'id'});	# only check for new services
+if ($serv->{'remote'}) {
 	# Check on the remote server
-	foreach my $m (@_[1..$#_]) {
-		&remote_foreign_check($_[0]->{'remote'}, $m, 1) ||
+	foreach my $m (@mods) {
+		&remote_foreign_check($serv->{'remote'}, $m, 1) ||
 			&error(&text('depends_remote', "<tt>$m</tt>",
-				     "<tt>$_[0]->{'remote'}</tt>"));
+				     "<tt>$serv->{'remote'}</tt>"));
 		}
 	}
 else {
 	# Check on this server
-	foreach my $m (@_[1..$#_]) {
+	foreach my $m (@mods) {
 		my %minfo = &get_module_info($m);
 		%minfo || &error(&text('depends_mod', "<tt>$m</tt>"));
 		&check_os_support(\%minfo, undef, undef, 1) ||
 			&error(&text('depends_os', "<tt>$minfo{'desc'}</tt>"));
 		}
-	$_[0]->{'depends'} = join(" ", @_[1..$#_]);
+	$_[0]->{'depends'} = join(" ", @mods);
 	}
 }
 
@@ -371,19 +406,17 @@ else {
 	}
 }
 
-# nice_remotes(&monitor, [max])
+# nice_remotes(&monitor)
 sub nice_remotes
 {
-my ($s, $max) = @_;
-$max ||= 3;
+my ($s) = @_;
 my @remotes = map { $_ eq "*" ? $text{'index_local'}
 			         : &html_escape($_) }
 		     split(/\s+/, $s->{'remote'});
 foreach my $g (split(/\s+/, $s->{'groups'})) {
 	push(@remotes, &text('index_group', $g));
 	}
-return @remotes > $max ? join(", ", @remotes[0..$max]).", ..."
-		       : join(", ", @remotes);
+return join("<br>", @remotes);
 }
 
 sub group_desc
@@ -469,7 +502,10 @@ return ( { 'id' => 'tmobile',
            'domain' => 't.vodafone.ne.jp' },
          { 'id' => 'bellcanada',
            'desc' => 'Bell Canada',
-           'domain' => 'txt.bellmobility.ca' },
+           'domain' => 'txt.bell.ca' },
+         { 'id' => 'luckymobile',
+           'desc' => 'Lucky Mobile',
+           'domain' => 'txt.bell.ca' },
          { 'id' => 'bellsouth',
            'desc' => 'Bell South',
            'domain' => 'sms.bellsouth.com' },
@@ -654,47 +690,19 @@ return &get_webprefix().
 
 sub status_to_string
 {
-my ($up) = @_;
+my ($up, $serv) = @_;
+if ($serv) {
+	do $serv->{'type'}."-monitor.pl" if (!$done_monitor{$serv->{'type'}}++);
+	my $f = "get_".$serv->{'type'}."_upmsg";
+	my $msg = defined(&$f) ? &$f($up) : undef;
+	return $msg if (defined($msg));
+	}
 return $up == 1 ? $text{'mon_up'} :
        $up == -1 ? $text{'mon_not'} :
        $up == -2 ? $text{'mon_webmin'} :
        $up == -3 ? $text{'mon_timeout'} :
        $up == -4 ? $text{'mon_skip'} :
                    "<font color=#ff0000>$text{'mon_down'}</font>";
-}
-
-sub get_services_current_status
-{
-my (@serv) = @_;
-my %monitors;
-foreach my $s (@serv) {
-    my $title = &html_escape($s->{'desc'});
-    my %monitor;
-    $monitor{'title'} = $title;
-    my @stats = &service_status($s, 1);
-    if ($s->{'depend'}) {
-        my $ds = &get_service($s->{'depend'});
-        if ($ds) {
-            my @dstats = &service_status($ds, 1);
-            if ($dstats[0]->{'up'} != 1) {
-                @stats = map {{ 'up' => -4 }} @stats;
-                }
-            }
-        }
-    my @ups     = map {$_->{'up'}} @stats;
-    my @remotes = map {$_->{'remote'}} @stats;
-    for (my $i = 0; $i < @ups; $i++) {
-        my $up = $ups[$i];
-        my $h  = $remotes[$i];
-        $h  = $text{'index_local'} if ($h eq '*');
-        $monitor{'status'} = $up;
-        $monitor{'status_text'}  = &status_to_string($h);
-        $monitor{'icon'} = &get_status_icon($up);
-        $monitor{'icon_title'}  = &html_escape($h);
-        }
-    $monitors{$s->{'id'}} = \%monitor;
-    }
-return %monitors;
 }
 
 1;

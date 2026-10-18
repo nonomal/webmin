@@ -26,9 +26,13 @@ if (@{$d->{'data'}}) {
 		$i++;
 		next if ($access{'perms'} == 2 && !&can_edit_db($u->[1]));
 		local @cols;
+		my $dbname = &unquote_mysql_database($u->[1]);
+		my $big_style = ' style="position: absolute; margin-top: -2px;"';
+		my $wildcard = $u->[1]=~ /\_/ && 
+			$u->[1] eq $dbname ? "<big$big_style>∗</big>" : '';
 		push(@cols, "<a href='edit_db.cgi?idx=$i'>".
-			($u->[1] eq '%' || $u->[1] eq '' ? $text{'dbs_any'}
-					: &html_escape($u->[1]))."</a>");
+			($u->[1] eq '%' || $u->[1] eq '' ? $text{'dbs_any'} :
+				&html_escape($dbname))."&nbsp;$wildcard</a>");
 		push(@cols, $u->[2] eq '' ? $text{'dbs_anon'}
 					    : &html_escape($u->[2]));
 		push(@cols, $u->[0] eq '%' ? $text{'dbs_any'} :
@@ -36,7 +40,8 @@ if (@{$d->{'data'}}) {
 					  : &html_escape($u->[0]));
 		my @priv;
 		my ($allprivs, $noprivs) = (1, 1);
-		foreach my $f (&priv_fields('db')) {
+		my @priv_fields = &priv_fields('db');
+		foreach my $f (@priv_fields) {
 			if ($u->[$fieldmap{$f->[0]}] eq 'Y') {
 				push(@priv, $f->[1]);
 				$noprivs = 0;
@@ -47,7 +52,7 @@ if (@{$d->{'data'}}) {
 			}
 		push(@cols, $allprivs ? $text{'users_all'} :
 			    $noprivs ? $text{'users_none'} :
-				       join("&nbsp;| ", @priv));
+				       &format_privs(\@priv, \@priv_fields));
 		print &ui_checked_columns_row(\@cols, \@tds,
 				"d", join(" ", $u->[0], $u->[1], $u->[2]));
 		}

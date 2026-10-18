@@ -8,6 +8,8 @@ index_loadname=平均CPU負載：
 index_loadnums=$1（1分鐘）， $2（5分鐘）， $3（15分鐘）
 index_cpuname=CPU類型：
 index_inzone=在 $1區域
+index_core=$1 核心
+index_cores=$1 核心
 
 stime=已開始
 sclass=IO調度類
@@ -116,8 +118,11 @@ trace_sorry=此頁面需要瀏覽器中的Java支持。要使用純文本過程�
 trace_syscalls=跟踪系統調用：
 trace_all=所有
 trace_sel=上市 ..
-trace_change=更改
 
 windows_threads=處理中的線程
 
 syslog_dmesg=內核消息
+
+proc_kill=發送訊號
+proc_submit=放
+proc_filter=篩選

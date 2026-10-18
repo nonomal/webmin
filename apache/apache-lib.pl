@@ -26,81 +26,93 @@ $last_restart_time_flag = $module_var_directory."/restart-flag";
 # if the Apache binary changes, when Webmin is upgraded, or once every five
 # minutes if automatic rebuilding is enabled.
 if ($module_name ne 'htaccess') {
-	local %oldsite;
-	local $httpd = &find_httpd();
-	local @st = stat($httpd);
-	&read_file($site_file, \%oldsite);
-	local @sst = stat($site_file);
-	if ($oldsite{'path'} ne $httpd ||
-	    $oldsite{'size'} != $st[7] ||
-	    $oldsite{'webmin'} != &get_webmin_version() ||
-	    $config{'auto_mods'} && $sst[9] < time()-5*60) {
-		# Need to build list of supported modules
-		local ($ver, $mods, $fullver) = &httpd_info($httpd);
-		if ($ver) {
-			my @allmods = &available_modules();
-			local @mods = map { "$_/$ver" }
-				          &configurable_modules(\@allmods);
-			foreach my $m (@mods) {
-				if ($m =~ /(\S+)\/(\S+)/) {
-					$httpd_modules{$1} = $2;
-					}
-				}
-			# Call again now that known modules have been set, as
-			# sometimes there are dependencies due to LoadModule
-			# statements in an IfModule block
-			undef(@get_config_cache);
-			@allmods = &available_modules();
-			@mods = map { "$_/$ver" }
-				    &configurable_modules(\@allmods);
-			local %site = ( 'size' => $st[7],
-					'path' => $httpd,
-					'modules' => join(' ', @mods),
-					'allmodules' => join(' ', @allmods),
-					'version' => $ver,
-					'fullversion' => $fullver,
-					'webmin' => &get_webmin_version() );
-			&lock_file($site_file);
-			&write_file($site_file, \%site);
-			chmod(0644, $site_file);
-			&unlock_file($site_file);
-			}
-		}
+	&create_site_file();
 	}
-
-# Read the site-specific setup file, then require in all the module-specific
-# .pl files
-if (&read_file($site_file, \%site)) {
-	local($m, $f, $d);
-	$httpd_size = $site{'size'};
-	foreach $m (split(/\s+/, $site{'modules'})) {
-		if ($m =~ /(\S+)\/(\S+)/) {
-			$httpd_modules{$1} = $2;
-			}
-		}
-	foreach $m (split(/\s+/, $site{'allmodules'})) {
-		$all_httpd_modules{$m} = $site{'version'};
-		}
-	foreach $m (keys %httpd_modules) {
-		if (!-r "$module_root_directory/$m.pl") {
-			delete($httpd_modules{$m});
-			}
-		}
-	foreach $f (split(/\s+/, $site{'htaccess'})) {
-		if (-r $f) { push(@htaccess_files, $f); }
-		}
-	foreach $m (keys %httpd_modules) {
-		do "$m.pl";
-		}
-	foreach $d (split(/\s+/, $site{'defines'})) {
-		$httpd_defines{$d}++;
-		}
-	}
+&read_site_file();
 
 $apache_docbase = $config{'apache_docbase'} ? $config{'apache_docbase'} :
 		  $httpd_modules{'core'} >= 2.0 ?
 			"http://httpd.apache.org/docs-2.0/mod/" :
 			"http://httpd.apache.org/docs/mod/";
+
+# create_site_file()
+# If the Apache binary or Webmin version has changed, create the site
+# file containing all known Apache modules
+sub create_site_file
+{
+my %oldsite;
+my $httpd = &find_httpd();
+my @st = stat($httpd);
+&read_file($site_file, \%oldsite);
+my @sst = stat($site_file);
+if ($oldsite{'path'} ne $httpd ||
+    $oldsite{'size'} != $st[7] ||
+    $oldsite{'webmin'} != &get_webmin_version() ||
+    $config{'auto_mods'} && $sst[9] < time()-5*60) {
+	# Need to build list of supported modules
+	my ($ver, $mods, $fullver) = &httpd_info($httpd);
+	if ($ver) {
+		my @allmods = &available_modules();
+		my @mods = map { "$_/$ver" }
+			       &configurable_modules(\@allmods);
+		foreach my $m (@mods) {
+			if ($m =~ /(\S+)\/(\S+)/) {
+				$httpd_modules{$1} = $2;
+				}
+			}
+		# Call again now that known modules have been set, as
+		# sometimes there are dependencies due to LoadModule
+		# statements in an IfModule block
+		undef(@get_config_cache);
+		@allmods = &available_modules();
+		@mods = map { "$_/$ver" }
+			    &configurable_modules(\@allmods);
+		my %site = ( 'size' => $st[7],
+			     'path' => $httpd,
+			     'modules' => join(' ', @mods),
+			     'allmodules' => join(' ', @allmods),
+			     'version' => $ver,
+			     'fullversion' => $fullver,
+			     'webmin' => &get_webmin_version() );
+		&lock_file($site_file);
+		&write_file($site_file, \%site);
+		chmod(0644, $site_file);
+		&unlock_file($site_file);
+		}
+	}
+}
+
+# read_site_file()
+# Read the site-specific setup file, then require in all the module-specific
+# .pl files
+sub read_site_file
+{
+if (&read_file($site_file, \%site)) {
+	foreach my $m (split(/\s+/, $site{'modules'})) {
+		if ($m =~ /(\S+)\/(\S+)/) {
+			$httpd_modules{$1} = $2;
+			}
+		}
+	foreach my $m (split(/\s+/, $site{'allmodules'})) {
+		$all_httpd_modules{$m} = $site{'version'};
+		}
+	foreach my $m (keys %httpd_modules) {
+		if (!-r "$module_root_directory/$m.pl") {
+			delete($httpd_modules{$m});
+			}
+		}
+	foreach my $f (split(/\s+/, $site{'htaccess'})) {
+		if (-r $f) { push(@htaccess_files, $f); }
+		}
+	foreach my $m (keys %httpd_modules) {
+		do "$m.pl";
+		}
+	foreach my $d (split(/\s+/, $site{'defines'})) {
+		$httpd_defines{$d}++;
+		}
+	}
+
+}
 
 # parse_config_file(handle, lines, file, [recursive])
 # Parses lines of text from some config file into a data structure. The
@@ -114,9 +126,10 @@ $apache_docbase = $config{'apache_docbase'} ? $config{'apache_docbase'} :
 #  value -	Value (possibly with spaces)
 #  members -	For type 1, a reference to the array of members
 #  indent -     Number of spaces before the name
+#  comments -   Full comment lines immediately before this directive
 sub parse_config_file
 {
-local($fh, @rv, $line, %dummy);
+local($fh, @rv, $line, %dummy, @comments);
 $fh = $_[0];
 $dummy{'line'} = $dummy{'eline'} = $_[1]-1;
 $dummy{'file'} = $_[2];
@@ -134,8 +147,13 @@ foreach my $d (&get_httpd_defines()) {
 	}
 while($line = <$fh>) {
 	$line =~ s/\r|\n//g;
-	$line =~ s/^\s*#.*$//g;
-	if ($line =~ /^\s*<\/(\S+)\s*(.*)>/) {
+	if ($line =~ /^\s*#/) {
+		# Attach comments to the next directive without reusing the
+		# dummy entry that marks the start of this block
+		push(@comments, $line);
+		$_[1]++;
+		}
+	elsif ($line =~ /^\s*<\/(\S+)\s*(.*)>/) {
 		# end of a container directive. This can only happen in a
 		# recursive call to this function
 		$_[1]++;
@@ -166,16 +184,20 @@ while($line = <$fh>) {
 		    $not && !$httpd_modules{$mpmmod}
 		    ) {
 			# use the directives..
-			push(@rv, { 'line', $oldline,
-				    'eline', $oldline,
-				    'file', $_[2],
-				    'name', "<IfModule $not$mod>" });
+			local %open = ( 'line', $oldline,
+					'eline', $oldline,
+					'file', $_[2],
+					'name', "<IfModule $not$mod>" );
+			$open{'comments'} = [ @comments ] if (@comments);
+			push(@rv, \%open);
 			push(@rv, @dirs);
 			push(@rv, { 'line', $_[1]-1,
 				    'eline', $_[1]-1,
 				    'file', $_[2],
 				    'name', "</IfModule>" });
 			}
+		# These comments belong to the conditional, even when skipped.
+		@comments = ( );
 		}
 	elsif ($line =~ /^\s*<IfDefine\s+(\!?)(\S+)>/i) {
 		# start of an IfDefine block. Read it, and if the define
@@ -187,16 +209,20 @@ while($line = <$fh>) {
 		if (!$not && defined($defs{$def}) ||
 		    $not && !defined($defs{$def})) {
 			# use the directives..
-			push(@rv, { 'line', $oldline,
-				    'eline', $oldline,
-				    'file', $_[2],
-				    'name', "<IfDefine $not$def>" });
+			local %open = ( 'line', $oldline,
+					'eline', $oldline,
+					'file', $_[2],
+					'name', "<IfDefine $not$def>" );
+			$open{'comments'} = [ @comments ] if (@comments);
+			push(@rv, \%open);
 			push(@rv, @dirs);
 			push(@rv, { 'line', $_[1]-1,
 				    'eline', $_[1]-1,
 				    'file', $_[2],
 				    'name', "</IfDefine>" });
 			}
+		# These comments belong to the conditional, even when skipped.
+		@comments = ( );
 		}
 	elsif ($line =~ /^\s*<IfVersion\s+(\!?)(\S*)\s*(\S+)>/i) {
 		# Start of an IfVersion block. Read it, and if the version
@@ -235,16 +261,20 @@ while($line = <$fh>) {
 		$match = !$match if ($not);
 		if ($match) {
 			# use the directives..
-			push(@rv, { 'line', $oldline,
-				    'eline', $oldline,
-				    'file', $_[2],
-				    'name', "<IfVersion $not$op $ver>" });
+			local %open = ( 'line', $oldline,
+					'eline', $oldline,
+					'file', $_[2],
+					'name', "<IfVersion $not$op $ver>" );
+			$open{'comments'} = [ @comments ] if (@comments);
+			push(@rv, \%open);
 			push(@rv, @dirs);
 			push(@rv, { 'line', $_[1]-1,
 				    'eline', $_[1]-1,
 				    'file', $_[2],
 				    'name', "</IfVersion>" });
 			}
+		# These comments belong to the conditional, even when skipped.
+		@comments = ( );
 		}
 	elsif ($line =~ /^(\s*)<(\S+)\s*(.*)>/) {
 		# start of a container directive. The first member is a dummy
@@ -264,6 +294,8 @@ while($line = <$fh>) {
 		$dir{'eline'} = $_[1]-1;
 		$indent =~ s/\t/        /g;
 		$dir{'indent'} = length($indent);
+		$dir{'comments'} = [ @comments ] if (@comments);
+		@comments = ( );
 		push(@rv, \%dir);
 		}
 	elsif ($line =~ /^(\s*)(\S+)\s*(.*)$/) {
@@ -297,11 +329,15 @@ while($line = <$fh>) {
 				}
 			}
 		$dir{'words'} = &wsplit($dir{'value'});
+		$dir{'comments'} = [ @comments ] if (@comments);
+		@comments = ( );
 		push(@rv, \%dir);
 		$_[1]++;
 		}
 	else {
-		# blank or comment line
+		# Keep blank lines that separate a pending comment block from
+		# the directive it describes
+		push(@comments, $line) if (@comments);
 		$_[1]++;
 		}
 	}
@@ -424,6 +460,13 @@ foreach $v (@virt) {
 return \@get_config_cache;
 }
 
+# flush_config_cache()
+# Delete all in-memory config caches
+sub flush_config_cache
+{
+undef(@get_config_cache);
+}
+
 # get_config_file(filename, [&seen-files])
 # Returns a list of config hash refs from some file
 sub get_config_file
@@ -529,11 +572,16 @@ return wantarray ? ($c, $v) : $c;
 }
 
 # get_htaccess_config(file)
+# Parses a .htaccess format file into a list of config objects
 sub get_htaccess_config
 {
-local($lnum, @conf);
-&open_readfile(HTACCESS, $_[0]);
-@conf = &parse_config_file(HTACCESS, $lnum, $_[0]);
+my ($file) = @_;
+my ($lnum, @conf);
+&open_readfile(HTACCESS, $file);
+@conf = &parse_config_file(HTACCESS, $lnum, $file);
+foreach my $c (@conf) {
+	$c->{'htaccess'} = 1;
+	}
 close(HTACCESS);
 return \@conf;
 }
@@ -545,11 +593,11 @@ return \@conf;
 # to be updated in the directives array and in the file.
 sub save_directive
 {
-local($i, @old, $lref, $change, $len, $v);
+my ($i, @old, $lref, $change, $len, $v);
 @old = &find_directive_struct($_[0], $_[2]);
 local @files;
 for($i=0; $i<@old || $i<@{$_[1]}; $i++) {
-	$v = ${$_[1]}[$i];
+	$v = $i<@{$_[1]} ? $_[1]->[$i] : undef;
 	if ($i >= @old) {
 		# a new directive is being added. If other directives of this
 		# type exist, add it after them. Otherwise, put it at the end of
@@ -580,7 +628,8 @@ for($i=0; $i<@old || $i<@{$_[1]}; $i++) {
 			# in this section
 			local($f, %v, $j);
 			$f = $_[2]->[0]->{'file'};
-			for($j=0; $_[2]->[$j]->{'file'} eq $f; $j++) { }
+			for($j=0; $j < @{$_[2]} &&
+				  $_[2]->[$j]->{'file'} eq $f; $j++) { }
 			$lref = &read_file_lines($f);
 			if ($_[2] eq $_[3]) {
 				# Top-level, so add to the end of the file
@@ -611,9 +660,12 @@ for($i=0; $i<@old || $i<@{$_[1]}; $i++) {
 		push(@files, $old[$i]->{'file'});
 		$idx = &indexof($old[$i], @{$_[2]});
 		splice(@{$_[2]}, $idx, 1);
-		$len = $old[$i]->{'eline'} - $old[$i]->{'line'} + 1;
-		splice(@$lref, $old[$i]->{'line'}, $len);
-		&renumber($_[3], $old[$i]->{'line'}, $old[$i]->{'file'}, -$len);
+		local $comments = $old[$i]->{'comments'} ?
+				scalar(@{$old[$i]->{'comments'}}) : 0;
+		local $start = $old[$i]->{'line'}-$comments;
+		$len = $old[$i]->{'eline'}-$start+1;
+		splice(@$lref, $start, $len);
+		&renumber($_[3], $start, $old[$i]->{'file'}, -$len);
 		}
 	else {
 		# just changing the value
@@ -630,7 +682,9 @@ for($i=0; $i<@old || $i<@{$_[1]}; $i++) {
 		$change = $old[$i];
 		}
 	}
-&update_last_config_change();
+if (!$_[3]->[0]->{'htaccess'}) {
+	&update_last_config_change();
+	}
 @files = &unique(@files);
 push(@{$saved_conf_files}, @files);
 return @files;
@@ -641,29 +695,41 @@ return @files;
 # Updates, creates or removes only multi-line directive like a <virtualhost>
 sub save_directive_struct
 {
-local ($olddir, $newdir, $pconf, $conf, $first) = @_;
+my ($olddir, $newdir, $pconf, $conf, $first) = @_;
 return if (!$olddir && !$newdir);	# Nothing to do
 local $file = $olddir ? $olddir->{'file'} :
 	      $newdir->{'file'} ? $newdir->{'file'} : $pconf->[0]->{'file'};
 local $lref = &read_file_lines($file);
-local $oldlen = $olddir ? $olddir->{'eline'}-$olddir->{'line'}+1 : undef;
+local $oldcomments = $olddir && $olddir->{'comments'} ?
+			scalar(@{$olddir->{'comments'}}) : 0;
+local $oldline = $olddir ? $olddir->{'line'}-$oldcomments : undef;
+local $oldlen = $olddir ? $olddir->{'eline'}-$oldline+1 : undef;
 local @newlines;
 if ($newdir) {
+	if ($olddir && !exists($newdir->{'comments'}) && $oldcomments) {
+		# A replacement inherits the comments attached to the old block
+		$newdir->{'comments'} = [ @{$olddir->{'comments'}} ];
+		}
 	my $isrc = $olddir ? $olddir :
 		   @$pconf ? $pconf->[0] : undef;
 	if ($isrc) {
 		&recursive_set_indent($newdir, $isrc->{'indent'});
 		}
+	$newdir{'words'} = &wsplit($newdir{'value'});
 	@newlines = &directive_lines($newdir);
 	}
 if ($olddir && $newdir) {
 	# Update in place
+	$newdir->{'words'} = &wsplit($newdir->{'value'});
 	if ($first) {
 		# Just changing first and last line, like virtualhost IP
-		$lref->[$olddir->{'line'}] = $newlines[0];
+		local $comments = $newdir->{'comments'} ?
+				scalar(@{$newdir->{'comments'}}) : 0;
+		$lref->[$olddir->{'line'}] = $newlines[$comments];
 		$lref->[$olddir->{'eline'}] = $newlines[$#newlines];
 		$olddir->{'name'} = $newdir->{'name'};
 		$olddir->{'value'} = $newdir->{'value'};
+		$olddir->{'words'} = $newdir->{'words'};
 		}
 	else {
 		# Re-writing whole block
@@ -672,9 +738,11 @@ if ($olddir && $newdir) {
 		local $idx = &indexof($olddir, @$pconf);
 		$pconf->[$idx] = $newdir if ($idx >= 0);
 		$newdir->{'file'} = $olddir->{'file'};
-		$newdir->{'line'} = $olddir->{'line'};
-		$newdir->{'eline'} = $olddir->{'line'}+scalar(@newlines)-1;
-		splice(@$lref, $olddir->{'line'}, $oldlen, @newlines);
+		local $comments = $newdir->{'comments'} ?
+				scalar(@{$newdir->{'comments'}}) : 0;
+		$newdir->{'line'} = $oldline+$comments;
+		$newdir->{'eline'} = $oldline+scalar(@newlines)-1;
+		splice(@$lref, $oldline, $oldlen, @newlines);
 
 		# Update sub-directive lines and files too
 		if ($newdir->{'type'}) {
@@ -686,10 +754,10 @@ if ($olddir && $newdir) {
 	}
 elsif ($olddir && !$newdir) {
 	# Remove
-	splice(@$lref, $olddir->{'line'}, $oldlen);
+	splice(@$lref, $oldline, $oldlen);
 	local $idx = &indexof($olddir, @$pconf);
 	splice(@$pconf, $idx, 1) if ($idx >= 0);
-	&renumber($conf, $olddir->{'line'}, $olddir->{'file'}, -$oldlen);
+	&renumber($conf, $oldline, $olddir->{'file'}, -$oldlen);
 	}
 elsif (!$olddir && $newdir) {
 	# Add to file, at end of specific file or parent section
@@ -707,8 +775,11 @@ elsif (!$olddir && $newdir) {
 		$addpos--;
 		$addline = $pconf->[$addpos]->{'eline'}+1;
 		}
+	$newdir->{'words'} = &wsplit($newdir->{'value'});
 	$newdir->{'file'} = $file;
-	$newdir->{'line'} = $addline;
+	local $comments = $newdir->{'comments'} ?
+			 scalar(@{$newdir->{'comments'}}) : 0;
+	$newdir->{'line'} = $addline+$comments;
 	$newdir->{'eline'} = $addline + scalar(@newlines) - 1;
 	&renumber($conf, $addline, $file, scalar(@newlines));
 	splice(@$pconf, $addpos, 0, $newdir);
@@ -721,7 +792,9 @@ elsif (!$olddir && $newdir) {
 					   $newdir->{'file'});
 		}
 	}
-&update_last_config_change();
+if (!$conf->[0]->{'htaccess'}) {
+	&update_last_config_change();
+	}
 }
 
 # recursive_set_indent(&directive, indent)
@@ -743,18 +816,17 @@ sub recursive_set_lines_files
 {
 my ($dirs, $line, $file) = @_;
 foreach my $dir (@$dirs) {
+	# A directive's line follows any comments attached to it
+	$line += scalar(@{$dir->{'comments'}}) if ($dir->{'comments'});
 	$dir->{'line'} = $line;
 	$dir->{'file'} = $file;
 	if ($dir->{'type'}) {
-		# Do sub-members too
-		&recursive_set_lines_files($dir->{'members'}, $line+1, $file);
-		$line += scalar(@{$dir->{'members'}})+1;
-		$dir->{'eline'} = $line;
+		# Continue after every line used by nested members
+		$line = &recursive_set_lines_files($dir->{'members'},
+						  $line+1, $file);
 		}
-	else {
-		$dir->{'eline'} = $line;
-		}
-	$line++;
+	$dir->{'eline'} = $line;
+	$line++ if ($dir->{'name'} ne 'dummy');
 	}
 return $line;
 }
@@ -773,22 +845,444 @@ unlink($file);
 &delete_webfile_link($file);
 }
 
+# can_manage_vhost_files()
+# Returns 1 if this system uses Debian-style available/enabled site dirs
+sub can_manage_vhost_files
+{
+return 0 if ($gconfig{'os_type'} ne 'debian-linux');
+my $avail = &vhost_available_dir();
+my $enabled = &vhost_enabled_dir();
+return $avail && -d $avail && $enabled && -d $enabled &&
+       &simplify_path(&resolve_links($avail)) ne
+       &simplify_path(&resolve_links($enabled));
+}
+
+# vhost_available_dir()
+# Returns the configured directory of available Apache virtual host files
+sub vhost_available_dir
+{
+return $config{'virt_file'} ? &server_root($config{'virt_file'}) : undef;
+}
+
+# vhost_enabled_dir()
+# Returns the configured directory of enabled Apache virtual host symlinks
+sub vhost_enabled_dir
+{
+return $config{'link_dir'} ? &server_root($config{'link_dir'}) : undef;
+}
+
+# get_vhost_available_files()
+# Returns real config files from the directory used for new virtual hosts
+sub get_vhost_available_files
+{
+my @rv;
+return @rv if (!&can_manage_vhost_files());
+my $avail = &vhost_available_dir();
+opendir(AVAIL, $avail) || return @rv;
+foreach my $f (sort { lc($a) cmp lc($b) } readdir(AVAIL)) {
+	next if ($f eq "." || $f eq "..");
+	my $file = $avail."/".$f;
+	my $rfile = &simplify_path(&resolve_links($file));
+	next if (!$rfile || !-f $rfile || !-r $rfile);
+	push(@rv, $rfile);
+	}
+closedir(AVAIL);
+return &unique(@rv);
+}
+
+# find_virtuals_in_file(file)
+# Returns VirtualHost blocks parsed from one config file
+sub find_virtuals_in_file
+{
+my ($file) = @_;
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+return ( ) if (!-r $rfile);
+my @conf = &get_config_file($rfile);
+return grep { $_->{'file'} eq $rfile }
+       &find_directive_struct("VirtualHost", \@conf);
+}
+
+# is_default_vhost(&virt)
+# Returns 1 if a VirtualHost looks like a default/catch-all host
+sub is_default_vhost
+{
+my ($virt) = @_;
+return 1 if (!$virt);
+return 1 if ($virt->{'value'} =~ /_default_/i);
+return 1 if (!&find_directive("ServerName", $virt->{'members'}));
+return 0;
+}
+
+# can_manage_vhost_file(file)
+# Returns 1 if all virtual hosts in a file are manageable by this user
+sub can_manage_vhost_file
+{
+my ($file) = @_;
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+return 0 if (!$rfile || !-f $rfile || !-r $rfile);
+my @virts = &find_virtuals_in_file($rfile);
+return 0 if (!@virts);
+foreach my $virt (@virts) {
+	return 0 if (&is_default_vhost($virt));
+	return 0 if (!&can_edit_virt($virt));
+	}
+return 1;
+}
+
+# can_manage_vhost_state_file(file)
+# Returns 1 if a virtual host file can have its enabled state managed here
+sub can_manage_vhost_state_file
+{
+my ($file) = @_;
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+return 0 if (!$rfile || !-f $rfile);
+my %available = map { $_, 1 } &get_vhost_available_files();
+return 0 if (!$available{$rfile});
+return &can_manage_vhost_file($rfile);
+}
+
+# get_virtual_list_rows(&config)
+# Returns row hashes for the virtual-host list, preserving sites-available order
+sub get_virtual_list_rows
+{
+my ($conf) = @_;
+my @active = grep { &can_edit_virt($_) }
+	     &find_directive_struct("VirtualHost", $conf);
+if (&can_manage_vhost_files()) {
+	my @rows;
+	my %active_by_file;
+	foreach my $v (@active) {
+		my $file = &simplify_path(&resolve_links($v->{'file'}));
+		$file ||= $v->{'file'};
+		push(@{$active_by_file{$file}}, $v);
+		}
+	my %done_virt;
+	foreach my $file (&get_vhost_available_files()) {
+		my @filevirts = @{$active_by_file{$file} || [ ]};
+		my $active = @filevirts ? 1 : 0;
+		if (!@filevirts) {
+			@filevirts = grep { &can_edit_virt($_) &&
+					     !&is_default_vhost($_) }
+				     &find_virtuals_in_file($file);
+			}
+		foreach my $v (@filevirts) {
+			push(@rows, { 'virt' => $v,
+				      'active' => $active,
+				      'file' => $file });
+			$done_virt{$v}++;
+			}
+		}
+	foreach my $v (@active) {
+		next if ($done_virt{$v});
+		push(@rows, { 'virt' => $v,
+			      'active' => 1,
+			      'file' => $v->{'file'} });
+		}
+	return @rows;
+	}
+return map { { 'virt' => $_, 'active' => 1, 'file' => $_->{'file'} } }
+       @active;
+}
+
+# vhost_file_link(file)
+# Returns the enabled symlink path for a virtual host file
+sub vhost_file_link
+{
+my ($file) = @_;
+return undef if (!&can_manage_vhost_files());
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+my $avail = &vhost_available_dir();
+my $short;
+if (opendir(AVAIL, $avail)) {
+	foreach my $f (sort { lc($a) cmp lc($b) } readdir(AVAIL)) {
+		next if ($f eq "." || $f eq "..");
+		my $afile = $avail."/".$f;
+		my $rafile = &simplify_path(&resolve_links($afile));
+		if ($rafile && $rafile eq $rfile) {
+			$short = $f;
+			last;
+			}
+		}
+	closedir(AVAIL);
+	}
+$short ||= $rfile;
+$short =~ s/^.*\///;
+return &vhost_enabled_dir()."/".$short;
+}
+
+# vhost_file_links(file)
+# Returns enabled symlinks for a virtual host file
+sub vhost_file_links
+{
+my ($file) = @_;
+my @rv;
+return @rv if (!&can_manage_vhost_files());
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+my $enabled = &vhost_enabled_dir();
+opendir(LINKDIR, $enabled) || return @rv;
+foreach my $f (readdir(LINKDIR)) {
+	next if ($f eq "." || $f eq "..");
+	my $link = $enabled."/".$f;
+	next if (!-l $link);
+	my $rlink = &simplify_path(&resolve_links($link));
+	if ($rlink && $rlink eq $rfile) {
+		push(@rv, $link);
+		}
+	}
+closedir(LINKDIR);
+return @rv;
+}
+
+# vhost_file_enabled(file)
+# Returns 1 if a virtual host file has an enabled symlink
+sub vhost_file_enabled
+{
+my ($file) = @_;
+return scalar(&vhost_file_links($file)) ? 1 : 0;
+}
+
+# enable_vhost_file(file)
+# Enables a virtual host file and rolls back if apache configtest fails
+sub enable_vhost_file
+{
+my ($file) = @_;
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+return $text{'enable_efile'} if (!&can_manage_vhost_state_file($rfile));
+my $verr = &virtualmin_vhost_file_state_error($rfile, "enable");
+return $verr if ($verr);
+my $link = &vhost_file_link($rfile);
+$link || return $text{'enable_elinkdir'};
+return undef if (&vhost_file_enabled($rfile));
+if (-e $link || -l $link) {
+	return &text('enable_elinkexists', "<tt>".&html_escape($link)."</tt>");
+	}
+&symlink_logged($rfile, $link) ||
+	return &text('enable_elink', "<tt>".&html_escape($link)."</tt>",
+		     "<tt>".&html_escape($!)."</tt>");
+my $err = &test_config();
+if ($err) {
+	&unlink_logged($link);
+	return &text('enable_etest', "<tt>".&html_escape($err)."</tt>");
+	}
+&flush_config_cache();
+&update_last_config_change();
+return undef;
+}
+
+# disable_vhost_file(file)
+# Disables a virtual host file and rolls back if apache configtest fails
+sub disable_vhost_file
+{
+my ($file) = @_;
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+return $text{'enable_efile'} if (!&can_manage_vhost_state_file($rfile));
+my $verr = &virtualmin_vhost_file_state_error($rfile, "disable");
+return $verr if ($verr);
+my @links = &vhost_file_links($file);
+return undef if (!@links);
+my @restore = map { [ $_, readlink($_) ] } @links;
+my @removed;
+foreach my $link (@links) {
+	if (!&unlink_logged($link)) {
+		foreach my $r (@removed) {
+			&symlink_logged($r->[1], $r->[0])
+				if (defined($r->[1]) && !-e $r->[0] && !-l $r->[0]);
+			}
+		return &text('enable_eunlink',
+			     "<tt>".&html_escape($link)."</tt>",
+			     "<tt>".&html_escape($!)."</tt>");
+		}
+	my ($restore) = grep { $_->[0] eq $link } @restore;
+	push(@removed, $restore) if ($restore);
+	}
+my $err = &test_config();
+if ($err) {
+	foreach my $r (@restore) {
+		&symlink_logged($r->[1], $r->[0])
+			if (defined($r->[1]) && !-e $r->[0] && !-l $r->[0]);
+		}
+	return &text('enable_etest', "<tt>".&html_escape($err)."</tt>");
+	}
+&flush_config_cache();
+&update_last_config_change();
+return undef;
+}
+
+# virtualmin_available()
+# Returns 1 if Virtualmin is installed and supported on this system
+sub virtualmin_available
+{
+return $main::apache_virtualmin_available
+	if (defined($main::apache_virtualmin_available));
+$main::apache_virtualmin_available = &foreign_check("virtual-server");
+return $main::apache_virtualmin_available;
+}
+
+# virtualmin_domain_by_name(name)
+# Returns a Virtualmin domain object by domain name, if one exists
+sub virtualmin_domain_by_name
+{
+my ($name) = @_;
+return undef if (!&virtualmin_available());
+return $main::apache_virtualmin_domain_by_name_cache{$name}
+	if (exists($main::apache_virtualmin_domain_by_name_cache{$name}));
+&foreign_require("virtual-server");
+my $d = &virtual_server::get_domain_by("dom", $name);
+$main::apache_virtualmin_domain_by_name_cache{$name} = $d;
+return $d;
+}
+
+# virtual_names(&virt)
+# Returns all hostnames from ServerName and ServerAlias directives
+sub virtual_names
+{
+my ($virt) = @_;
+my @rv;
+my $sn = &find_directive("ServerName", $virt->{'members'});
+push(@rv, $sn) if ($sn);
+foreach my $sa (&find_directive_struct("ServerAlias", $virt->{'members'})) {
+	push(@rv, @{$sa->{'words'} || [ ]});
+	if (!@{$sa->{'words'} || [ ]} && $sa->{'value'}) {
+		push(@rv, $sa->{'value'});
+		}
+	}
+return grep { $_ && $_ ne "*" } &unique(@rv);
+}
+
+# virtualmin_domain_for_vhost_file(file)
+# Returns the Virtualmin domain object for a virtual host file, if any
+sub virtualmin_domain_for_vhost_file
+{
+my ($file) = @_;
+return undef if (!&virtualmin_available());
+my $rfile = &simplify_path(&resolve_links($file));
+$rfile ||= $file;
+return $main::apache_virtualmin_domain_for_file_cache{$rfile}
+	if (exists($main::apache_virtualmin_domain_for_file_cache{$rfile}));
+foreach my $virt (&find_virtuals_in_file($file)) {
+	next if (!&can_edit_virt($virt));
+	foreach my $name (&virtual_names($virt)) {
+		my $d = &virtualmin_domain_by_name($name);
+		if (!$d && $name =~ /^www\.(\S+)/i) {
+			$d = &virtualmin_domain_by_name($1);
+			}
+		if ($d) {
+			$main::apache_virtualmin_domain_for_file_cache{$rfile} = $d;
+			return $d;
+			}
+		}
+	}
+$main::apache_virtualmin_domain_for_file_cache{$rfile} = undef;
+return undef;
+}
+
+# vhost_file_state(file)
+# Returns the effective enabled state for a virtual host file
+sub vhost_file_state
+{
+my ($file) = @_;
+my $d = &virtualmin_domain_for_vhost_file($file);
+if ($d) {
+	return { 'enabled' => $d->{'disabled'} ? 0 : 1,
+		 'source' => 'virtualmin',
+		 'domain' => $d };
+	}
+return { 'enabled' => &vhost_file_enabled($file) ? 1 : 0,
+	 'source' => 'apache' };
+}
+
+# vhost_file_toggle_action(file)
+# Returns the action needed to toggle a virtual host file's effective state
+sub vhost_file_toggle_action
+{
+my ($file) = @_;
+return &vhost_file_state($file)->{'enabled'} ? "disable" : "enable";
+}
+
+# virtualmin_domain_state_link(&domain, enabled?)
+# Returns a link to the Virtualmin state change form for some domain
+sub virtualmin_domain_state_link
+{
+my ($d, $enabled) = @_;
+my $page = $enabled ? "disable_domain.cgi" : "enable_domain.cgi";
+my $label = $enabled ? $text{'enable_virtualmin_disable_label'} :
+		       $text{'enable_virtualmin_enable_label'};
+my $url = "../virtual-server/".$page."?dom=".&urlize($d->{'id'});
+return &ui_link(&quote_escape($url), "\"".$label."\"");
+}
+
+# virtualmin_vhost_file_state_error(file, action)
+# Returns an error if a Virtualmin-owned site is being enabled or disabled here
+sub virtualmin_vhost_file_state_error
+{
+my ($file, $action) = @_;
+return undef if ($action ne "enable" && $action ne "disable");
+my $state_info = &vhost_file_state($file);
+return undef if ($state_info->{'source'} ne "virtualmin");
+my $d = $state_info->{'domain'};
+return undef if (!$d);
+my $state = lc($state_info->{'enabled'} ? $text{'index_enabled'} :
+					  $text{'index_disabled'});
+my $dom = "<tt>".&html_escape($d->{'dom'})."</tt>";
+my $link = &virtualmin_domain_state_link($d, $state_info->{'enabled'});
+return $state_info->{'enabled'} ?
+	&text('enable_evirtualmin_disable', $dom, $state, $link) :
+	&text('enable_evirtualmin_enable', $dom, $state, $link);
+}
+
+# delete_virtuals_from_file(file, &virtualhosts...)
+# Deletes VirtualHost blocks from one file and removes the file if empty
+sub delete_virtuals_from_file
+{
+my ($file, @virts) = @_;
+return 0 if (!@virts);
+my $lref = &read_file_lines($file);
+foreach my $virt (sort { $b->{'line'} <=> $a->{'line'} } @virts) {
+	my $len = $virt->{'eline'} - $virt->{'line'} + 1;
+	splice(@$lref, $virt->{'line'}, $len);
+	}
+my $empty = 1;
+foreach my $line (@$lref) {
+	if ($line =~ /\S/) {
+		$empty = 0;
+		last;
+		}
+	}
+&flush_file_lines($file);
+if ($empty) {
+	foreach my $link (&vhost_file_links($file)) {
+		&unlink_logged($link);
+		}
+	&unlink_logged($file);
+	}
+&flush_config_cache();
+&update_last_config_change();
+return scalar(@virts);
+}
+
 # renumber(&config, line, file, offset)
 # Recursively changes the line number of all directives from some file 
 # beyond the given line.
 sub renumber
 {
-local($d);
-if (!$_[3]) { return; }
-foreach $d (@{$_[0]}) {
-	if ($d->{'file'} eq $_[2] && $d->{'line'} >= $_[1]) {
-		$d->{'line'} += $_[3];
+my ($conf, $line, $file, $offset) = @_;
+return if (!$offset);
+foreach my $d (@$conf) {
+	if ($d->{'file'} eq $file && $d->{'line'} >= $_[1]) {
+		$d->{'line'} += $offset;
 		}
-	if ($d->{'file'} eq $_[2] && $d->{'eline'} >= $_[1]) {
-		$d->{'eline'} += $_[3];
+	if ($d->{'file'} eq $file && $d->{'eline'} >= $_[1]) {
+		$d->{'eline'} += $offset;
 		}
 	if ($d->{'type'}) {
-		&renumber($d->{'members'}, $_[1], $_[2], $_[3]);
+		&renumber($d->{'members'}, $line, $file, $offset);
 		}
 	}
 }
@@ -797,9 +1291,16 @@ foreach $d (@{$_[0]}) {
 # Convert a relative path to being under the server root
 sub server_root
 {
-if (!$_[0]) { return undef; }
-elsif ($_[0] =~ /^\//) { return $_[0]; }
-else { return "$config{'httpd_dir'}/$_[0]"; }
+my ($path) = @_;
+if (!$path) {
+	return undef;
+	}
+elsif ($path =~ /^\//) {
+	return $path;
+	}
+else {
+	return "$config{'httpd_dir'}/$path";
+	}
 }
 
 sub dump_config
@@ -826,21 +1327,21 @@ return $_[0] ? $_[0] : $_[1];
 }
 
 # make_directives(ref, version, module)
+# Return directives suitable for this system and version
 sub make_directives
 {
-local(@rv, $aref);
-$aref = $_[0];
-local $ver = $_[1];
+my ($aref, $ver, $mod) = @_;
+my @rv;
 if ($ver =~ /^(1)\.(3)(\d+)$/) {
 	$ver = sprintf "%d.%d%2.2d", $1, $2, $3;
 	}
-foreach $d (@$aref) {
+foreach my $d (@$aref) {
 	local(%dir);
 	$dir{'name'} = $d->[0];
 	$dir{'multiple'} = $d->[1];
 	$dir{'type'} = int($d->[2]);
 	$dir{'subtype'} = $d->[2] - $dir{'type'};
-	$dir{'module'} = $_[2];
+	$dir{'module'} = $mod;
 	$dir{'version'} = $ver;
 	$dir{'priority'} = $d->[5];
 	foreach $c (split(/\s+/, $d->[3])) { $dir{$c}++; }
@@ -1220,6 +1721,9 @@ sub restart_button
 local $args = "redir=".&urlize(&this_url());
 local @rv;
 if (&is_apache_running()) {
+	if ($access{'stop'}) {
+		push(@rv, &ui_link("stop.cgi?$args", $text{'apache_stop'}) );
+		}
 	if ($access{'apply'}) {
 		my $n = &needs_config_restart();
 		if ($n) {
@@ -1229,9 +1733,6 @@ if (&is_apache_running()) {
 		else {
 			push(@rv, &ui_link("restart.cgi?$args", $text{'apache_apply'}) );
 			}
-		}
-	if ($access{'stop'}) {
-		push(@rv, &ui_link("stop.cgi?$args", $text{'apache_stop'}) );
 		}
 	}
 elsif ($access{'stop'}) {
@@ -1412,22 +1913,21 @@ return @rv;
 }
 
 # allowed_auth_file(file)
+# Returns 1 if a .htaccess file can be edited by the current user
 sub allowed_auth_file
 {
-local $_;
+my ($file) = @_;
+return 0 if ($file =~ /\.\./);
+my $f = &server_root($file);
 return 1 if ($access{'dir'} eq '/');
-return 0 if ($_[0] =~ /\.\./);
-local $f = &server_root($_[0], &get_config());
-return 0 if (-l $f && !&allowed_auth_file(readlink($f)));
-local $l = length($access{'dir'});
-return length($f) >= $l && substr($f, 0, $l) eq $access{'dir'};
+return &is_under_directory($access{'dir'}, $f);
 }
 
 # directory_exists(file)
 # Returns 1 if the directory in some path exists
 sub directory_exists
 {
-local $path = &server_root($_[0], &get_config());
+local $path = &server_root($_[0]);
 if ($path =~ /^(\S*\/)([^\/]+)$/) {
 	return -d $1;
 	}
@@ -1466,11 +1966,13 @@ foreach $f (@main::locked_apache_files) {
 }
 
 # directive_lines(directive, ...)
+# Convery a list of Apache directives into a list of lines
 sub directive_lines
 {
-local @rv;
-foreach $d (@_) {
+my @rv;
+foreach my $d (@_) {
 	next if ($d->{'name'} eq 'dummy');
+	push(@rv, @{$d->{'comments'}}) if ($d->{'comments'});
 	my $indent = (" " x $d->{'indent'});
 	if ($d->{'type'}) {
 		push(@rv, $indent."<$d->{'name'} $d->{'value'}>");
@@ -1489,29 +1991,56 @@ return @rv;
 # or undef.
 sub test_config
 {
-if ($httpd_modules{'core'} >= 1.301) {
-	# Test the configuration with the available command
-	local $cmd;
-	if ($config{'test_apachectl'} &&
-	    -x &translate_filename($config{'apachectl_path'})) {
-		# Test with apachectl
-		$cmd = "\"$config{'apachectl_path'}\" configtest";
+return undef if ($httpd_modules{'core'} < 1.301);
+my $okre = qr/(syntax|Checking).*\s+ok/i;
+
+# Build the httpd command from the configured paths
+my $httpd = &find_httpd();
+my $httpdcmd = "\"$httpd\" -d \"$config{'httpd_dir'}\"";
+if ($config{'httpd_conf'}) {
+	$httpdcmd .= " -f \"$config{'httpd_conf'}\"";
+	}
+foreach my $d (&get_httpd_defines()) {
+	$httpdcmd .= " -D$d";
+	}
+
+# Pick the standard test command
+my ($cmd, $apachectl);
+if ($config{'test_apachectl'} &&
+    -x &translate_filename($config{'apachectl_path'})) {
+	# Test with apachectl, which may set up environment the config needs
+	$apachectl = "\"$config{'apachectl_path'}\"";
+	$cmd = "$apachectl configtest";
+	}
+else {
+	# Test with httpd
+	$cmd = "$httpdcmd -t";
+	}
+
+# Without a global ServerName, Apache looks up the system hostname in DNS
+# while loading the config, which stalls the test when DNS is slow. So first
+# try the test with a placeholder ServerName. Apache applies -C directives
+# before reading the config files, so a ServerName that this check misses,
+# such as one inside an IfModule section, still takes effect.
+my $conf = &get_config();
+if ($conf && !&find_directive("ServerName", $conf)) {
+	my $noname = "-C \"ServerName localhost\"";
+	my $out = &backquote_command(
+		($apachectl ? "$apachectl $noname -t" : "$httpdcmd $noname -t").
+		" 2>&1");
+	if ($apachectl && $httpd && $out =~ /no\s+longer\s+supported/i) {
+		# Red Hat's apachectl refuses extra arguments, and its
+		# configtest just runs httpd -t, so test with httpd instead
+		$out = &backquote_command("$httpdcmd $noname -t 2>&1");
 		}
-	else {
-		# Test with httpd
-		local $httpd = &find_httpd();
-		$cmd = "\"$httpd\" -d \"$config{'httpd_dir'}\" -t";
-		if ($config{'httpd_conf'}) {
-			$cmd .= " -f \"$config{'httpd_conf'}\"";
-			}
-		foreach $d (&get_httpd_defines()) {
-			$cmd .= " -D$d";
-			}
-		}
-	local $out = &backquote_command("$cmd 2>&1");
-	if ($out && $out !~ /(syntax|Checking).*\s+ok/i) {
-		return $out;
-		}
+	return undef if ($out =~ $okre);
+	}
+
+# Run the standard test. This also runs when the quick test failed, in case
+# the extra arguments, rather than the config, caused the failure.
+my $out = &backquote_command("$cmd 2>&1");
+if ($out && $out !~ $okre) {
+	return $out;
 	}
 return undef;
 }
@@ -1521,9 +2050,10 @@ return undef;
 # if necessary.
 sub before_changing
 {
+my @extra = grep { $_ } @_;
 if ($config{'test_always'} || $access{'test_always'}) {
 	local $conf = &get_config();
-	local @files = &unique(map { $_->{'file'} } @$conf);
+	local @files = &unique((map { $_->{'file'} } @$conf), @extra);
 	local $/ = undef;
 	local $f;
 	foreach $f (@files) {
@@ -1567,7 +2097,7 @@ foreach $f (keys %before_changing) {
 # (without any translation).
 sub find_httpd_conf
 {
-local $conf = $config{'httpd_conf'};
+my $conf = $config{'httpd_conf'};
 return ( -f &translate_filename($conf) ? $conf : undef, $conf ) if ($conf);
 $conf = "$config{'httpd_dir'}/conf/httpd.conf";
 $conf = "$config{'httpd_dir'}/conf/httpd2.conf"
@@ -1602,7 +2132,7 @@ local $conf = &get_config();
 local $pidfilestr = &find_directive_struct("PidFile", $conf);
 local $pidfile = $pidfilestr ? $pidfilestr->{'words'}->[0]
 		       	     : "logs/httpd.pid";
-return &server_root($pidfile, $conf);
+return &server_root($pidfile);
 }
 
 # restart_apache()
@@ -1787,8 +2317,8 @@ if (!&is_apache_running()) {
 		return $text{'start_eunknown'};
 		}
 	else {
-		$errorlog = &server_root($errorlog, $conf);
-		$out = `tail -5 $errorlog`;
+		$errorlog = &server_root($errorlog);
+		$out = &backquote_command("tail -5 ".quotemeta($errorlog));
 		return "$text{'start_eafter'} : <pre>$out</pre>";
 		}
 	}
@@ -1804,7 +2334,7 @@ local $conf = &get_config();
 local $errorlogstr = &find_directive_struct("ErrorLog", $conf);
 local $errorlog = $errorlogstr ? $errorlogstr->{'words'}->[0]
 			       : "logs/error_log";
-$errorlog = &server_root($errorlog, $conf);
+$errorlog = &server_root($errorlog);
 return $errorlog;
 }
 
@@ -1946,10 +2476,11 @@ return @rv;
 sub create_webfile_link
 {
 local ($file) = @_;
-if ($config{'link_dir'}) {
+my $linkdir = &vhost_enabled_dir();
+if ($linkdir) {
 	local $short = $file;
 	$short =~ s/^.*\///;
-	local $linksrc = "$config{'link_dir'}/$short";
+	local $linksrc = "$linkdir/$short";
 	&lock_file($linksrc);
 	symlink($file, $linksrc);
 	&unlock_file($linksrc);
@@ -1962,16 +2493,16 @@ if ($config{'link_dir'}) {
 sub delete_webfile_link
 {
 local ($file) = @_;
-if ($config{'link_dir'}) {
-	local $short = $file;
-	$short =~ s/^.*\///;
-	opendir(LINKDIR, $config{'link_dir'});
+$file = &simplify_path(&resolve_links($file));
+my $linkdir = &vhost_enabled_dir();
+if ($linkdir && opendir(LINKDIR, $linkdir)) {
 	foreach my $f (readdir(LINKDIR)) {
-		if ($f ne "." && $f ne ".." &&
-		    (&simplify_path(
-		       &resolve_links($config{'link_dir'}."/".$f)) eq $file ||
-		     $short eq $f)) {
-			&unlink_logged($config{'link_dir'}."/".$f);
+		if ($f ne "." && $f ne "..") {
+			my $link = $linkdir."/".$f;
+			next if (!-l $link);
+			if (&simplify_path(&resolve_links($link)) eq $file) {
+				&unlink_logged($link);
+				}
 			}
 		}
 	closedir(LINKDIR);
@@ -2270,5 +2801,14 @@ sub format_config_allowed
 return $config{'format_config'};
 }
 
-1;
+# clear_apache_modules_cache()
+# If new Apache modules were enabled, force re-gen of the site file
+# that contains the modules cache
+sub clear_apache_modules_cache
+{
+&unlink_file($site_file);
+&create_site_file();
+&read_site_file();
+}
 
+1;

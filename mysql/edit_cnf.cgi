@@ -13,7 +13,7 @@ if (!$conf) {
 	&ui_print_footer("", $text{'index_return'});
 	exit;
 	}
-($mysqld) = grep { $_->{'name'} eq 'mysqld' } @$conf;
+$mysqld = &get_mysqld_config_section($conf);
 $mysqld || &error($text{'cnf_emysqld'});
 $mems = $mysqld->{'members'};
 
@@ -50,13 +50,33 @@ print &ui_table_row($text{'cnf_stor'},
 				 'NDB', 'ARCHIVE', 'CSV',
 				 'BLACKHOLE' ], 1, 0, 1));
 
+my $ifpt_def_off = &get_innodb_file_per_table_default() ? 0 : 1;
 $fpt = &find_value("innodb_file_per_table", $mems);
 print &ui_table_row($text{'cnf_fpt'},
-		    &ui_yesno_radio("fpt", $fpt));
+		    &ui_yesno_radio("fpt", $fpt // $ifpt_def_off));
 
 $ilt = &find_value("innodb_lock_wait_timeout", $mems);
 print &ui_table_row($text{'cnf_ilt'},
 		    &ui_opt_textbox("ilt", $ilt, 10, $text{'default'}));
+
+$sql_mode = &find_value("sql_mode", $mems);
+print &ui_table_row($text{'cnf_sqlm'},
+	&ui_opt_textbox("sqlm", $sql_mode, 60, $text{'default'}), 3);
+
+# Slow query log options
+$slow_query_log = &find_value("slow_query_log", $mems);
+print &ui_table_row($text{'cnf_slow'},
+	&ui_yesno_radio("slow", $slow_query_log));
+
+$long_query_time = &find_value("long_query_time", $mems);
+print &ui_table_row($text{'cnf_long'},
+	&ui_opt_textbox("long", $long_query_time, 8,
+			$text{'cnf_long_def'})." ".$text{'cnf_long_secs'});
+
+$slow_query_log_file = &find_value("slow_query_log_file", $mems);
+print &ui_table_row($text{'cnf_slow_file'},
+	&ui_opt_textbox("slow_file", $slow_query_log_file, 40,
+			$text{'cnf_slow_file_def'}), 3);
 
 # Show set variables
 print &ui_table_hr();
@@ -88,4 +108,3 @@ print &ui_form_end([ [ "save", $text{'save'} ],
 		     [ "restart", $text{'cnf_restart'} ] ]);
 
 &ui_print_footer("", $text{'index_return'});
-

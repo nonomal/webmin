@@ -1,5 +1,4 @@
 #!/usr/local/bin/perl
-# index.cgi
 # Display all existing databases
 
 require './mysql-lib.pl';
@@ -262,14 +261,16 @@ else {
 		@links = ( 'list_users.cgi', 'list_dbs.cgi',
 			   $canhosts ? ( 'list_hosts.cgi' ) : ( ),
 			   'list_tprivs.cgi', 'list_cprivs.cgi',
-			   'edit_cnf.cgi', 'edit_manual.cgi', 'list_procs.cgi',
+			   'edit_cnf.cgi', 'edit_binlogs.cgi',
+			   'edit_manual.cgi', 'list_procs.cgi',
 			   $canvars ? ( 'list_vars.cgi' ) : ( ),
 			   'edit_ssl.cgi', 'root_form.cgi',
 			 );
 		@titles = ( $text{'users_title'}, $text{'dbs_title'},
 			    $canhosts ? ( $text{'hosts_title'} ) : ( ),
 			    $text{'tprivs_title'}, $text{'cprivs_title'},
-			    $text{'cnf_title'}, $text{'manual_title'},
+			    $text{'cnf_title'}, $text{'binlogs_title'},
+			    $text{'manual_title'},
 			    $text{'procs_title'},
 			    $canvars ? ( $text{'vars_title'} ) : ( ),
 			    $text{'ssl_title'}, $text{'root_title'},
@@ -277,7 +278,8 @@ else {
 		@images = ( 'images/users.gif', 'images/dbs.gif',
 			    $canhosts ? ( 'images/hosts.gif' ) : ( ),
 			    'images/tprivs.gif', 'images/cprivs.gif',
-			    'images/cnf.gif', 'images/manual.gif',
+			    'images/cnf.gif', 'images/binlogs.svg',
+			    'images/manual.gif',
 			    'images/procs.gif',
 			    $canvars ? ( 'images/vars.gif' ) : ( ),
 			    'images/ssl.gif', 'images/root.gif',
@@ -301,6 +303,9 @@ else {
 
 	# Show stop button
 	if ($access{'stop'} && &is_mysql_local()) {
+		print &ui_buttons_row("restart.cgi", $text{'index_restart'},
+				      $text{'index_restartmsg'});
+
 		print &ui_buttons_row("stop.cgi", $text{'index_stop'},
 				      $text{'index_stopmsg'});
 		}
@@ -318,14 +323,26 @@ else {
 	if (foreign_available("cpan")) {
 		eval "use DBI";
 		push(@needs, "DBI") if ($@);
-		$nodbi++ if ($@);
-		eval "use DBD::mysql";
-		push(@needs, "DBD::mysql") if ($@);
+		push(@needs, $driver_info->{prefer}) if (!$driver_info->{avail});
 		if (@needs) {
 			$needs = &urlize(join(" ", @needs));
 			print &ui_alert_box(&text(@needs == 2 ? 'index_nomods' : 'index_nomod', @needs,
 				"../cpan/download.cgi?source=3&cpan=$needs&mode=2&return=/$module_name/&returndesc=".
-				  &urlize($text{'index_return'})), 'warn');
+				  &urlize($text{'index_return'})), 'warn',
+				  undef, undef, "");
+			}
+		}
+	# No CPAN module, just check for the driver
+	else {
+		eval "use DBI";
+		push(@needs, "DBI") if ($@);
+		push(@needs, $driver_info->{prefer}) if (!$driver_info->{avail});
+		if (@needs) {
+			print &ui_alert_box(
+				&text(@needs == 2
+					? 'index_nomods_manual'
+					: 'index_nomod_manual', @needs), 'warn',
+					undef, undef, "");
 			}
 		}
 	}

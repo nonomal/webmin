@@ -318,10 +318,12 @@ if (&has_command("zpool")) {
 
 # Add up all local filesystems
 foreach my $m (@mounted) {
+	my $tmp_is_tmpfs = $m->[0] eq "/tmp" && $m->[2] eq "tmpfs";
 	if ($m->[2] =~ /^ext/ ||
 	    $m->[2] eq "reiserfs" || $m->[2] eq "ufs" || $m->[2] eq "f2fs" ||
 	    $m->[2] eq "zfs" || $m->[2] eq "simfs" || $m->[2] eq "vzfs" ||
 	    $m->[2] eq "xfs" || $m->[2] eq "jfs" || $m->[2] eq "btrfs" ||
+	    $m->[2] eq "apfs" || $m->[2] eq "fuseblk" || $tmp_is_tmpfs ||
 	    $m->[1] =~ /^\/dev\// ||
 	    &indexof($m->[1], @$always) >= 0) {
 		my $zp;
@@ -332,13 +334,13 @@ foreach my $m (@mounted) {
 			$zp = $zpools{$1};
 			}
 		if ($donedevice{$m->[0]}++ ||
-		    $donedevice{$m->[1]}++) {
+		    !$tmp_is_tmpfs && $donedevice{$m->[1]}++) {
 			# Don't double-count mounts from the same device, or
 			# on the same directory.
 			next;
 			}
 		my @st = stat($m->[0]);
-		if (@st && $donedevno{$st[0]}++) {
+		if (!$tmp_is_tmpfs && @st && $donedevno{$st[0]}++) {
 			# Don't double-count same filesystem by device number
 			next;
 			}
@@ -358,13 +360,19 @@ foreach my $m (@mounted) {
 			# Skip CDs
 			next;
 			}
+		# apfs count only physical devices not containers shares
+		if ($m->[2] eq "apfs" && $m->[3] =~ /nobrowse/) {
+			next;
+			}
 		# Get the size - for ZFS mounts, this comes from the underlying
 		# total pool size and free
-		my ($t, $f);
+		my ($t, $f, $u, $p);
 		if ($zp) {
 			($t, $f) = @$zp;
+			$u = $t - $f;
+			$p = $u * 100 / $t if ($t);
 			}
-		else {
+		if (!$t) {
 			($t, $f, $u, $p) = &disk_space($m->[2], $m->[0]);
 			}
 		if (($m->[2] eq "simfs" || $m->[2] eq "vzfs" ||
@@ -397,5 +405,73 @@ foreach my $m (@mounted) {
 return ($total, $free, \@fs, $used);
 }
 
-1;
+# dashboard_mount_path(path)
+# Normalize trailing slashes only, without resolving the mount namespace.
+sub dashboard_mount_path
+{
+my ($path) = @_;
+$path =~ s{(?<=.)/+$}{};
+return $path;
+}
 
+# dashboard_mount_regex(expression)
+# Compile an optional regex defensively, including manually edited config.
+sub dashboard_mount_regex
+{
+my ($expression) = @_;
+return undef if (!defined($expression) || !length($expression));
+local $@;
+my $regex = eval { qr/$expression/ };
+return $@ ? undef : $regex;
+}
+
+# filter_dashboard_filesystems(&filesystems)
+# Return a new list of Dashboard-visible filesystems. Mount lists use tabs
+# (one path per line in config.info), preserving spaces and commas in paths.
+sub filter_dashboard_filesystems
+{
+my ($filesystems) = @_;
+my %types = map { lc($_), 1 }
+            grep { length($_) }
+            split(/[\s,]+/, $config{'sysinfo_exclude_types'} // '');
+my %mounts;
+foreach my $path (split(/[\t\r\n]+/, $config{'sysinfo_exclude_mounts'} // '')) {
+	$path =~ s/^\s+|\s+$//g;
+	$mounts{&dashboard_mount_path($path)} = 1 if (length($path));
+	}
+my $regex = &dashboard_mount_regex($config{'sysinfo_exclude_mount_regex'});
+my @visible = grep {
+	!$types{lc($_->{'type'})} &&
+	!$mounts{&dashboard_mount_path($_->{'dir'})} &&
+	!($regex && $_->{'dir'} =~ $regex)
+	} @$filesystems;
+return \@visible;
+}
+
+# filter_dashboard_disk_space(total, free, &filesystems, used)
+# Filter live or cached disk data and recalculate byte totals only when a
+# filesystem was excluded, preserving the original values otherwise.
+sub filter_dashboard_disk_space
+{
+my ($total, $free, $filesystems, $used) = @_;
+my $visible = &filter_dashboard_filesystems($filesystems);
+if (@$visible != @$filesystems) {
+	($total, $free, $used) = (0, 0, 0);
+	foreach my $fs (@$visible) {
+		$total += $fs->{'total'} // 0;
+		$free += $fs->{'free'} // 0;
+		$used += $fs->{'used'} //
+			 (($fs->{'total'} // 0) - ($fs->{'free'} // 0));
+		}
+	}
+return ($total, $free, $visible, $used);
+}
+
+# dashboard_disk_space([&always-count])
+# Dashboard-only wrapper; other local_disk_space callers remain unaffected.
+sub dashboard_disk_space
+{
+return &filter_dashboard_disk_space(&local_disk_space(@_));
+}
+
+1;

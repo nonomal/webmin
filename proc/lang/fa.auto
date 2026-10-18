@@ -6,6 +6,8 @@ index_memtfc=$1 کل / $2 رایگان / $3 حافظه پنهان
 index_loadname=میانگین بار CPU:
 index_loadnums=$1 (1 دقیقه) ،$2 (5 دقیقه) ،$3 (15 دقیقه)
 index_cpuname=نوع CPU:
+index_core=هسته $1 
+index_cores=$1 هسته
 
 sclass=کلاس برنامه ریزی IO
 sprio=اولویت IO
@@ -35,3 +37,7 @@ kill_stop=متوقف کردن
 windows_threads=مراحل در حال پردازش است
 
 syslog_dmesg=پیام های هسته
+
+proc_kill=ارسال سیگنال
+proc_submit=تنظیم
+proc_filter=فیلتر

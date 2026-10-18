@@ -52,7 +52,8 @@ if ($access{'create'}) {
 			        $text{'index_create'}) );
 	push(@crlinks, &ui_link("edit_env.cgi?new=1&search=".
 				  &urlize($in{'search'}),
-				$text{'index_ecreate'}) ) if ($env_support);
+				$text{'index_ecreate'}) )
+		if ($env_support && $access{'env'});
 	}
 if ($config{cron_allow_file} && $config{cron_deny_file} && $access{'allow'}) {
 	push(@crlinks, &ui_link("edit_allow.cgi", $text{'index_allow'}) );
@@ -106,9 +107,11 @@ foreach $u (@ulist) {
 		if ($job->{'name'}) {
 			# An environment variable - show the name only
 			$cmdidx = scalar(@cols);
-			push(@cols, &ui_link("edit_env.cgi?idx=".$idx,
-				   "<i>$text{'index_env'}</i> ".
-				   "<tt>@{[&html_escape($job->{'name'})]} = @{[&html_escape($job->{'value'})]}</tt>") );
+			local $envdesc = "<i>$text{'index_env'}</i> ".
+				   "<tt>@{[&html_escape($job->{'name'})]} = @{[&html_escape($job->{'value'})]}</tt>";
+			push(@cols, $access{'env'} ?
+				&ui_link("edit_env.cgi?idx=".$idx, $envdesc) :
+				$envdesc);
 			$donelink = 1;
 			}
 		elsif (@exp && $access{'command'}) {
@@ -205,8 +208,8 @@ foreach $u (@ulist) {
 				"$mover&up=1",
 				"$mover&down=1",
 				$canup, $candown,
-			        ));
-			push(@cols, &ui_up_down_arrows(
+			        )." ".
+				    &ui_up_down_arrows(
 				"$mover&top=1",
 				"$mover&bottom=1",
 				$canup, $candown,
@@ -219,6 +222,7 @@ foreach $u (@ulist) {
 		push(@cols, $job->{'command'}.' '.$job->{'name'}.' '.
 			    $job->{'comment'});
 		push(@rows, \@cols);
+		$noenv{$idx}++ if ($job->{'name'} && !$access{'env'});
 		}
 	}
 
@@ -230,9 +234,9 @@ if ($in{'search'}) {
 
 # Show search form
 print &ui_form_start("index.cgi");
-print "$text{'index_search'}:&nbsp;\n";
+print "$text{'index_search'} &nbsp;\n";
 print &ui_textbox("search", $in{'search'}, 20);
-print &ui_submit($text{'index_ok'});
+print &ui_submit($text{'ui_searchok'});
 print &ui_form_end();
 
 # Check if we are over the display limit
@@ -261,11 +265,13 @@ elsif (@rows) {
 		  ( $text{'index_comment'} ) : ( ),
 		$config{'show_next'} ? ( $text{'index_next'} ) : ( ),
 		$config{'show_run'} ? ( $text{'index_run'} ) : ( ),
-		$access{'move'} ? ( $text{'index_move'}, "" ) : ( ),
+		$access{'move'} ? ( $text{'index_move'} ) : ( ),
 		], 100, 0, \@tds);
 	foreach my $r (@rows) {
+		# Variables cannot be selected without permission to edit them
 		print &ui_checked_columns_row([ @$r[1..(@$r-2)] ],
-					      \@tds, "d", $r->[0]);
+					      \@tds, "d", $r->[0], 0,
+					      $noenv{$r->[0]});
 		}
 	print &ui_columns_end();
 	print &ui_links_row(\@links);

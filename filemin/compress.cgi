@@ -4,32 +4,45 @@ require './filemin-lib.pl';
 &ReadParse();
 get_paths();
 
-if(!$in{'arch'}) {
+if (!$in{'arch'}) {
 	&redirect("index.cgi?path=".&urlize($path));
 	return;
 	}
 
 my $command;
+my $full;
+my $extension;
 
 if ($in{'method'} eq 'plain-tar') {
-	$full = "$cwd/$in{'arch'}.tar";
-	$command = "tar cf ".quotemeta($full)." -C ".quotemeta($cwd);
+	$extension = ".tar";
+	$full = &validate_filename_path($in{'arch'}.$extension);
+	$command = "tar cf ".quotemeta($full).
+		" -C ".quotemeta($cwd)." --";
 	}
 elsif ($in{'method'} eq 'xz-tar') {
-	$full = "$cwd/$in{'arch'}.tar.xz";
-	$command = "tar cJf ".quotemeta($full)." -C ".quotemeta($cwd);
+	$extension = ".tar.xz";
+	$full = &validate_filename_path($in{'arch'}.$extension);
+	$command = "tar cJf ".quotemeta($full).
+		" -C ".quotemeta($cwd)." --";
 	}
 elsif ($in{'method'} eq 'zstd-tar') {
-	$full = "$cwd/$in{'arch'}.zst";
-	$command = "ZSTD_CLEVEL=19 tar --zstd -cf ".quotemeta($full)." -C ".quotemeta($cwd);
+	$extension = ".zst";
+	$full = &validate_filename_path($in{'arch'}.$extension);
+	$command = "ZSTD_CLEVEL=19 tar --zstd -cf ".
+		quotemeta($full).
+		" -C ".quotemeta($cwd)." --";
 	}
 elsif ($in{'method'} eq 'tar') {
-	$full = "$cwd/$in{'arch'}.tar.gz";
-	$command = "tar czf ".quotemeta($full)." -C ".quotemeta($cwd);
+	$extension = ".tar.gz";
+	$full = &validate_filename_path($in{'arch'}.$extension);
+	$command = "tar czf ".quotemeta($full).
+		" -C ".quotemeta($cwd)." --";
 	}
 elsif ($in{'method'} eq 'zip') {
-	$full = "$cwd/$in{'arch'}.zip";
-	$command = "cd ".quotemeta($cwd)." && zip -r ".quotemeta($full);
+	$extension = ".zip";
+	$full = &validate_filename_path($in{'arch'}.$extension);
+	$command = "cd ".quotemeta($cwd).
+		" && zip -r ".quotemeta($full)." --";
 	}
 else {
 	&error("Unknown method!");
@@ -37,13 +50,17 @@ else {
 $newfile = !-e $full;
 
 foreach my $name (split(/\0/, $in{'name'})) {
-	$command .= " ".quotemeta($name);
+	my $full_name = &validate_filename_path($name);
+	my $relative_name = $full_name;
+	$relative_name =~ s/^\Q$cwd\E\/?//;
+	$command .= " ".quotemeta($relative_name);
 	}
 
 my @st = stat($cwd);
 &system_logged($command);
 if ($newfile) {
-	&set_ownership_permissions($st[4], $st[5], undef, $full);
+	&set_ownership_permissions(
+		$st[4], $st[5], undef, $full);
 	}
 
 &redirect("index.cgi?path=".&urlize($path));

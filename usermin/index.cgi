@@ -13,7 +13,7 @@ if (!-r "$config{'usermin_dir'}/miniserv.conf") {
 		if (&foreign_check("software")) {
 			local %sconfig = &foreign_config("software");
 			$mode = $sconfig{'package_system'} eq 'rpm' ? 'rpm' :
-				$sconfig{'package_system'} eq 'dpkg' ? 'deb' :
+				$sconfig{'package_system'} =~ /^(dpkg|debian)$/ ? 'deb' :
 								       undef;
 			}
 		print &ui_confirmation_form(
@@ -55,6 +55,7 @@ if (!$miniserv{'root'} && !-d $miniserv{'root'}) {
 
 @links = ( "edit_access.cgi",
 	   "edit_bind.cgi",
+	   "edit_log.cgi",
 	   "edit_ui.cgi",
 	   "edit_mods.cgi",
 	   "edit_os.cgi",

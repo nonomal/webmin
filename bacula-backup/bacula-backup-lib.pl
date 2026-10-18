@@ -58,6 +58,23 @@ $testcmd->finish();
 return $dbh;
 }
 
+# bacula_catalog_table_exists(&dbh, table)
+# Returns 1 if the Bacula catalog contains a table, 0 if not
+sub bacula_catalog_table_exists
+{
+local ($dbh, $table) = @_;
+$table =~ /^\w+\z/ || die "Illegal catalog table name";
+local $dbh->{'PrintError'} = 0;
+local $dbh->{'RaiseError'} = 0;
+my $cmd = eval { $dbh->prepare("SELECT 1 FROM $table WHERE 1 = 0") };
+my $ok;
+if ($cmd) {
+	$ok = eval { $cmd->execute() };
+	$cmd->finish();
+	}
+return $ok ? 1 : 0;
+}
+
 # read_config_file(file)
 # Parses a bacula config file
 sub read_config_file
@@ -147,6 +164,15 @@ if (!defined($config_file_cache{$file})) {
 				       'type' => 0,
 				       'parent' => $parent };
 			push(@{$parent->{'members'}}, $dir);
+
+			# A line like "Include = {" starts a section, rather
+			# than setting the value to a brace. The brace must be
+			# unquoted, so that a real value of "{" is preserved
+			if ($dir->{'value'} eq "{" && $rest !~ /\S/ &&
+			    /=\s*\{\s*$/) {
+				$dir->{'value'} = undef;
+				$rest = "{";
+				}
 
 			if ($rest =~ /\s*{\s*$/) {
 				# Also start of a section!
@@ -1678,4 +1704,3 @@ return ( \%tags, $run );
 }
 
 1;
-

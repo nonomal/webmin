@@ -174,6 +174,7 @@ elsif ($_[2]->{'type'} == 4) {
 	local $count = $rv[2];
 	return () if (!$count);
 	$_[2]->{'lastchange'} = $rv[3] if ($rv[3]);
+	$_[2]->{'mailcount'} = $count;
 
 	# Work out what range we want
 	local ($start, $end) = &compute_start_end($_[0], $_[1], $count);
@@ -309,6 +310,10 @@ elsif ($_[2]->{'type'} == 7) {
 	# MBX format folder
 	print DEBUG "listing MBX $_[2]->{'file'}\n";
 	@mail = &list_mbxfile($_[2]->{'file'}, $_[0], $_[1]);
+	}
+foreach my $mail (@mail) {
+	$mail->{'open_user'} ||= $_[2]->{'user'}
+		if ($mail && $_[2]->{'user'});
 	}
 &switch_from_folder_user($_[2]);
 return @mail;
@@ -454,6 +459,7 @@ elsif ($folder->{'type'} == 4) {
 		}
 	local $h = $irv[1];
 	local $count = $irv[2];
+	$folder->{'mailcount'} = $count;
 	return () if (!$count);
         $folder->{'lastchange'} = $irv[3] if ($irv[3]);
 
@@ -559,6 +565,9 @@ elsif ($folder->{'type'} == 7) {
 	# MBX folder
 	@mail = &select_mbxfile($folder->{'file'}, $ids, $headersonly);
 	}
+foreach my $mail (@mail) {
+	$mail->{'open_user'} ||= $folder->{'user'} if ($mail && $folder->{'user'});
+	}
 &switch_from_folder_user($_[0]);
 return @mail;
 }
@@ -630,8 +639,9 @@ elsif ($folder->{'type'} == 4) {
 		}
 	local $h = $rv[1];
 	local $count = $rv[2];
+	$folder->{'mailcount'} = $count;
 	return () if (!$count);
-        $folder->{'lastchange'} = $irv[3] if ($irv[3]);
+        $folder->{'lastchange'} = $rv[3] if ($rv[3]);
 
 	@rv = &imap_command($h, "FETCH 1:$count UID");
 	foreach my $uid (@{$rv[1]}) {
@@ -701,6 +711,8 @@ else {
 sub mailbox_list_mails_sorted
 {
 local ($start, $end, $folder, $headersonly, $error, $field, $dir) = @_;
+local ($requested_start, $requested_end) = ($start, $end);
+local $retried = $_[7];
 print DEBUG "mailbox_list_mails_sorted from $start to $end\n";
 if (!$field) {
 	# Default to current ordering
@@ -731,10 +743,24 @@ local @rv = map { undef } (0 .. scalar(@sorter)-1);
 local @wantids = map { $sorter[$_] } ($start .. $end);
 print DEBUG "wantids = ",scalar(@wantids),"\n";
 local @mails = &mailbox_select_mails($folder, \@wantids, $headersonly);
+local @missing;
 for(my $i=0; $i<@mails; $i++) {
+	if (!$mails[$i]) {
+		push(@missing, $wantids[$i]);
+		next;
+		}
 	$rv[$start+$i] = $mails[$i];
 	print DEBUG "setting $start+$i to ",$mails[$i]," id ",$wantids[$i],"\n";
 	$mails[$i]->{'sortidx'} = $start+$i;
+	}
+if (@missing && !$retried) {
+	# A sorted IMAP list can contain UIDs for messages that were
+	# expunged or moved by another client. Force one rebuild so stale
+	# entries don't render as blank 1969/no-subject rows.
+	&force_new_index_recheck($folder);
+	return &mailbox_list_mails_sorted($requested_start, $requested_end,
+					  $folder, $headersonly, $error,
+					  $field, $dir, 1);
 	}
 print DEBUG "rv = ",scalar(@rv),"\n";
 return @rv;
@@ -801,7 +827,9 @@ local $ifile = &folder_new_sort_index_file($folder);
 &open_dbm_db($index, $ifile, 0600);
 print DEBUG "indexchange=$index->{'lastchange'} folderchange=$folder->{'lastchange'}\n";
 if ($index->{'lastchange'} != $folder->{'lastchange'} ||
-    !$folder->{'lastchange'}) {
+    !$folder->{'lastchange'} ||
+    (defined($folder->{'mailcount'}) &&
+     $index->{'mailcount'} != $folder->{'mailcount'})) {
 	# The mail file has changed .. get IDs and update the index with any
 	# that are missing
 	local @ids = &mailbox_idlist($folder);
@@ -816,6 +844,7 @@ if ($index->{'lastchange'} != $folder->{'lastchange'} ||
 	local @mails = scalar(@newids) ?
 			&mailbox_select_mails($folder, \@newids, 1) : ( );
 	foreach my $mail (@mails) {
+		next if (!$mail || !defined($mail->{'id'}));
 		foreach my $f (@index_fields) {
 			if ($f eq "date") {
 				# Convert date to Unix time
@@ -1554,6 +1583,10 @@ if ($folder->{'type'} == 1 || $folder->{'type'} == 3) {
 			&get_mhdir_files($folder->{'file'});
 	if ($folder->{'type'} == 1) {
 		foreach my $sf (glob("\Q$folder->{'file'}\E/.??*")) {
+			# Skip entries that aren't real Maildirs, e.g. a
+			# dangling symlink relocated during migration (no
+			# cur/new to read)
+			next if (!-d "$sf/cur" || !-d "$sf/new");
 			push(@files, &get_maildir_files($sf));
 			}
 		}
@@ -2041,11 +2074,10 @@ return @rv;
 # Properly closes all open POP3 and IMAP sessions
 sub pop3_logout_all
 {
-local $f;
-foreach $f (keys %pop3_login_handle) {
+foreach my $f (keys %pop3_login_handle) {
 	&pop3_logout($pop3_login_handle{$f}, 1);
 	}
-foreach $f (keys %imap_login_handle) {
+foreach my $f (keys %imap_login_handle) {
 	&imap_logout($imap_login_handle{$f}, 1);
 	}
 }
@@ -2057,21 +2089,48 @@ foreach $f (keys %imap_login_handle) {
 # unread, and the number special.
 sub imap_login
 {
-local ($folder) = @_;
-local $defport = $folder->{'ssl'} ? 993 : 143;
-local $port = $folder->{'port'} || $defport;
-local $key = join("/", $folder->{'server'}, $port, $folder->{'user'});
-local $h = $imap_login_handle{$key};
-local @rv;
-if (!$h) {
+my ($folder) = @_;
+my $defport = $folder->{'ssl'} ? 993 : 143;
+my $port = $folder->{'port'} || $defport;
+my $key = join("/", $folder->{'server'}, $port, $folder->{'user'});
+my $h = $imap_login_handle{$key};
+my @rv;
+if (!$h && $folder->{'server'} eq '*') {
+	# Try running the Dovecot imap command
+	my $imapcmd;
+	foreach my $c ("/usr/libexec/dovecot/imap",
+		       "/usr/lib/dovecot/imap") {
+		if (&has_command($c)) {
+			$imapcmd = $c;
+			last;
+			}
+		}
+	$imapcmd || return (0, "Dovecot imap command not found");
+	$imapcmd .= " -u ".($folder->{'user'} eq "*" ||
+			    !$folder->{'user'} ? $remote_user : $folder->{'user'});
+	print DEBUG "Running IMAP server $imapcmd\n";
+	eval "use IPC::Open3";
+	if ($@) {
+		return (0, "Missing IPC::Open3 Perl module");
+		}
+	my ($writefh, $readfh, $errorfh);
+	my $pid = open3($writefh, $readfh, $errorfh, $imapcmd);
+	print DEBUG "pid=$pid\n";
+	$pid || return (0, "Failed to run $imapcmd");
+	my $l = <$readfh>;	# Skip PREAUTH line
+	$h = [ $writefh, $readfh, $pid ];
+	$imap_login_handle{$key} = $h;
+	$imap_login_ssl{$h} = 0;
+	}
+elsif (!$h && $folder->{'server'} ne '*') {
 	# Need to open socket
 	$h = ($folder->{'ssl'} ? "SSL" : "")."IMAP".time().++$imap_login_count;
-	local $error;
+	my $error;
 	print DEBUG "Connecting to IMAP server $folder->{'server'}:$port\n";
 	&open_socket($folder->{'server'}, $port, $h, \$error);
 	print DEBUG "IMAP error=$error\n" if ($error);
 	return (0, $error) if ($error);
-	local $os = select($h); $| = 1; select($os);
+	my $os = select($h); $| = 1; select($os);
 	if ($folder->{'ssl'}) {
 		# Switch to SSL mode
                 eval "use Net::SSLeay";
@@ -2091,9 +2150,9 @@ if (!$h) {
 	# Login normally
 	@rv = &imap_command($h);
 	return (0, $rv[3] || "No response") if (!$rv[0]);
-	local $user = $folder->{'user'} eq '*' ? $remote_user
+	my $user = $folder->{'user'} eq '*' ? $remote_user
 					       : $folder->{'user'};
-	local $pass = $folder->{'pass'};
+	my $pass = $folder->{'pass'};
 	$pass =~ s/\\/\\\\/g;
 	$pass =~ s/"/\\"/g;
 	@rv = &imap_command($h,"login \"$user\" \"$pass\"");
@@ -2105,8 +2164,8 @@ if (!$h) {
 # Select the right folder (if one was given)
 @rv = &imap_command($h, "select \"".($folder->{'mailbox'} || "INBOX")."\"");
 return (3, $rv[3]) if (!$rv[0]);
-local $count = $rv[2] =~ /\*\s+(\d+)\s+EXISTS/i ? $1 : undef;
-local $uidnext = $rv[2] =~ /UIDNEXT\s+(\d+)/ ? $1 : undef;
+my $count = $rv[2] =~ /\*\s+(\d+)\s+EXISTS/i ? $1 : undef;
+my $uidnext = $rv[2] =~ /UIDNEXT\s+(\d+)/ ? $1 : undef;
 return (1, $h, $count, $uidnext);
 }
 
@@ -2124,6 +2183,15 @@ if (!$h) {
 my $ssl_con = $imap_login_ssl{$h};
 my @rv;
 
+# Get file handles for writing and reading
+my ($writefh, $readfh);
+if (ref($h)) {
+	($writefh, $readfh) = @$h;
+	}
+else {
+	$writefh = $readfh = $h;
+	}
+
 # Send the command, and read lines until a non-* one is found
 my $id = $$."-".$imap_command_count++;
 my ($first, $rest) = split(/\r?\n/, $c, 2);
@@ -2136,8 +2204,8 @@ if ($rest) {
 		$l = Net::SSLeay::ssl_read_until($ssl_con);
 		}
 	else {
-		print $h "$id $first\r\n";
-		$l = <$h>;
+		print $writefh "$id $first\r\n";
+		$l = <$readfh>;
 		}
 	print DEBUG "imap line $l";
 	if ($l =~ /^\+/) {
@@ -2145,7 +2213,7 @@ if ($rest) {
 			Net::SSLeay::write($ssl_con, $rest."\r\n");
 			}
 		else {
-			print $h $rest."\r\n";
+			print $writefh $rest."\r\n";
 			}
 		}
 	else {
@@ -2159,7 +2227,7 @@ elsif ($c) {
 		Net::SSLeay::write($ssl_con, "$id $c\r\n");
 		}
 	else {
-		print $h "$id $c\r\n";
+		print $writefh "$id $c\r\n";
 		}
 	print DEBUG "imap command $id $c\n";
 	}
@@ -2169,7 +2237,7 @@ while(1) {
 		$l = Net::SSLeay::ssl_read_until($ssl_con);
 		}
 	else {
-		$l = <$h>;
+		$l = <$readfh>;
 		}
 	print DEBUG "imap line $l";
 	last if (!$l);
@@ -2191,7 +2259,7 @@ while(1) {
 					$r = length($buf);
 					}
 				else {
-					$r = read($h, $buf, $size-$got);
+					$r = read($readfh, $buf, $size-$got);
 					}
 				return (0, [ $err ], $err, $err) if ($r <= 0);
 				$rv[$#rv] .= $buf;
@@ -2229,12 +2297,19 @@ else {
 # imap_logout(handle, doquit)
 sub imap_logout
 {
-local @rv = $_[1] ? &imap_command($_[0], "close") : (1, undef);
-local $f;
-foreach $f (keys %imap_login_handle) {
-	delete($imap_login_handle{$f}) if ($imap_login_handle{$f} eq $_[0]);
+my ($h, $quit) = @_;
+my @rv = $quite ? &imap_command($h, "close") : (1, undef);
+foreach my $f (keys %imap_login_handle) {
+	delete($imap_login_handle{$f}) if ($imap_login_handle{$f} eq $h);
 	}
-close($_[0]);
+if (ref($h)) {
+	close($h->[0]);
+	close($h->[1]);
+	waitpid($h->[2], 0);
+	}
+else {
+	close($h);
+	}
 return @rv;
 }
 
@@ -2947,7 +3022,8 @@ my $iframe_body = <<EOF;
 		    theme_mail_iframe_onload(iframe);
 		      return;
 		}
-		const iframe_spinner = document.querySelector('#mail-iframe-spinner'),
+		const iframeDoc = iframe.contentDocument || iframe.contentWindow.document,
+			  iframe_spinner = document.querySelector('#mail-iframe-spinner'),
 			  iframe_resize = function() {
 				const iframeobj = document.querySelector('#mail-iframe'),
 				      iframe_height_bound = iframeobj.contentWindow.document.body.getBoundingClientRect().bottom,
@@ -2955,8 +3031,11 @@ my $iframe_body = <<EOF;
 				      iframe_height =
 				        iframe_height_bound > iframe_scroll_height ?
 				          iframe_height_bound : iframe_scroll_height;
-				iframeobj.style.height = Math.ceil(iframe_height) + "px";
+				iframeobj.style.height = Math.ceil(iframe_height - 1) + "px";
 			  };
+		iframeDoc.body.style.removeProperty('width');
+		iframeDoc.body.style.margin = '4px';
+		iframeDoc.body.style.padding = '0';
 		iframe_spinner && iframe_spinner.remove();
 		iframe.classList.add("loaded");
 		setTimeout(iframe_resize);
@@ -2980,6 +3059,15 @@ my $iframe_body = <<EOF;
 				})();
 			});
 		}, 99);
+		iframeDoc.addEventListener('click', function(event) {
+			if (event.target.tagName.toLowerCase() === 'summary' &&
+			    event.target.dataset.resize === 'iframe') {
+				setTimeout(iframe_resize);
+			}
+		});
+		iframe.contentWindow.addEventListener('resize', function() {
+			setTimeout(iframe_resize);
+		});
 	}
 </script>
 <iframe
@@ -3091,6 +3179,9 @@ my $iframe_body = <<EOF;
 </style>
 <script>
 	function quote_mail_iframe_onload(iframe) {
+		if (typeof fn_${module_name}_quote_mail_iframe_loaded === 'function') {
+		    fn_${module_name}_quote_mail_iframe_loaded(iframe);
+		}
 		if (typeof theme_quote_mail_iframe_onload === 'function') {
 		    theme_quote_mail_iframe_onload(iframe);
 		      return;
@@ -3194,6 +3285,14 @@ foreach my $a (@$attach) {
 return @rv;
 }
 
+# signature_is_html(sig)
+# Returns 1 if the given signature contains HTML markup
+sub signature_is_html
+{
+local ($sig) = @_;
+return 0 if (!$sig);
+return $sig =~ /<\/?(?:a|b|i|u|s|p|em|img|br|hr|div|span|font|code|pre|sub|sup|small|big|strong|strike|blockquote|table|tbody|thead|tr|td|th|ul|ol|li|h[1-6]|style)\b[^>]*>/i ? 1 : 0;
+}
 # quoted_message(&mail, quote-mode, sig, 0=any,1=text,2=html, sig-at-top?)
 # Returns the quoted text, html-flag and body attachment
 sub quoted_message
@@ -3224,20 +3323,22 @@ local $qm = %userconfig ? $userconfig{'html_quote'} : $config{'html_quote'};
 if (($cfg->{'html_edit'} == 2 ||
      $cfg->{'html_edit'} == 1 && $htmlbody) &&
      $bodymode != 1) {
-	# Create quoted body HTML
+	# Create quoted body HTML, with the signature wrapped in a container
+	# with a known class so that it can be styled later if needed
+	$sig =~ s/\n/<br>\n/g if (!&signature_is_html($sig));
+	$sig = "<div class=\"x-signature\">$sig</div>" if ($sig);
 	if ($htmlbody) {
 		$body = $htmlbody;
-		$sig =~ s/\n/<br>\n/g;
 		if ($qu && $qm == 0) {
 			# Quoted HTML as cite
 			$quote = &html_escape($writer)."\n".
 				 "<blockquote type=cite>\n".
 				 &safe_html($htmlbody->{'data'}).
 				 "</blockquote>";
-			if ($sigtop) {
+			if ($sig && $sigtop) {
 				$quote = $sig."<br>\n".$quote;
 				}
-			else {
+			elsif ($sig) {
 				$quote = $quote.$sig."<br>\n";
 				}
 			}
@@ -3250,10 +3351,10 @@ if (($cfg->{'html_edit'} == 2 ||
 		else {
 			# Un-quoted HTML
 			$quote = &safe_html($htmlbody->{'data'});
-			if ($sigtop) {
+			if ($sig && $sigtop) {
 				$quote = $sig."<br>\n".$quote;
 				}
-			else {
+			elsif ($sig) {
 				$quote = $quote.$sig."<br>\n";
 				}
 			}
@@ -3269,10 +3370,10 @@ if (($cfg->{'html_edit'} == 2 ||
 				 "<blockquote type=cite>\n".
 				 "<pre>$pd</pre>".
 				 "</blockquote>";
-			if ($sigtop) {
+			if ($sig && $sigtop) {
 				$quote = $sig."<br>\n".$quote;
 				}
-			else {
+			elsif ($sig) {
 				$quote = $quote.$sig."<br>\n";
 				}
 			}
@@ -3285,10 +3386,10 @@ if (($cfg->{'html_edit'} == 2 ||
 		else {
 			# Un-quoted plain text as HTML
 			$quote = "<pre>$pd</pre>";
-			if ($sigtop) {
+			if ($sig && $sigtop) {
 				$quote = $sig."<br>\n".$quote;
 				}
-			else {
+			elsif ($sig) {
 				$quote = $quote.$sig."<br>\n";
 				}
 			}
@@ -3297,6 +3398,7 @@ if (($cfg->{'html_edit'} == 2 ||
 	}
 else {
 	# Create quoted body text
+	$sig = &html_to_text($sig) if (&signature_is_html($sig));
 	if ($plainbody) {
 		$body = $plainbody;
 		$quote = $plainbody->{'data'};
@@ -4235,6 +4337,564 @@ foreach my $h (@{$mail->{'headers'}}) {
 		}
 	}
 return $rv;
+}
+
+# parse_calendar_file(calendar-file|lines)
+# Parses an iCalendar file and returns a list of events
+sub parse_calendar_file
+{
+my ($calendar_file) = @_;
+my (@events, %event, $line);
+eval "use DateTime; use DateTime::TimeZone;";
+return \@events if ($@);
+# Timezone map
+my %timezone_map = (
+    'Afghanistan Time'                  => 'AFT',
+    'Alaskan Daylight Time'             => 'AKDT',
+    'Alaskan Standard Time'             => 'AKST',
+    'Anadyr Time'                       => 'ANAT',
+    'Arabian Standard Time'             => 'AST',
+    'Argentina Time'                    => 'ART',
+    'Atlantic Daylight Time'            => 'ADT',
+    'Atlantic Standard Time'            => 'AST',
+    'Australian Central Daylight Time'  => 'ACDT',
+    'Australian Central Standard Time'  => 'ACST',
+    'Australian Eastern Daylight Time'  => 'AEDT',
+    'Australian Eastern Standard Time'  => 'AEST',
+    'Bangladesh Standard Time'          => 'BST',
+    'Brasília Time'                     => 'BRT',
+    'British Summer Time'               => 'BST',
+    'Central Africa Time'               => 'CAT',
+    'Central Asia Time'                 => 'ALMT',
+    'Central Daylight Time'             => 'CDT',
+    'Central Daylight Time (US)'        => 'CDT',
+    'Central European Summer Time'      => 'CEST',
+    'Central European Time'             => 'CET',
+    'Central Indonesia Time'            => 'WITA',
+    'Central Standard Time (Australia)' => 'CST',
+    'Central Standard Time (US)'        => 'CST',
+    'Central Standard Time'             => 'CST',
+    'Chamorro Daylight Time'            => 'CHDT',
+    'Chamorro Standard Time'            => 'CHST',
+    'China Standard Time'               => 'CST',
+    'Coordinated Universal Time'        => 'UTC',
+    'East Africa Time'                  => 'EAT',
+    'Eastern Africa Time'               => 'EAT',
+    'Eastern Daylight Time'             => 'EDT',
+    'Eastern Daylight Time (US)'        => 'EDT',
+    'Eastern European Summer Time'      => 'EEST',
+    'Eastern European Time'             => 'EET',
+    'Eastern Indonesia Time'            => 'WIT',
+    'Eastern Standard Time (Australia)' => 'EST',
+    'Eastern Standard Time (US)'        => 'EST',
+    'Eastern Standard Time'             => 'EST',
+    'Fiji Time'                         => 'FJT',
+    'Greenwich Mean Time'               => 'GMT',
+    'Hawaii-Aleutian Daylight Time'     => 'HADT',
+    'Hawaii-Aleutian Standard Time'     => 'HAST',
+    'Hawaiian Standard Time'            => 'HST',
+    'Hong Kong Time'                    => 'HKT',
+    'Indian Standard Time'              => 'IST',
+    'Iran Standard Time'                => 'IRST',
+    'Irish Standard Time'               => 'IST',
+    'Israel Standard Time'              => 'IST',
+    'Japan Standard Time'               => 'JST',
+    'Korea Standard Time'               => 'KST',
+    'Magadan Time'                      => 'MAGT',
+    'Malaysia Time'                     => 'MYT',
+    'Moscow Standard Time'              => 'MSK',
+    'Mountain Daylight Time'            => 'MDT',
+    'Mountain Standard Time'            => 'MST',
+    'Myanmar Standard Time'             => 'MMT',
+    'Nepal Time'                        => 'NPT',
+    'New Caledonia Time'                => 'NCT',
+    'New Zealand Daylight Time'         => 'NZDT',
+    'New Zealand Standard Time'         => 'NZST',
+    'Newfoundland Daylight Time'        => 'NDT',
+    'Newfoundland Standard Time'        => 'NST',
+    'Pacific Daylight Time'             => 'PDT',
+    'Pacific Standard Time'             => 'PST',
+    'Pakistan Standard Time'            => 'PKT',
+    'Philippine Time'                   => 'PHT',
+    'Sakhalin Time'                     => 'SAKT',
+    'Samoa Standard Time'               => 'SST',
+    'Singapore Standard Time'           => 'SGT',
+    'South Africa Standard Time'        => 'SAST',
+    'Tahiti Time'                       => 'TAHT',
+    'Venezuelan Standard Time'          => 'VET',
+    'West Africa Time'                  => 'WAT',
+    'Western European Summer Time'      => 'WEST',
+    'Western European Time'             => 'WET',
+    'Western Indonesia Time'            => 'WIB',
+    'Western Standard Time (Australia)' => 'WST',
+);
+# Make a date from a special timestamp
+my $adjust_time_with_timezone = sub {
+	my ($time, $tzid) = @_;
+	my $dt = DateTime->new(
+		year      => substr($time, 0, 4),
+		month     => substr($time, 4, 2),
+		day       => substr($time, 6, 2),
+		hour      => substr($time, 9, 2),
+		minute    => substr($time, 11, 2),
+		second    => substr($time, 13, 2),
+		time_zone => $tzid);
+	my $local_dt = $dt->clone->set_time_zone('local');
+	return {
+		formatted => $dt->strftime("%Y-%m-%d %H:%M:%S"),
+		timestamp => $dt->epoch,
+		formatted_local => $local_dt->strftime('%Y-%m-%d %H:%M:%S'),
+		timestamp_local => $local_dt->epoch,
+	};
+};
+# Lines processor
+my $process_line = sub
+{
+my ($line) = @_;
+# Start a new event
+if ($line =~ /^BEGIN:VEVENT/) {
+	%event = ();
+	$event{'description'} = [ ];
+	$event{'attendees'} = [ ];
+	}
+# Convert times using the timezone
+elsif ($line =~ /^END:VEVENT/) {
+	# Local timezone
+	$event{'tzid_local'} = DateTime::TimeZone->new(name => 'local')->name();
+	$event{'tzid'} = 'UTC', $event{'tzid_missing'} = 1 if (!$event{'tzid'});
+	# Adjust times with timezone
+	my ($adjusted_start, $adjusted_end);
+	$event{'tzid'} = $timezone_map{$event{'tzid'}} || $event{'tzid'};
+	# Add single start/end time
+	if ($event{'dtstart'}) {
+		$adjusted_start =
+			$adjust_time_with_timezone->($event{'dtstart'},
+						     $event{'tzid'});
+		$event{'dtstart_timestamp'} = $adjusted_start->{'timestamp'};
+		my $dtstart_date =
+			&make_date($event{'dtstart_timestamp'},
+				   { tz => $event{'tzid'} });
+		$event{'dtstart_date'} =
+			"$dtstart_date->{'short'} $dtstart_date->{'timeshort'}"; 
+		$event{'dtstart_local_timestamp'} =
+			$adjusted_start->{'timestamp_local'};
+		$event{'dtstart_local_date'} =
+			&make_date($event{'dtstart_local_timestamp'});
+		}
+	if ($event{'dtend'}) {
+		$adjusted_end =
+		  $adjust_time_with_timezone->($event{'dtend'}, $event{'tzid'});
+		$event{'dtend_timestamp'} = $adjusted_end->{'timestamp'};
+		my $dtend_date = &make_date($event{'dtend_timestamp'},
+					    { tz => $event{'tzid'} });
+		$event{'dtend_date'} =
+			"$dtend_date->{'short'} $dtend_date->{'timeshort'}";
+		$event{'dtend_local_timestamp'} =
+			$adjusted_end->{'timestamp_local'};
+		$event{'dtend_local_date'} =
+			&make_date($event{'dtend_local_timestamp'});
+		}
+	if ($event{'dtstart'} && $event{'dtend'}) {
+		# Try to add local 'when (period)'
+		my $dtstart_local_obj =
+			$event{'_obj_dtstart_local_time'} =
+			make_date($event{'dtstart_local_timestamp'}, { });
+		my $dtend_local_obj =
+			$event{'_obj_dtend_local_time'} =
+			make_date($event{'dtend_local_timestamp'}, { });
+		# Build when local, e.g.:
+		# Tue Jun 04, 2024 04:30 PM – 05:15
+		# PM (Asia/Nicosia +0300)
+		# or
+		# Tue Jun 04, 2024 04:30 PM – Wed Jun 05, 2024 01:15
+		# AM (Asia/Nicosia +0300)
+		$event{'dtwhen_local'} =
+			# Start local
+			$dtstart_local_obj->{'week'}.' '.
+			$dtstart_local_obj->{'month'}.' '.
+			$dtstart_local_obj->{'day'}.', '.
+			$dtstart_local_obj->{'year'}.' '.
+			$dtstart_local_obj->{'timeshort'}.' – ';
+			# End local
+			if ($dtstart_local_obj->{'year'} eq
+				$dtend_local_obj->{'year'} &&
+				$dtstart_local_obj->{'month'} eq
+				$dtend_local_obj->{'month'} &&
+				$dtstart_local_obj->{'day'} eq
+				$dtend_local_obj->{'day'}) {
+				$event{'dtwhen_local'} .=
+					$dtend_local_obj->{'timeshort'};
+				}
+			else {
+				$event{'dtwhen_local'} .=
+					$dtend_local_obj->{'week'}.' '.
+					$dtend_local_obj->{'month'}.' '.
+					$dtend_local_obj->{'day'}.', '.
+					$dtend_local_obj->{'year'}.' '.
+					$dtend_local_obj->{'timeshort'};
+				}
+			# Timezone local
+			if ($event{'tzid_local'} ||
+				$dtstart_local_obj->{'tz'}) {
+				if ($event{'tzid_local'} &&
+					$dtstart_local_obj->{'tz'}) {
+					if ($event{'tzid_local'} eq
+						$dtstart_local_obj->{'tz'}) {
+						$event{'dtwhen_local'} .=
+							" ($event{'tzid_local'})";
+						}
+					else {
+						$event{'dtwhen_local'} .=
+							" ($event{'tzid_local'} ".
+							"$dtstart_local_obj->{'tz'})";
+						}
+					}
+				elsif ($event{'tzid_local'}) {
+					$event{'dtwhen_local'} .=
+						" ($event{'tzid_local'})";
+					}
+				else {
+					$event{'dtwhen_local'} .=
+						" ($dtstart_local_obj->{'tz'})";
+					}
+				}
+		# Try to add original 'when (period)'
+		my $dtstart_obj =
+			$event{'_obj_dtstart_time'} =
+				make_date($event{'dtstart_timestamp'},
+					  { tz => $event{'tzid'} });
+		my $dtend_obj =
+			$event{'_obj_dtend_time'} =
+				make_date($event{'dtend_timestamp'},
+					  { tz => $event{'tzid'} });
+		# Build original when
+		if (!$event{'tzid_missing'}) {
+			$event{'dtwhen'} =
+				# Start original
+				$dtstart_obj->{'week'}.' '.
+				$dtstart_obj->{'month'}.' '.
+				$dtstart_obj->{'day'}.', '.
+				$dtstart_obj->{'year'}.' '.
+				$dtstart_obj->{'timeshort'}.' – ';
+				# End original
+				if ($dtstart_obj->{'year'} eq
+					$dtend_obj->{'year'} &&
+				    $dtstart_obj->{'month'} eq
+					$dtend_obj->{'month'} &&
+				    $dtstart_obj->{'day'} eq
+					$dtend_obj->{'day'}) {
+					$event{'dtwhen'} .=
+						$dtend_obj->{'timeshort'};
+					}
+				else {
+					$event{'dtwhen'} .=
+						$dtend_obj->{'week'}.' '.
+						$dtend_obj->{'month'}.' '.
+						$dtend_obj->{'day'}.', '.
+						$dtend_obj->{'year'}.' '.
+						$dtend_obj->{'timeshort'};
+					}
+				# Timezone original
+				if ($dtstart_obj->{'tz'}) {
+					$event{'dtwhen'} .=
+						" ($dtstart_obj->{'tz'})";
+					}
+			}
+		}
+	# Add the event to the list
+	push(@events, { %event });
+	}
+# Parse fields
+elsif ($line =~ /^SUMMARY.*?:(.*)$/) {
+	$event{'summary'} = $1;
+	}
+elsif ($line =~ /^DTSTART:(.*)$/) {
+	$event{'dtstart'} = $1;
+	}
+elsif ($line =~ /^DTSTART;TZID=(.*?):(.*)$/) {
+	$event{'tzid'} = $1;
+	$event{'dtstart'} = $2;
+	}
+elsif ($line =~ /^DTEND:(.*)$/) {
+	$event{'dtend'} = $1;
+	}
+elsif ($line =~ /^DTEND;TZID=(.*?):(.*)$/) {
+	$event{'tzid'} = $1;
+	$event{'dtend'} = $2;
+	}
+elsif ($line =~ /^DESCRIPTION:(.*)$/) {
+	my $description = $1;
+	$description =~ s/\\n/<br>/g;
+	$description =~ s/\\//g;
+	unshift(@{$event{'description'}}, $description);
+	}
+elsif ($line =~ /^DESCRIPTION;LANGUAGE=([a-z]{2}-[A-Z]{2}):(.*)$/) {
+	my $description = $2;
+	$description =~ s/\\n/<br>/g;
+	$description =~ s/\\//g;
+	unshift(@{$event{'description'}}, $description);
+	}
+elsif ($line =~ /^LOCATION.*?:(.*)$/) {
+	$event{'location'} = $1;
+	}
+elsif ($line =~ /^ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=(.*?):mailto:(.*)$/ ||
+	$line =~ /^ATTENDEE;.*CN=(.*?);.*mailto:(.*)$/ ||
+	$line =~ /^ATTENDEE:mailto:(.*)$/) {
+	push(@{$event{'attendees'}}, { 'name' => $1, 'email' => $2 });
+	}
+elsif ($line =~ /^ORGANIZER;CN=(.*?):(?:mailto:)?(.*)$/) {
+	$event{'organizer_name'} = $1;
+	$event{'organizer_email'} = $2;
+	}
+};
+# Read the ICS file lines or just use the lines
+my $ics_file_lines =
+	-r $calendar_file ?
+		&read_file_lines($calendar_file, 1) :
+		[ split(/\r?\n/, $calendar_file) ];
+# Process each line of the ICS file
+foreach my $ics_file_line (@$ics_file_lines) {
+	# Check if the line is a continuation of the previous line
+	if ($ics_file_line =~ /^[ \t](.*)$/) {
+		$line .= $1; # Concatenate with the previous line
+		}
+	else {
+		# Process the previous line
+		$process_line->($line) if ($line);
+		$line = $ics_file_line; # Start a new line
+		}
+	}
+# Process the last line
+$process_line->($line) if ($line);
+# Return the list of events
+return \@events;
+}
+
+# get_calendar_data(&calendars)
+# Returns HTML for all parsed calendars
+sub get_calendar_data
+{
+my ($calendars) = @_;
+my @calendars = @{$calendars};
+$calendars = { };
+if (@calendars) {
+	# Fonts for our HTML
+	$calendars->{'html'} .= &theme_fonts()
+		if (defined(&theme_fonts));
+	my $theme_css_inline;
+	$theme_css_inline = &theme_css_inline('calendar')
+		if (defined(&theme_css_inline));
+	# CSS for HTML version
+	$calendars->{'html'} .= <<STYLE;
+<style>
+.calendar-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    border: 1px solid #99999933;
+    margin-bottom: 4px;
+    font-family: 'RobotoLocal',arial,helvetica,clean,sans-serif !important;
+  }
+  .calendar-table-inner {
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+  .calendar-table td {
+    padding: 5px;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .calendar-table .calendar-cell {
+    background-color: #99999916;
+    text-align: center;
+    vertical-align: top;
+    padding: 2px;
+    padding-top: 24px;
+    padding-bottom: 24px;
+    width: 100px;
+    min-width: 100px;
+    font-weight: bold;
+  }
+  .calendar-month {
+    font-size: 19px;
+    color: #1d72ff;
+    text-align: center;
+    padding: 2px 8px;
+  }
+  .calendar-day {
+    font-size: 19px;
+    text-align: center;
+    padding: 4px 8px;
+  }
+  .calendar-week {
+    font-size: 13px;
+    border-top: 1px dotted #999999aa;
+    padding: 6px;
+    display: inline-block;
+  }
+  .calendar-details h2 {
+    margin: 0;
+    font-size: 15px;
+  }
+  .calendar-details p {
+    margin: 4px 0;
+  }
+  .calendar-details .title {
+    font-size: 16px;
+  }
+  .calendar-details .detail strong {
+    opacity: 0.83;
+    white-space: nowrap;
+  }
+  .calendar-details .detail + .desc p:first-child {
+    margin-top: 0;
+  }
+  details.calendar-details {
+    font-size: 87%;
+    display: inline-block;
+    margin-left: 9px;
+  }
+  .calendar-details > .calendar-table-inner .detail:has(strong),
+  .calendar-details > .calendar-table-inner .detail strong,
+  .calendar-details > .calendar-table-inner .detail + td {
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  details.calendar-details summary {
+    cursor: help;
+  }
+  details.calendar-details tr:has(>.detail+td:empty),
+  .calendar-details tr:has(>.detail+td:empty) {
+    display: none;
+  }
+  $theme_css_inline
+</style>
+STYLE
+	foreach my $calendar (@calendars) {
+		my $title = $calendar->{'summary'} || $calendar->{'description'};
+		my $orginizer = $calendar->{'organizer_name'};
+		my @attendees;
+		foreach my $a (@{$calendar->{'attendees'}}) {
+			push(@attendees, { name => $a->{'name'},
+					   email => $a->{'email'} });
+			}
+		my $who = join(", ", map { $_->{'name'} } @attendees);
+		if ($who && $orginizer) {
+			$who .= ", ${orginizer}*";
+			}
+		elsif ($orginizer) {
+			$who = "${orginizer}*";
+			}
+		# HTML version
+		$calendars->{'html'} .= <<HTML;
+<table class="calendar-table">
+  <tr>
+    <td class="calendar-cell">
+      <div class="calendar-block">
+        <div class="calendar-month">
+          $calendar->{'_obj_dtstart_local_time'}->{'month'}
+        </div>
+        <div class="calendar-day">
+          $calendar->{'_obj_dtstart_local_time'}->{'day'}
+        </div>
+        <div class="calendar-week">
+          $calendar->{'_obj_dtstart_local_time'}->{'week'}
+        </div>
+      </div>
+    </td>
+    <td class="calendar-details">
+      <table class="calendar-table-inner">
+        <tr>
+          <td class="title" colspan="2">
+            <strong>$title</strong>
+          </td>
+        </tr>
+        <tr>
+          <td class="detail">
+            <strong>$text{'view_ical_when'}</strong>
+          </td>
+          <td>$calendar->{'dtwhen_local'}</td>
+        </tr>
+        <tr>
+          <td class="detail">
+            <strong>$text{'view_ical_where'}</strong>
+          </td>
+          <td>$calendar->{'location'}</td>
+        </tr>
+        <tr>
+          <td class="detail">
+            <strong>$text{'view_ical_who'}</strong>
+          </td>
+          <td>$who</td>
+        </tr>
+      </table>
+      <details class="calendar-details">
+        <summary data-resize="iframe"></summary>
+        <table class="calendar-table-inner">
+          <tr>
+            <td class="detail">
+              <strong>$text{'view_ical_orginizertime'}</strong>
+            </td>
+            <td>$calendar->{'dtwhen'}</td>
+          </tr>
+          <tr>
+            <td class="detail">
+              <strong>$text{'view_ical_orginizername'}</strong>
+            </td>
+            <td>$calendar->{'organizer_name'}</td>
+          </tr>
+          <tr>
+            <td class="detail">
+              <strong>$text{'view_ical_orginizeremail'}</strong>
+            </td>
+            <td>$calendar->{'organizer_email'}</td>
+          </tr>
+          <tr>
+            <td class="detail">
+              <strong>$text{'view_ical_attendees'}</strong>
+            </td>
+            <td class="desc">@{[join('', map {
+                "<p>$_->{'name'}<br>$_->{'email'}</p>"
+                } @attendees)]}</td>
+          </tr>
+          <tr>
+            <td class="detail">
+              <strong>$text{'view_ical_desc'}</strong>
+            </td>
+            <td class="desc">@{[join('<br>',
+                @{$calendar->{'description'}})]}</td>
+          </tr>
+        </table>
+      </details>
+    </td>
+  </tr>
+</table>
+HTML
+		# Text version
+		my %textical = (
+			'view_ical' => $title,
+			'view_ical_when' => $calendar->{'dtwhen_local'},
+			'view_ical_where' => $calendar->{'location'},
+			'view_ical_who' => $who
+			);
+		my $max_label_length = 0;
+		foreach my $key (sort keys %textical) {
+			my $label_length = length($text{$key});
+			if ($label_length > $max_label_length) {
+				$max_label_length = $label_length;
+				}
+			}
+		$calendars->{'text'} = "=" x 79 . "\n";
+		foreach my $key (sort keys %textical) {
+			my $label = $text{$key};
+			my $value = $textical{$key};
+			my $spaces .= " " x ($max_label_length - length($label));
+			$calendars->{'text'} .= "$label$spaces : $value\n";
+			}
+		$calendars->{'text'} .= "=" x 79 . "\n";
+		}
+	}
+return $calendars;
 }
 
 1;

@@ -5,7 +5,8 @@ use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
 require './time-lib.pl';
-our (%in, %text, %config, %access, $base_remote_user, $get_hardware_time_error);
+our (%in, %text, %config, %access, $base_remote_user,
+     $get_hardware_time_error, $cronyd_name);
 
 my ($rawdate, $rawhwdate, %system_date, $rawtime, %hw_date, $txt);
 $txt = "";
@@ -103,7 +104,7 @@ if ($support_hwtime) {
 		print &tabletime(&hlink($text{'hw_title'}, "hardware_time"),
 				 0, %hw_date);
 		print &ui_submit($text{'action_save'}, "action");
-		if (support_hwtime()) {
+		if ($support_hwtime) {
 			print &ui_submit($text{'action_sync_s'}, "action");
 			}
 		print &ui_form_end();
@@ -152,7 +153,8 @@ if ($access{'timezone'} && &has_timezone()) {
 	print &ui_tabs_end_tab();
 	}
 
-if ( ( !$access{ 'sysdate' } && &has_command( "date" ) || !$access{ 'hwdate' } && &has_command( "hwclock" ) ) && $access{'ntp'} )
+if (((!$access{'sysdate'} && &has_command("date")) ||
+     (!$access{'hwdate'} && $support_hwtime)) && $access{'ntp'})
 {
 	# Show time server input
 	print &ui_tabs_start_tab("mode", "sync");
@@ -174,13 +176,14 @@ if ( ( !$access{ 'sysdate' } && &has_command( "date" ) || !$access{ 'hwdate' } &
 					$config{'timeserver_hardware'}));
 			}
 		}
-	if (&foreign_require('init') && &init::action_status('chronyd') > 0 && &has_command("chronyc")) {
-		my $chronyd_running = &init::status_action('chronyd');
-		my $chronyd_run_atboot = &init::action_status('chronyd');
-		my $ui_hiddens = &ui_hidden("sync_service_name", "chronyd");
+	if (&foreign_require('init') &&
+	    &init::action_status($cronyd_name) > 0 && &has_command("chronyc")) {
+		my $chronyd_running = &init::status_action($cronyd_name);
+		my $chronyd_run_atboot = &init::action_status($cronyd_name);
+		my $ui_hiddens = &ui_hidden("sync_service_name", $cronyd_name);
 		$ui_hiddens .= &ui_hidden("timeserver", $config{'timeserver'})
 			if (!$ntp_support);
-		print &ui_table_row(&text('index_tabsync2', 'chronyd'),
+		print &ui_table_row(&text('index_tabsync2', $cronyd_name),
 			$ui_hiddens.
 			&ui_radio("sync_service_status",
 			(($chronyd_run_atboot == 2 && $chronyd_running) ? 2 :
@@ -230,6 +233,9 @@ if ( ( !$access{ 'sysdate' } && &has_command( "date" ) || !$access{ 'hwdate' } &
 		   'weekdays' => '*' };
 	print &ui_table_row(undef,
 		&webmincron::show_times_input($job), 2);
+
+	# Show ctrl help
+	print &ui_table_row(undef, &ui_note($text{'index_ctrl'}, 0), 2);
 
 	print &ui_table_end();
 	print &ui_form_end([ [ "action", $text{'index_sync'} ] ]);

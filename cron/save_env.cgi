@@ -5,13 +5,16 @@
 require './cron-lib.pl';
 &error_setup($text{'env_err'});
 &ReadParse();
+$access{'env'} || &error($text{'env_ecannot'});
 
 @jobs = &list_cron_jobs();
 if ($in{'new'}) {
+	$access{'create'} || &error($text{'save_ecannot2'});
 	$job = { };
 	}
 else {
 	$oldjob = $jobs[$in{'idx'}];
+	$oldjob && $oldjob->{'name'} || &error($text{'env_egone'});
 	$job->{'file'} = $oldjob->{'file'};
 	$job->{'line'} = $oldjob->{'line'};
 	}
@@ -37,6 +40,9 @@ foreach $f (@files) { &lock_file($f); }
 # Check and parse inputs
 if ($in{'name'} !~ /^\S+$/) {
 	&error($text{'save_ename'});
+	}
+if ($in{'value'} =~ /\r|\n/) {
+	&error($text{'save_evalue'});
 	}
 if (!$in{'user'}) {
 	&error($text{'save_euser'});

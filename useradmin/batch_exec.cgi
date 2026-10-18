@@ -15,11 +15,7 @@ if ($in{'source'} == 0) {
 	$data =~ /\S/ || &error($text{'batch_efile'});
 	}
 elsif ($in{'source'} == 1) {
-	open(LOCAL, "<$in{'local'}") || &error($text{'batch_elocal'});
-	while(<LOCAL>) {
-		$data .= $_;
-		}
-	close(LOCAL);
+	$data = &read_batch_local_file($in{'local'});
 	}
 elsif ($in{'source'} == 2) {
 	$data = $in{'text'};
@@ -392,7 +388,8 @@ foreach $line (split(/[\r\n]+/, $data)) {
 		# Delete his home directory
 		if ($in{'delhome'} &&
 		    $user->{'home'} &&
-		    $user->{'home'} !~ /^\/+$/) {
+		    $user->{'home'} !~ /^\/+$/ &&
+		    $access{'delhome'}) {
 			&delete_home_directory($user);
 			}
 
@@ -517,8 +514,9 @@ foreach $line (split(/[\r\n]+/, $data)) {
 		    $user{'home'} ne '/' && $olduser{'home'} ne '/') {
 			if (-d $olduser{'home'} && !-e $user{'home'}) {
 				local $out = &backquote_logged(
-					"mv \"$olduser{'home'}\" ".
-					"\"$user{'home'}\" 2>&1");
+					"mv ".quotemeta($olduser{'home'}).
+					" ".quotemeta($user{'home'}).
+					" 2>&1");
 				if ($?) { &error(&text('batch_emove',
 						 $lnum, $out)); }
 				}
@@ -665,4 +663,3 @@ foreach my $f ('min', 'max', 'warn', 'inactive', 'expire', 'change') {
 	}
 return undef;
 }
-

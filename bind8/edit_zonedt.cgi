@@ -6,7 +6,7 @@ no warnings 'redefine';
 no warnings 'uninitialized';
 our (%access, %text, %in, %config, $in);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 
 &ReadParse();
 my $zone = &get_zone_name_or_error($in{'zone'}, $in{'view'});
@@ -127,7 +127,7 @@ if (&have_dnssec_tools_support()) {
 				print "<br>\n<br>\n";
 	
 				if ((($lsdnssec=dt_cmdpath('lsdnssec')) ne '')) {
-					my $cmd = "$lsdnssec -z $dom $rrfile";
+					my $cmd = "$lsdnssec -z ".quotemeta($dom)." $rrfile";
 					my $out = &backquote_command("$cmd");
 					print &ui_textarea("lsdnssec", $out, 12, 80, "soft", 0,
 								   "readonly style='width:90%'");

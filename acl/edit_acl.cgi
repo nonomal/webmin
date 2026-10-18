@@ -6,7 +6,7 @@ use strict;
 use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
-require './acl-lib.pl';
+require './acl-lib.pl';    ## no critic
 our (%in, %text, %config, %access, $base_remote_user, %gconfig);
 &ReadParse();
 $access{'acl'} || &error($text{'acl_emod'});
@@ -28,6 +28,7 @@ else {
 
 my %minfo = $in{'mod'} ? &get_module_info($in{'mod'})
 		       : ( 'desc' => $text{'index_global'} );
+%minfo || &error($text{'acl_emod2'});
 my $below = &text($in{'group'} ? 'acl_title3' : 'acl_title2', 
 	          "<tt>".&html_escape($who)."</tt>",
 	          "<tt>$minfo{'desc'}</tt>");
@@ -47,15 +48,6 @@ else {
 	print &ui_hidden("_acl_user", $who),"\n";
 	}
 print &ui_table_start(&text('acl_options', $minfo{'desc'}), "width=100%", 4);
-
-if ($in{'mod'} && $in{'user'} && &supports_rbac($in{'mod'}) &&
-    !$gconfig{'rbacdeny_'.$who}) {
-	# Show RBAC option
-	print &ui_table_row($text{'acl_rbac'},
-		&ui_radio("rbac", $maccess{'rbac'} ? 1 : 0,
-			[ [ 1, $text{'acl_rbacyes'} ],
-			  [ 0, $text{'no'} ] ]), 3);
-	}
 
 # Load custom ACL library
 my $mdir = &module_root_directory($in{'mod'});

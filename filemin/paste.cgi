@@ -6,7 +6,8 @@ use Cwd 'abs_path';
 
 get_paths();
 
-open(my $fh, "<".&get_paste_buffer_file()) or die "Error: $!";
+open(my $fh, "<".&get_paste_buffer_file())
+	or die "Error: $!";
 my @arr = <$fh>;
 close($fh);
 my $act = $arr[0];
@@ -14,32 +15,71 @@ my $dir = $arr[1];
 chomp($act);
 chomp($dir);
 $from = abs_path($base.$dir);
-if ($cwd eq $from) {
-    print_errors($text{'error_pasting_nonsence'});
-} else {
-    my @errors;
-    for(my $i = 2;$i <= scalar(@arr)-1;$i++) {
-        chomp($arr[$i]);
-        if ($act eq "copy") {
-            if (-e "$cwd/$arr[$i]") {
-                push @errors, "$cwd/$arr[$i] $text{'error_exists'}";
-            } else {
-                system("cp -r ".quotemeta("$from/$arr[$i]").
-		       " ".quotemeta($cwd)) == 0 or push @errors, "$from/$arr[$i] $text{'error_copy'} $!";
-            }
-        }
-        elsif ($act eq "cut") {
-            if (-e "$cwd/$arr[$i]") {
-                push @errors, "$cwd/$arr[$i] $text{'error_exists'}";
-            } else {
-                system("mv ".quotemeta("$from/$arr[$i]").
-		       " ".quotemeta($cwd)) == 0 or push @errors, "$from/$arr[$i] $text{'error_cut'} $!";
-            }
-        }
-    }
-    if (scalar(@errors) > 0) {
-        print_errors(@errors);
-    } else {
-        &redirect("index.cgi?path=".&urlize($path));
-    }
-}
+if (!defined($from)) {
+	print_errors($text{'error_pasting_nonsence'});
+	}
+elsif ($cwd eq $from) {
+	print_errors($text{'error_pasting_nonsence'});
+	}
+else {
+	&check_allowed_path($from);
+	my @errors;
+	for (my $i = 2; $i <= scalar(@arr) - 1; $i++) {
+		chomp($arr[$i]);
+		my $name = $arr[$i];
+		my $source;
+		{
+		local $cwd = $from;
+		$source = &validate_filename_path($name);
+		}
+		my ($target_name) = fileparse($source);
+		my $target = &validate_filename_path($target_name);
+		if ($act eq "copy") {
+			if (-e $target) {
+				push @errors,
+					"$target " .
+					"$text{'error_exists'}";
+				}
+			else {
+				# Capture command errors for display in the browser
+				my $out = &backquote_logged("cp -r ".
+					quotemeta($source).
+					" ".quotemeta($cwd)." 2>&1");
+				if ($?) {
+					push @errors, &html_escape(
+						"$source $text{'error_copy'} $out");
+					}
+				}
+			}
+		elsif ($act eq "cut") {
+			if (!can_move($source, $from, $cwd)) {
+				push @errors,
+					"$source" .
+					" - " .
+					"$text{'error_move'}";
+				}
+			elsif (-e $target) {
+				push @errors,
+					"$target " .
+					"$text{'error_exists'}";
+				}
+			else {
+				# Capture command errors for display in the browser
+				my $out = &backquote_logged("mv ".
+					quotemeta($source).
+					" ".quotemeta($cwd)." 2>&1");
+				if ($?) {
+					push @errors, &html_escape(
+						"$source $text{'error_cut'} $out");
+					}
+				}
+			}
+		}
+	if (scalar(@errors) > 0) {
+		print_errors(@errors);
+		}
+	else {
+		&redirect(
+			"index.cgi?path=".&urlize($path));
+		}
+	}

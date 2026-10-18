@@ -600,16 +600,21 @@ return &ui_link("list_mail.cgi?user=$_[0]&folder=$_[1]->{'index'}",$text{'mail_r
 # Returns the address to use when sending email from a script
 sub get_from_address
 {
-local $host = &get_from_domain();
+my $host = &get_from_domain();
+my $rv;
 if ($config{'webmin_from'} =~ /\@/) {
-	return $config{'webmin_from'};
+	$rv = $config{'webmin_from'};
 	}
 elsif (!$config{'webmin_from'}) {
-	return "webmin\@$host";
+	$rv = "webmin-noreply\@$host";
 	}
 else {
-	return "$config{'webmin_from'}\@$host";
+	$rv = "$config{'webmin_from'}\@$host";
 	}
+if ($config{'webmin_from_name'}) {
+	$rv = "\"$config{'webmin_from_name'}\" <$rv>";
+	}
+return $rv;
 }
 
 # get_from_domain()
@@ -771,7 +776,7 @@ elsif ($config{'mail_system'} == 5) {
 	opendir(DOMS, "$config{'vpopmail_dir'}/domains");
 	foreach my $d (readdir(DOMS)) {
 		next if ($d =~ /^\./);
-		local @uinfos = &parse_vpopmail_users("-D $d", $d);
+		local @uinfos = &parse_vpopmail_users("-D ".quotemeta($d), $d);
 		if ($filter) {
 			@uinfos = grep { &$filter(@$_) } @uinfos;
 			}
@@ -783,7 +788,7 @@ elsif ($config{'mail_system'} == 5) {
 return @rv;
 }
 
-# parse_vpopmail_users(command, domain)
+# parse_vpopmail_users(escaped-command, domain)
 sub parse_vpopmail_users
 {
 local %attr_map = ( "passwd" => 1,
@@ -838,7 +843,7 @@ elsif ($config{'mail_system'} == 4) {
 elsif ($config{'mail_system'} == 5) {
 	# Find in vpopmail
 	local ($box, $dom) = split(/\@/, $_[0]);
-	local @users = &parse_vpopmail_users($_[0], $dom);
+	local @users = &parse_vpopmail_users(quotemeta($_[0]), $dom);
 	return @{$users[0]};
 	}
 }
@@ -1204,6 +1209,7 @@ print &ui_columns_start(\@hcols, 100, 0, \@tds);
 # Show rows for actual mail messages
 my $i = 0;
 foreach my $mail (@mail) {
+	next if (!$mail);
 	local $idx = $mail->{'idx'};
 	local $cols = 0;
 	local @cols;
@@ -1221,7 +1227,7 @@ foreach my $mail (@mail) {
 		}
 
 	# Date and size columns
-	push(@cols, &eucconv_and_escape(&simplify_date($mail->{'header'}->{'date'})));
+	push(@cols, &simplify_date($mail->{'header'}->{'date'}));
 	push(@cols, &nice_size($mail->{'size'}, 1024));
 	$rowtds[$#cols] .= " data-sort=".&parse_mail_date($mail->{'header'}->{'date'});
 
@@ -1287,4 +1293,3 @@ return $rv;
 }
 
 1;
-

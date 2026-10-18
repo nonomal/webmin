@@ -7,7 +7,10 @@
 #
 # << Here are all options seen in Postfix sample-misc.cf >>
 
-require './postfix-lib.pl';
+require './postfix-lib.pl';    ## no critic
+use strict;
+use warnings;
+our ($default, $no_, $none, $postfix_version, $v, %access, %text, @v);
 
 
 $access{'general'} || &error($text{'general_ecannot'});
@@ -86,10 +89,11 @@ print &ui_table_start($text{'general_title_others'}, "width=100%", 4);
 
 &option_radios_freefield("mydomain", 40, $text{'opts_mydomain_default'});
 
-&option_radios_freefield("mynetworks", 60, $text{'opts_mynetworks_default'});
+&option_radios_freefield("mynetworks", 60, $text{'default'});
 
 &option_select("mynetworks_style",
-	       [ [ "subnet", $text{'opts_mynetworks_subnet'} ],
+	       [ [ &resolve_current_value("mynetworks_style"), $text{'default'} ],
+		 [ "subnet", $text{'opts_mynetworks_subnet'} ],
 		 [ "class", $text{'opts_mynetworks_class'} ],
 		 [ "host", $text{'opts_mynetworks_host'} ] ]);
 

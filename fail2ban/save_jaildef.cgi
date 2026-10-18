@@ -30,11 +30,28 @@ foreach my $ip (@ignoreips) {
 		&error($text{'jail_eignoreip'});
 	}
 
+# Validate incremental banning options when submitted by a supported UI
+my @increment_fields = ("bantime_increment", "bantime_factor",
+	"bantime_maxtime", "bantime_overalljails", "bantime_rndtime");
+my $increment_submitted = scalar(grep { exists($in{$_}) } @increment_fields);
+if ($increment_submitted && !&supports_bantime_increment()) {
+	&error($text{'jail_eincrement_version'});
+	}
+if ($increment_submitted) {
+	my $err = &validate_bantime_increment_inputs(\%in);
+	&error($text{$err}) if ($err);
+	}
+
 
 # Update the jail
 &lock_all_config_files();
+my %defaults = (
+	'maxretry' => 3,
+	'findtime' => 600,
+	'bantime' => 600,
+	);
 foreach my $f ("maxretry", "findtime", "bantime") {
-	&save_directive($f, $in{$f."_def"} ? undef : $in{$f}, $jail);
+	&save_directive($f, $in{$f."_def"} ? $defaults{$f} : $in{$f}, $jail);
 	}
 &save_directive("ignoreip", @ignoreips ? join(" ", @ignoreips) : undef, $jail);
 &save_directive("backend", $in{'backend'} || undef, $jail);
@@ -42,6 +59,7 @@ foreach my $f ("maxretry", "findtime", "bantime") {
 		$jail);
 &save_directive("banaction", $in{'banaction'} || undef, $jail);
 &save_directive("protocol", $in{'protocol'} || undef, $jail);
+&save_bantime_increment_options(\%in, $jail) if ($increment_submitted);
 &unlock_all_config_files();
 
 &webmin_log("jaildef");

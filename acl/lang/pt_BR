@@ -20,7 +20,6 @@ index_modgroups=Módulos de grupo $1
 index_sync=Configurar sincronização de usuários Unix
 index_unix=Configurar autenticação de usuários Unix
 index_sessions=Visualizar sessões de login
-index_rbac=Configurar RBAC
 index_delete=Excluir os itens selecionados
 
 edit_title=Editar Usuários Webmin
@@ -79,9 +78,6 @@ edit_hide=Ocultar não usados
 edit_switch=Trocar para usuário
 edit_return=Usuário Webmin
 edit_return2=Grupo Webmin
-edit_rbacdeny=modo de acesso RBAC
-edit_rbacdeny0=RBAC só controla os ACL's do módulo selecionado
-edit_rbacdeny1=RBAC controla todos os módulos e ACL's
 edit_global=Permissões para todos os módulos
 edit_templock=Temporariamente trancado
 edit_temppass=Forçar mudança no próximo acesso
@@ -155,8 +151,6 @@ acl_title3=Para grupo $1 em $2
 acl_options=Opções de controle de acesso $1
 acl_config=Pode editar configuração de módulo ?
 acl_reset=Retroceder ao acesso total
-acl_rbac=Usar configurações de controle do RBAC?
-acl_rbacyes=Sim (sobrescreve as configurações abaixo)
 
 acl_uall=Todos os usuários
 acl_uthis=Este usuário
@@ -238,7 +232,7 @@ gsave_edup=O nome do grupo já está em uso
 
 convert_title=Converter Usuários
 convert_ecannot=Você não tem permissão para converte usuários Unix
-convert_nogroups=Nenhum grupo do Webmin foi definido em seu sistema. Pelo menos um grupo deve ser criao antes 
+convert_nogroups=Nenhum grupo do Webmin foi definido em seu sistema. Pelo menos um grupo deve ser criao antes
 convert_desc=Este formulário lhe permite converter usuários Unix existentes para usuários Webmin. As permissões de cada usuário Webmin serão determinadas pelo grupo selecionado abaixo.
 convert_0=Todos os usuários
 convert_1=Somente os usuários
@@ -272,15 +266,9 @@ sync_ecannot=Você não tem permissão para configurar a sincronização de usu�
 
 unix_title=Autenticação de Usuários Unix
 unix_err=Falha ao salvar autenticação Unix
-unix_desc=Esta página lhe permite configurar o Webmin para validar tentativas de login na lista ed usuários do sistema e PAM. Isto pode ser útil caso você possua um grande número de usuários Unix existentes aos quais você queira dar acesso ao Webmin.
-unix_def=Permitir o login somente aos usuário do Webmin
-unix_sel=Permitir que os usuários Unix listados abaixo façam login ..
 unix_mode=Permitir
 unix_mall=Todos os usuários
-unix_group=Membros do grupo..
-unix_user=Permitir o login para quaisquer usuários Unix com permissões do usuário
 unix_who=Usuário ou Grupo
-unix_to=Como usuário Webmin
 unix_ecannot=Você não tem permissão para configurar a autenticação de usuários Unix
 unix_epam=A autenticação Unix não está disponível devido ao módulo Perl <tt>Authen::PAM</tt> não estar instalado ou não estar funcionando adequadamente.
 unix_all=Permitir todos os usuários Unix
@@ -303,7 +291,7 @@ unix_esudomod=O módulo Perl $1 necessário para autenticação <tt>sudo</tt> n�
 sessions_title=Sessões de Login Atuais
 sessions_id=ID de Sessão
 sessions_user=Usuário Webmin
-sessions_login=Logado em 
+sessions_login=Logado em
 sessions_host=Endereço IP
 sessions_lview=Visualizar logs ..
 
@@ -316,13 +304,6 @@ hide_clone=($1 Clone)
 
 switch_euser=Você não tem permissão para alternar para este usuário
 switch_eold=Sessão existente não encontrada!
-
-rbac_title=Configurar RBAC
-rbac_desc=A integração do Webmin com RBAC permite que o módulo de usuário e permissões ACL sejam determinadas por uma base de dados RBAC (Role Based Access Control ? Controle de Acesso Baseado em Papéis), em vez dos arquivos de configuração do Webmin. Com o suporte RBAC ativado, qualquer usuário que tenha a opção <b>$edit_rbacdeny1</b> marcada vai ter suas permissões determinadas pelo RBAC, e não pelas configurações de acesso do Webmin.
-rbac_esolaris=RBAC só é compatível com Solaris, no momento, e não pode ser usado neste sistema $1.
-rbac_eperl=O módulo Perl $1 necessário para integração com RBAC não está instalado. <a href=$2'>Clique aqui</a> para instalá-lo agora.
-rbac_ecpan=Você não tem acesso aos módulos Perl do Webmin para instalar o módulo $1, necessário para a integração RBAC.
-rbac_ok=A integração RBAC está disponível neste sistema, e pode ser ativada individualmente para cada usuário na página de edição de usuários Webmin.
 
 udeletes_err=Erro ao remover usuários.
 udeletes_enone=Nenhum selecionado

@@ -1,5 +1,14 @@
+access_desc=Webmin można skonfigurować tak, aby odmawiał lub zezwalał na dostęp tylko z określonych adresów IP, używając tego formularza. Można również wprowadzić nazwy hostów (takie jak foo.bar.com) i sieci IP (takie jak 10.254.3.0 lub 10.254.1.0/255.255.255.128 lub 10.254.1.0/25 lub 10.254.1.5-10.254.97.127 lub 2001:DB8::A0BC:0001 lub 2001:DB8::/32). Należy ograniczyć dostęp do Webmin do zaufanych adresów, zwłaszcza jeśli jest on dostępny z Internetu. W przeciwnym razie każdy, kto odgadnie Twoje hasło, będzie miał pełną kontrolę nad Twoim systemem.
 access_ecidr8=Rozmiar sieci IPv6 „$1” musi być podzielny przez 8
+access_trust_lvl=Poziom zaufania dla nagłówków proxy
+access_trust_lvl0=Nie, nie ufaj żadnym nagłówkom z serwera proxy
+access_trust_lvl1=Tak, zaufaj zdalnemu adresowi IP dostarczanemu przez serwery proxy
+access_trust_lvl2=Tak, ufaj zdalnemu adresowi IP i certyfikatowi SSL dostarczanemu przez serwery proxy
 
+bind_websocport=Numer portu bazowego dla połączeń WebSockets
+bind_websocport_none=Domyślne (555)
+bind_websoc_host=Nazwa hosta dla połączeń WebSocket
+bind_websoc_host_auto=Automatyczny
 bind_maxconns=Maksymalna łączna liczba jednoczesnych połączeń
 bind_maxconns_per_ip=Maksymalna liczba jednoczesnych połączeń na adres IP
 bind_maxconns_per_net=Maksymalna liczba jednoczesnych połączeń na sieć
@@ -11,6 +20,7 @@ bind_maxlifetime_def=Nieograniczony
 bind_maxlifetime_secs=sekundy
 bind_emaxlifetime=Maksymalny czas życia procesu musi być liczbą większą niż 60 sekund
 
+log_trust=Rejestrować adres IP klienta, gdy jest za serwerem proxy?
 log_global=&lt;Działania globalne&gt;
 log_sched=Zalogować zaplanowane funkcje?
 log_email=Wyślij zarejestrowane działania pocztą e-mail na adres
@@ -21,8 +31,9 @@ ui_nice_size_type=Użyj binarnych jednostek miary (KiB, MiB, GiB zamiast KB, MB,
 
 mods_checksig=Sprawdź plik podpisu dla pobranych modułów?
 
-os_incorrect=System operacyjny $1 został zaktualizowany do wersji $2 
+os_incorrect=System operacyjny $1 został zaktualizowany do wersji $2
 os_release_notes=Informacje o wydaniu
+os_fix=Potwierdź wykryte zmiany
 
 lang_title=Język i lokalizacja
 lang_title2=Język i ustawienia regionalne Webmina
@@ -34,32 +45,44 @@ lang_dateformat_dd/mm/yyyy=dd/mm/rrrr (tj. 16.09.2001)
 lang_dateformat_mm/dd/yyyy=mm/dd/rrrr (tj. 16.09.2001)
 lang_dateformat_yyyy/mm/dd=rrrr/mm/dd (tj. 2001/09/16)
 
+ssl_enforce=Wymuś SSL
 ssl_hsts=Wymuszaj SSL za pomocą nagłówka HSTS
 ssl_ekey2=Plik klucza prywatnego SSL $1 nie zawiera klucza formatu PEM
 ssl_ecert2=Plik certyfikatu SSL $1 nie zawiera certyfikatu formatu PEM
 ssl_edhparams=Nie udało się wygenerować pliku parametrów PFS DH : $1
 ssl_epfsversion=PFS wymaga wersji Net::SSLeay $2, ale ten system ma tylko wersję $1
-ssl_tablets=Szyfrujmy
-ssl_letsdesc=Let's Encrypt to bezpłatny, zautomatyzowany i otwarty urząd certyfikacji, którego można użyć do wygenerowania certyfikatu SSL do użytku przez Webmin.
-ssl_letserr=Niestety, Let's Encrypt nie może być używany w twoim systemie: $1.
-ssl_letserr2=Alternatywnie sprawdź stronę <a href='$1'>konfiguracji modułu</a>, aby upewnić się, że używasz poprawnej ścieżki do polecenia <tt>letsencrypt</tt>.
+ssl_tablets=Dostawca SSL
+ssl_letsdesc=Ten formularz umożliwia złożenie wniosku o zaufany certyfikat SSL dla Webmin u dostawcy zgodnego ze standardem ACME, takiego jak Let's Encrypt.
+ssl_letserr=Niestety, ten system nie może zażądać certyfikatów od dostawcy SSL: $1.
+ssl_letserr2=Alternatywnie sprawdź stronę <a href='$1'>konfiguracji modułu</a>, aby upewnić się, że używasz prawidłowej ścieżki do skonfigurowanego polecenia klienta ACME.
 
-ssl_letsdesc2=Na tej stronie można zażądać nowego certyfikatu, który zastąpi inne skonfigurowane obecnie w Webmin. Jednak usługa Let's Encrypt wymaga potwierdzenia własności domeny certyfikatu przez sprawdzenie, czy ten system obsługuje witrynę internetową dla domeny. Odbywa się to poprzez umieszczenie małego pliku tymczasowego w katalogu dokumentów witryny.
+ssl_letsdesc2=Nowy certyfikat zastąpi ten obecnie skonfigurowany w Webminie. Przed jego wydaniem dostawca ACME musi zweryfikować kontrolę nad każdą nazwą hosta, używając pliku tymczasowego w katalogu dokumentów witryny lub tymczasowego rekordu DNS TXT.
 ssl_letsheader=Opcje nowego certyfikatu SSL
 ssl_letsdoms=Nazwy hostów dla certyfikatu
-ssl_webroot=Katalog główny witryny dla pliku sprawdzania poprawności
-ssl_webroot0=Host wirtualny Apache zgodny z nazwą hosta
-ssl_webroot1=Inny wirtualny host Apache
-ssl_webroot2=Inny katalog
-ssl_webroot3=Użyj domen DNS do weryfikacji
+ssl_subset=Pominąć niemożliwe do zweryfikowania nazwy hostów?
+ssl_letsmode=Metoda walidacji domeny
+ssl_letsmode0=Host wirtualny Apache pasujący do nazwy hosta
+ssl_letsmode1=Wybrany wirtualny host Apache
+ssl_letsmode2=Inny katalog dokumentów serwera WWW
+ssl_letsmode3=Walidacja DNS przy użyciu BIND
+ssl_letsmode4=Wbudowany serwer WWW Certbot
+ssl_certbotprehook=Niemniej jednak ostrzeżenie to można zignorować, jeśli polecenie pre-request zatrzyma usługę korzystającą z portu 80 przed uruchomieniem Certbota.
 ssl_letsok=Poproś o certyfikat
 ssl_letsonly=Po prostu zaktualizuj odnowienie
 ssl_usewebmin=Skopiować nowy klucz i certyfikat do Webmina?
 ssl_letsrenew=Miesiące między automatycznym przedłużeniem
 ssl_letsnotrenew=Odnów tylko ręcznie
-ssl_staging=Zaszyfrujmy serwer
-ssl_staging0=Real
+ssl_staging=Serwer dostawcy
+ssl_staging0=Produkcja
 ssl_staging1=Inscenizacja (tylko test)
+ssl_acmeopts=Ustawienia dostawcy
+ssl_acmeextra=Pokaż ustawienia zaawansowane
+ssl_acmedir=Niestandardowy adres URL katalogu ACME
+ssl_acmedirdesc=Jeśli ustawione, zastępuje domyślny serwer dostawcy powyżej.
+ssl_acmekid=Identyfikator klucza powiązania konta zewnętrznego
+ssl_acmekiddesc=Opcjonalnie. Niektórzy dostawcy ACME wymagają tego dodatkowo oprócz adresu URL katalogu.
+ssl_acmehmac=Klucz HMAC powiązania konta zewnętrznego
+ssl_acmehmacdesc=Opcjonalnie. Wymaga natywnego klienta Certbot w przypadku użycia.
 
 newkey_ecns=Nie wprowadzono nazw serwerów
 
@@ -71,23 +94,39 @@ upgrade_setuppackage=Uruchamianie <tt>pkgadd</tt> w celu aktualizacji Webmina ..
 
 ca_alt=Dodatkowe domeny
 
+session_blockhost=Blokuj adresy IP klientów z więcej niż $1 nieudanymi logowaniami przez $2 sekundy.
+session_remember=Czy zaoferować opcję „zapamiętaj mnie” dla stałych logowań?
 session_utmp=Zapisywać loginy i wylogowania w <tt>utmp</tt>?
+session_rpc_timeout=Przekroczono limit czasu sesji RPC
+session_erpc_timeout=Brak limitu czasu sesji RPC lub musi to być liczba większa niż 0
 session_md5off=Określ automatycznie
 session_md5on=Użyj formatu mieszającego <tt>MD5</tt>
 session_sha512=Użyj formatu mieszającego <tt>SHA512</tt>
 session_yescrypt=Użyj formatu mieszającego <tt>yescrypt</tt>
 session_emd5mod=Nie można użyć formatu mieszającego MD5, ponieważ moduł Perl $1 nie jest zainstalowany
-session_esha512mod=Nie można użyć formatu skrótu SHA512, ponieważ moduł Perl $1 nie jest zainstalowany
-session_eyescrypt=Nie można użyć formatu haszującego yescrypt, ponieważ moduł Perl $1 nie jest zainstalowany
+session_edigestcrypt=Nie można użyć formatu haszującego $1, ponieważ funkcja systemowa <tt>crypt</tt> go nie obsługuje
 session_passapi=Włączyć interfejs API zdalnej zmiany hasła?
 session_passapi0=API wyłączone
 session_passapi1=API włączone dla użytkowników Uniksa
-session_passurl=Po włączeniu hasła użytkowników można zmienić za pomocą żądania POST do $1 
+session_passurl=Po włączeniu hasła użytkowników można zmienić za pomocą żądania POST do $1
+session_forgot=Czy zezwolić na odzyskiwanie zapomnianego hasła?
+session_eforgot=Odzyskiwanie zapomnianego hasła nie może zostać włączone, chyba że najpierw zostanie usunięty moduł wtyczki <b>Virtualmin Password Recovery</b>. Można to zrobić na stronie <a href='$1'>Webmin Modules</a>.
+session_passresetdesc=Ograniczanie odzyskiwania hasła
+session_passreset=Zablokuj klientów z liczbą żądań większą niż $1 przez $2 minuty
+session_epassreset_failures=Brakujące lub nieprawidłowe żądania blokowania
+session_passtimeoutdesc=Wygaśnięcie łącza resetowania hasła
+session_passtimeout=Link do resetowania hasła wygasa za $1 minut
+session_epassreset_timeout=Brak lub nieprawidłowy limit czasu resetowania hasła
 
 log_fixrepo=Naprawiono repozytorium Webmina
-log_letsencrypt=Zażądałem nowego certyfikatu SSL od Let's Encrypt
-log_letsencryptdns=Utworzono Let's Encrypt DNS record dla $1
-log_letsencryptcleanup=Usunięto Let's Encrypt DNS record dla $1
+log_letsencrypt=Zażądano nowego certyfikatu SSL od dostawcy ACME
+log_letsencryptdns=Utworzono rekord DNS ACME dla $1
+log_letsencryptcleanup=Usunięto rekord DNS ACME dla $1
+
+themes_configure=Otwórz stronę konfiguracji motywu
+
+themes_ok=Motyw został pomyślnie zmieniony, przekierowanie zostało zakończone pomyślnie ..
+themes_ok2=Nakładka motywu została pomyślnie zmieniona, przekierowanie zostało zakończone pomyślnie ..
 
 lock_mode=Pliki do zablokowania przez Webmin
 lock_s=sekundy
@@ -136,6 +175,7 @@ notify_yumrepo=Twój system używa starego repozytorium Webmin YUM. Kliknij poni
 notify_aptrepo=Twój system używa starego repozytorium Webmin APT. Kliknij poniższy przycisk, aby przełączyć się na nowy <tt>stable</tt> adres URL repozytorium <tt>$1</tt>, aby użyć naszego najnowszego klucza podpisu i zapewnić dostęp do zaktualizowanych wersji Webmina.
 notif_fixreponow=Zaktualizuj repozytorium Webmina
 
+status_temp2=Zbieraj dane dotyczące temperatury procesora i prędkości wentylatorów?
 status_err=Nie udało się zapisać kolekcji stanu w tle
 status_einterval=Interwał zbierania musi być liczbą całkowitą
 
@@ -143,6 +183,10 @@ sendmail_port=Port SMTP
 sendmail_ssl0=Nigdy nie szyfruj
 sendmail_ssl1=Zawsze używaj TLS
 sendmail_ssl2=Przełącz za pomocą STARTTLS
+sendmail_name=Nazwa wyświetlana
+sendmail_toaddr=Domyślny adres docelowy powiadomień
+sendmail_to_def=Nie ustawiono
+sendmail_etoaddr=Brakujący lub nieprawidłowo sformatowany adres docelowy
 sendmail_url=Adres URL Webmin do użytku w wiadomościach e-mail
 sendmail_url_def=Domyślnie ($1)
 sendmail_url_custom=Niestandardowy adres URL
@@ -159,11 +203,15 @@ web_eredirpref=Prefiks musi zaczynać się od ukośnika
 web_eredirpref2=Prefiks nie może zawierać spacji
 web_redirssl=Przekieruj SSL
 
+twofactor_totp=Uwierzytelniacz TOTP
 twofactor_eusers=Nie można wyłączyć uwierzytelniania dwuskładnikowego, ponieważ obecnie zarejestrowani są następujący użytkownicy : $1
+twofactor_qrcode=Wprowadź tajny kod $1 w aplikacji TOTP lub zeskanuj poniższy kod QR.
+twofactor_qrcode_manual=Wprowadź kod tajny $1 w aplikacji TOTP i skonfiguruj go ręcznie, ponieważ generowanie kodów QR nie jest obsługiwane w tym systemie.
+twofactor_etotptoken=Token TOTP musi być liczbą
 
-letsencrypt_title=Zaszyfrujmy żądanie certyfikatu
-letsencrypt_err=Nie można poprosić o certyfikat
-letsencrypt_ecmds=W systemie nie znaleziono ani polecenia klienta Let's Encrypt <tt>certbot</tt>, ani <tt>python</tt>
+letsencrypt_title=Żądanie certyfikatu dostawcy SSL
+letsencrypt_err=Nie udało się zażądać certyfikatu
+letsencrypt_ecmds=W systemie nie znaleziono ani natywnego polecenia klienta ACME <tt>certbot</tt>, ani polecenia <tt>python</tt>
 letsencrypt_epythonmod=Moduł Pythona $1 wymagany przez wbudowanego klienta Let's Encrypt nie jest zainstalowany
 letsencrypt_epythonver=Nie udało się pobrać wersji Pythona : $1
 letsencrypt_epythonver2=Wymagana jest wersja Python $1 lub wyższa, ale masz tylko wersję $2.
@@ -171,6 +219,12 @@ letsencrypt_certbot=Certbot
 letsencrypt_edroot=Wirtualny host Apache $1 nie ma katalogu dokumentów!
 letsencrypt_edom=Brakująca lub nieprawidłowa nazwa domeny
 letsencrypt_erenew=Brakujący lub nienumeryczny interwał odnawiania
+letsencrypt_eacmedir=Brakujący lub nieprawidłowy adres URL katalogu ACME
+letsencrypt_eeabdir=W przypadku korzystania z funkcji zewnętrznego powiązania konta należy wprowadzić adres URL katalogu ACME
+letsencrypt_eeabpair=Należy wprowadzić zarówno identyfikator klucza zewnętrznego powiązania konta, jak i klucz HMAC
+letsencrypt_eeabnative=Powiązanie konta zewnętrznego można wykorzystać wyłącznie po zainstalowaniu natywnego klienta ACME
+letsencrypt_ecertbotport=Walidacja Certbota wymaga wolnego portu TCP 80, ale jest on już używany przez inną usługę. Zatrzymaj tę usługę tymczasowo lub użyj walidacji webroot lub DNS.
+letsencrypt_ecertbotwebmin=Nie można użyć walidacji Certbot, gdy Webmin nasłuchuje na porcie TCP 80. Zamiast tego należy użyć walidacji webroot lub DNS albo przenieść Webmin na inny port.
 letsencrypt_ewebroot=Katalog dokumentów witryny nie istnieje
 letsencrypt_evhost=Nie znaleziono hosta wirtualnego pasującego $1
 letsencrypt_efull=Oczekiwany pełny plik certyfikatu $1 nie został znaleziony
@@ -178,6 +232,7 @@ letsencrypt_ecert=Oczekiwany plik certyfikatu $1 nie został znaleziony
 letsencrypt_ekey=Oczekiwany plik klucza prywatnego $1 nie został znaleziony
 letsencrypt_doing=Żądanie nowego certyfikatu dla $1, przy użyciu katalogu witryny $2 ..
 letsencrypt_doingdns=Żądanie nowego certyfikatu dla $1, przy użyciu weryfikacji DNS.
+letsencrypt_doingcertbot=Żądanie nowego certyfikatu dla $1 przy użyciu serwera WWW Certbot ..
 letsencrypt_failed=.. żądanie nie powiodło się : $1
 letsencrypt_done=.. żądanie powiodło się!
 letsencrypt_show=Nowy certyfikat i klucz prywatny zostały zapisane w następujących plikach :
@@ -192,8 +247,36 @@ letsencrypt_echain=Nie udało się pobrać powiązanego certyfikatu : $1
 letsencrypt_echain2=Łańcuch certyfikatu pobrany z $1 jest pusty
 letsencrypt_ecsr=Nie udało się wygenerować CSR : $1
 letsencrypt_ekeygen=Nie udało się wygenerować klucza prywatnego : $1
-letsencrypt_enative=Natywny klient Let's Encrypt (certbot) był wcześniej używany w tym systemie i musi być używany do wszystkich przyszłych żądań certyfikatów
-letsencrypt_eacmedns=Tylko oficjalny klient Let's Encrypt obsługuje sprawdzanie poprawności na podstawie DNS
+letsencrypt_enative=Natywny klient ACME (certbot) był wcześniej używany w tym systemie i musi być używany w przypadku wszystkich przyszłych żądań certyfikatów
+letsencrypt_eacmedns=Tylko natywny klient ACME obsługuje walidację opartą na DNS
+letsencrypt_eacmecertbot=Tylko natywny klient ACME obsługuje walidację Certbot
 
 announce_hide=Ukryj to ogłoszenie
 alert_hide=Ukryj alert
+
+os_eol=Powiadomienie o odliczaniu EOL systemu operacyjnego
+os_eol_countdown=miesiące wcześniej
+os_eol_ecountdown=Miesiąc przed odliczaniem musi być liczbą całkowitą
+os_eol_until=Dopóki
+os_eol_type1=Konserwacja systemu operacyjnego i wsparcie w zakresie bezpieczeństwa
+os_eol_type2=Rozszerzona konserwacja zabezpieczeń systemu operacyjnego
+os_eol_years=lata
+os_eol_year=rok
+os_eol_months=miesiące
+os_eol_month=miesiąc
+os_eol_weeks=tygodnie
+os_eol_week=tydzień
+os_eol_days=dni
+os_eol_day=dzień
+os_eol_hours=godziny
+os_eol_hour=godzina
+os_eol_minutes=minuty
+os_eol_minute=minuta
+os_eol_seconds=sekundy
+os_eol_second=drugi
+os_eol_reached=Osiągnięto EOL
+os_eol_reaching=EOL w
+os_eol_reaching2=EOL wkrótce
+
+qr_err=Nie udało się wygenerować kodu QR
+qr_estr=Brakuje ciągu kodu QR!

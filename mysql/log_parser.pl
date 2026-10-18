@@ -14,8 +14,20 @@ if ($action eq 'stop') {
 elsif ($action eq 'start') {
 	return $text{'log_start'};
 	}
+elsif ($action eq 'restart') {
+	return $text{'log_restart'};
+	}
 elsif ($action eq 'cnf') {
 	return $text{'log_cnf'};
+	}
+elsif ($action eq 'binlogs') {
+	return $text{'log_binlogs'};
+	}
+elsif ($action eq 'purgebinlogs') {
+	return $text{'log_purgebinlogs'};
+	}
+elsif ($action eq 'flushbinlogs') {
+	return $text{'log_flushbinlogs'};
 	}
 elsif ($action eq 'ssl') {
 	return $text{'log_ssl'};

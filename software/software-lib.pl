@@ -80,7 +80,9 @@ if ($two eq "\037\235") {
 		}
 	local $temp = $_[0] =~ /\/([^\/]+)\.Z/i ? &tempname("$1")
 						: &tempname();
-	local $out = `uncompress -c $_[0] 2>&1 >$temp`;
+	local $qfile = quotemeta($_[0]);
+	local $qtemp = quotemeta($temp);
+	local $out = &backquote_command("uncompress -c $qfile >$qtemp 2>&1");
 	unlink($_[0]) if ($_[1]);
 	if ($?) {
 		unlink($temp);
@@ -95,7 +97,9 @@ elsif ($two eq "\037\213") {
 		}
 	local $temp = $_[0] =~ /\/([^\/]+)\.gz/i ? &tempname("$1")
 						 : &tempname();
-	local $out = `gunzip -c $_[0] 2>&1 >$temp`;
+	local $qfile = quotemeta($_[0]);
+	local $qtemp = quotemeta($temp);
+	local $out = &backquote_command("gunzip -c $qfile >$qtemp 2>&1");
 	unlink($_[0]) if ($_[1]);
 	if ($?) {
 		unlink($temp);
@@ -121,6 +125,7 @@ print &ui_table_start($text{'edit_details'}, "width=100%", 4,
 # Package description
 if ($pinfo[2]) {
 	$desc = &html_escape(&entities_to_ascii($pinfo[2]));
+	$desc =~ s/^\s*\.\s*$//gm;
 	$desc =~ s/\r?\n/&nbsp;<br>/g;
 	print &ui_table_row($text{'edit_desc'}, "<tt>$desc</tt>", 3);
 	}
@@ -149,6 +154,13 @@ print &ui_table_row($text{'edit_arch'},
 if ($pinfo[6]) {
 	# Install date
 	print &ui_table_row($text{'edit_inst'}, $pinfo[6]);
+	}
+
+if ($pinfo[7]) {
+	# URL
+	print &ui_table_row($text{'edit_url'},
+		&ui_link(&quote_escape($pinfo[7], "'"), &html_escape($pinfo[7]),
+			 undef, " target='_blank'"));
 	}
 
 print &ui_table_end();
@@ -190,10 +202,13 @@ if (@deps) {
 		$dtable .= &ui_columns_row(\@row);
 		}
 	$dtable .= &ui_columns_end();
-	print &ui_hidden_table_start($text{'edit_deps'}, "width=100%", 2,
-				     "deps", 0);
-	print &ui_table_row(undef, $dtable, 2);
-	print &ui_hidden_table_end();
+
+	# Print proper details box
+	print &ui_details({
+		title   => $text{edit_deps},
+		class   => 'default default-lg',
+		content => $dtable,
+		html    => 1 });
 	}
 
 return @pinfo;
@@ -285,6 +300,24 @@ if ($rel1 ne "" && $rel2 ne "" && $config{'package_system'} eq 'rpm') {
 return &compare_version_numbers($_[0], $_[1]);
 }
 
+# is_package_file(package, version, path)
+# Returns 1 if the exact path is listed for the selected package.
+sub is_package_file
+{
+my ($package, $version, $path) = @_;
+return 0 if (!defined($package) || $package eq "" ||
+	     !defined($path) || $path eq "");
+
+# Match the path against the package manager's file list.
+local %files;
+my $count = &check_files($package, $version);
+for(my $i = 0; $i < $count; $i++) {
+	return 1 if (defined($files{$i,'path'}) &&
+		     $files{$i,'path'} eq $path);
+	}
+return 0;
+}
+
 # check_package_system()
 # Returns an error message if some command needed by the selected package
 # management system is missing.
@@ -329,4 +362,3 @@ return $err;
 }
 
 1;
-

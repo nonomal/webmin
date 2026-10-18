@@ -3,29 +3,28 @@
 # Output the contents of a file
 
 require './software-lib.pl';
-$p = $ENV{'PATH_INFO'};
+&ReadParse();
+$p = $in{'file'};
+
+# Only show files listed for the selected package.
+&is_package_file($in{'package'}, $in{'version'}, $p) ||
+	&error($text{'list_enotpackage'});
+
+if (!open(FILE, "<", $p)) {
+	print "Content-type: text/plain\n\n";
+	print &text('list_eview', $p, $!),"\n";
+	exit;
+	}
+my @st = stat(FILE);
 
 # Try to guess type from filename
 if ($p =~ /\.([^\.\/]+)$/) {
-	$ext = lc($1);
-	&get_miniserv_config(\%miniserv);
-	open(MIME, "<$miniserv{'mimetypes'}");
-	while(<MIME>) {
-		s/#.*//g;
-		if (/(\S+)\s+(.*)/) {
-			foreach $e (split(/\s+/, $2)) {
-				if ($ext eq $e) {
-					$type = $1;
-					last;
-					}
-				}
-			}
-		}
-	close(MIME);
+	$type = &guess_mime_type($p);
 	}
 if (!$type) {
 	# No idea .. use the 'file' command
-	if (`file "$p"` =~ /text|script/) {
+	my $out = &backquote_command("file ".quotemeta($p)." 2>/dev/null");
+	if ($out =~ /text|script/) {
 		$type = "text/plain";
 		}
 	else {
@@ -34,18 +33,10 @@ if (!$type) {
 	}
 
 # Dump the file
-if (!open(FILE, "<$p")) {
-	print "Content-type: text/plain\n\n";
-	print &text('list_eview', $p, $!),"\n";
+print "Content-length: $st[7]\n";
+print "Content-type: $type\n\n";
+my $bs = &get_buffer_size();
+while(read(FILE, $buf, $bs)) {
+	print $buf;
 	}
-else {
-	@st = stat($p);
-	print "Content-length: $st[7]\n";
-	print "Content-type: $type\n\n";
-	my $bs = &get_buffer_size();
-	while(read(FILE, $buf, $bs)) {
-		print $buf;
-		}
-	close(FILE);
-	}
-
+close(FILE);

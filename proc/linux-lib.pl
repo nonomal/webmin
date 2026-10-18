@@ -18,10 +18,12 @@ return $get_ps_version_cache;
 sub list_processes
 {
 local($pcmd, $line, $i, %pidmap, @plist, $dummy, @w, $_);
+local @want = grep { /^\d+$/ } @_;
+return ( ) if (@_ && !@want);
 local $ver = &get_ps_version();
 if ($ver && $ver < 2) {
 	# Old version of ps
-	$pcmd = join(' ' , @_);
+	$pcmd = join(' ' , @want);
 	open(PS, "ps aulxhwwww $pcmd 2>/dev/nul |");
 	for($i=0; $line=<PS>; $i++) {
 		chop($line);
@@ -82,7 +84,7 @@ else {
 			# Skip process ID 0 or ps command
 			$i--; next;
 			}
-		if (@_ && &indexof($w[4], @_) < 0) {
+		if (@want && &indexof($w[4], @want) < 0) {
 			# Not interested in this PID
 			$i--; next;
 			}
@@ -128,7 +130,8 @@ return @plist;
 sub renice_proc
 {
 return undef if (&is_readonly_mode());
-local $out = &backquote_logged("renice $_[1] -p $_[0] 2>&1");
+local $out = &backquote_logged("renice ".quotemeta($_[1])." -p ".
+			       quotemeta($_[0])." 2>&1");
 if ($?) { return $out; }
 return undef;
 }
@@ -156,6 +159,51 @@ $out = &backquote_command("fuser $files 2>/dev/null");
 $out =~ s/[^0-9 ]//g;
 $out =~ s/^\s+//g; $out =~ s/\s+$//g;
 return split(/\s+/, $out);
+}
+
+# linux_openpty()
+# Linux-only, pure-Perl openpty(3)-style helper.
+# Returns master fh, slave fh, slave path, and ioctl value on success
+sub linux_openpty
+{
+
+require Fcntl; Fcntl->import(qw(O_RDWR));
+require POSIX; POSIX->import(qw(setsid));
+
+# Linux ioctl values
+my $TIOCGPTN   = 0x80045430;	# get pty number
+my $TIOCSPTLCK = 0x40045431;	# unlock slave
+my $TIOCSCTTY  = 0x540E;	# set controlling tty
+
+my ($ptmx, $ttyfh);
+
+# Open PTY master
+sysopen($ptmx, "/dev/ptmx", O_RDWR) || return;
+
+# Unlock the slave
+my $lock = pack("i", 0);
+ioctl($ptmx, $TIOCSPTLCK, $lock) || do {
+	close($ptmx);
+	return;
+	};
+
+# Get slave number
+my $buf = pack("i", 0);
+ioctl($ptmx, $TIOCGPTN, $buf) || do {
+	close($ptmx);
+	return;
+	};
+my $n = unpack("i", $buf);
+
+# Open PTY slave
+my $tty = "/dev/pts/$n";
+open($ttyfh, "+<", $tty) || do {
+	close($ptmx);
+	return;
+	};
+
+# Return master fh, slave fh, slave path, ioctl value
+return ($ptmx, $ttyfh, $tty, $TIOCSCTTY);
 }
 
 # get_new_pty()
@@ -357,9 +405,10 @@ sub open_process_trace
 local $fh = time().$$;
 local $sc;
 if (@{$_[1]}) {
-	$sc = "-e trace=".join(",", @{$_[1]});
+	$sc = "-e trace=".join(",", map { quotemeta($_) } grep { $_ ne "" }
+				 @{$_[1]});
 	}
-local $tpid = open($fh, "strace -t -p $_[0] $sc 2>&1 |");
+local $tpid = open($fh, "strace -t -p ".quotemeta($_[0])." $sc 2>&1 |");
 $line = <$fh>;
 return { 'pid' => $_[0],
 	 'tpid' => $tpid,
@@ -501,6 +550,13 @@ my @fans;
 my @fans_all;
 my @cpu_thermisters;
 my $cpu_broadcoms;
+my @sensors;
+my $ceil = sub {
+	my $x = shift;
+	$x //= 0;
+	my $i = int($x);
+	return $i + ($x > $i);
+	};
 if (&has_command("sensors")) {
     my ($cpu, $cpu_aux, $cpu_unnamed, $cpu_package, $cpu_broadcom, $cpu_amd);
     my $fh = "SENSORS";
@@ -510,10 +566,16 @@ if (&has_command("sensors")) {
     &open_execute_command($fh, "sensors </dev/null 2>/dev/null", 1);
 
     while (<$fh>) {
-
+	# Buffer output for later use
+	push(@sensors, $_);
         # CPU full output must have either voltage or fan data
-        my ($cpu_volt) = $_ =~ /(?|in[\d+]\s*:\s+([\+\-0-9\.]+)\s+V|cpu\s+core\s+voltage\s*:\s+([0-9\.]+)\s+V)/i;
-        my ($cpu_fan_num, $cpu_fan_rpm) = $_ =~ /(?|fan([\d+])\s*:\s*([0-9]+)\s*rpm|cpu(\s)fan\s*:\s*([0-9]+)\s*rpm|cpu\s+fan\s*:\s*([0-9]+)\s*rpm)/i;
+        my ($cpu_volt) = $_ =~ /(?|in\d+\s*:\s+([\+\-0-9\.]+)\s+V|cpu\s+core\s+voltage\s*:\s+([0-9\.]+)\s+V)/i;
+	# CPU fans should be always labeled as 'cpu fan' or 'cpu_fan' or 'cpufan'
+	# and/or 'cpu fan 1', 'cpu_fan1', 'cpufan1', 'cpu_fan 2', 'cpu_fan2',
+	# 'cpufan2' etc.
+        my ($cpu_fan_num, $cpu_fan_rpm) =
+		$_ =~ /^\s*cpu[_ ]?fan(?:[_ ]?(\d+))?(?:[_ ]?(?:speed|rpm))?\s*:\s*(\d+)\s*rpm/i;
+	$cpu_fan_num //= 1 if (defined($cpu_fan_rpm));
         $cpu++ if ($cpu_volt || $cpu_fan_num);
 
         # First just store fan data for any device if any
@@ -530,7 +592,7 @@ if (&has_command("sensors")) {
 
         # AMD CPU Thermisters #1714
         if ($cpu && /thermistor\s+[\d]+:\s+[+-]([\d]+)/i) {
-            my $temp = int($1);
+            my $temp = $ceil->($1);
             push(@cpu_thermisters,
                  {  'core' => scalar(@cpu_thermisters) + 1,
                     'temp' => $temp
@@ -547,13 +609,13 @@ if (&has_command("sensors")) {
             # Common CPU multi
             if (/Core\s+(\d+):\s+([\+\-][0-9\.]+)/) {
 
-                # Prioritise package core temperature
+                # Prioritize package core temperature
                 # data over motherboard but keep fans
                 @cpu = (), $cpu_aux++
                     if ($cpu_aux & 1 && grep { $_->{'core'} eq $1 } @cpu);
                 push(@cpu,
                      {  'core' => $1,
-                        'temp' => int($2)
+                        'temp' => $ceil->($2)
                      });
                 }
 
@@ -561,7 +623,7 @@ if (&has_command("sensors")) {
             elsif (/CPU:\s+([\+\-][0-9\.]+)/) {
                 push(@cpu,
                      {  'core' => 0,
-                        'temp' => int($1)
+                        'temp' => $ceil->($1)
                      });
                 }
             }
@@ -573,7 +635,7 @@ if (&has_command("sensors")) {
             next if ($cpu_aux && !$cpu_unnamed);
 
             # CPU types
-            ($cpu_broadcom) = $_ =~ /cpu_thermal-virtual-[\d]+/i if (!$cpu_broadcom);
+            ($cpu_broadcom) = $_ =~ /(cpu|soc)_thermal-virtual-[\d]+/i if (!$cpu_broadcom);
             ($cpu_amd)      = $_ =~ /\w[\d]{2}temp-pci/i         if (!$cpu_amd);
 
             # Full CPU output #1253
@@ -583,7 +645,7 @@ if (&has_command("sensors")) {
                 if (/temp(\d+):\s+([\+][0-9\.]+).*?[Cc]\s+.*?[=+].*?\)/) {
                     push(@cpu,
                          {  'core' => (int($1) - 1),
-                            'temp' => int($2)
+                            'temp' => $ceil->($2)
                          });
                     }
 
@@ -592,7 +654,7 @@ if (&has_command("sensors")) {
                        /(cpu\s+temperature)\s*:\s+([\+][0-9\.]+).*?[Cc]/i) {
                     push(@cpu,
                          {  'core' => 0,
-                            'temp' => int($2)
+                            'temp' => $ceil->($2)
                          });
                     }
                 }
@@ -601,8 +663,8 @@ if (&has_command("sensors")) {
             elsif ($cpu_broadcom) {
                 if (/temp(\d+):\s+([\+\-][0-9\.]+)/) {
                     push(@cpu,
-                         {  'core' => $1,
-                            'temp' => int($2)
+                         {  'core' => int($1),
+                            'temp' => $ceil->($2)
                          });
                     $cpu_broadcoms++;
                     }
@@ -610,7 +672,7 @@ if (&has_command("sensors")) {
                     $cpu_unnamed++;
                     push(@cpu,
                          {  'core' => $cpu_unnamed,
-                            'temp' => int($2)
+                            'temp' => $ceil->($2)
                          });
                     $cpu_broadcoms++;
                     }
@@ -623,15 +685,23 @@ if (&has_command("sensors")) {
                 if (/Tdie:\s+([\+\-][0-9\.]+)/) {
                     push(@cpu,
                          {  'core' => 0,
-                            'temp' => int($1),
+                            'temp' => $ceil->($1),
                          });
                     }
 
                 # Like in #1481 #1484
                 elsif (/temp(\d+):\s+([\+\-][0-9\.]+).*?[Cc]\s+.*?[=+].*?\)/) {
                     push(@cpu,
-                         {  'core' => (int($1) - 1),
-                            'temp' => int($2),
+                         {  'core' => ($ceil->($1) - 1),
+                            'temp' => $ceil->($2),
+                         });
+                    }
+		
+		# Like in #2140
+                elsif (/Tctl:\s*([\+\-][0-9\.]+)/) {
+                    push(@cpu,
+                         {  'core' => 0,
+                            'temp' => $ceil->($1),
                          });
                     }
                 }
@@ -677,35 +747,135 @@ if (!@fans && @cpu && @fans_all &&
 			}
 		}
 	}
+
+# Fall back logic for CPU temperature and fans spread over multiple
+# devices like Raspberry Pi #2517 and #2539 #2545
+if (@cpu || !@fans) {
+	# - Look for least two ISA voltage rails anywhere
+	# - See a CPU temp under cpu_thermal
+	# - Optionally grab a fan RPM under *fan-isa-*
+	my $can_fallback =
+		(!@cpu && (grep { /^\s*cpu_thermal/i } @sensors)) ||
+		(@cpu && !@fans && (grep { /fan-isa-\d+/i } @sensors));
+	return (\@cpu, \@fans) if (!$can_fallback);
+	my ($chip, $bus); 	# isa|pci|platform|virtual
+	my $isa_volt;
+	my ($cpu_temp, $fan_rpm);
+	for (@sensors) {
+		# Chip header
+		if (/^([A-Za-z0-9_+\-]+)-(isa|pci|platform|virtual)-[\w:]+\s*$/) {
+			$chip = lc $1;
+			$bus  = lc $2;
+			next;
+			}
+
+		# Count real voltage rails
+		if (defined $bus && $bus eq 'isa' &&
+		    /\bin\d+\s*:\s*([+\-]?[0-9]+(?:\.[0-9]+)?)\s*V\b/i) {
+			$isa_volt++;
+			next;
+			}
+
+		# CPU temperature
+		if (defined $chip && $chip =~ /^cpu_thermal/i &&
+		    /\b(?:CPU(?:\s*Temp)?|temp\d+)\s*:\s*([+\-]?[0-9]+(?:\.[0-9]+)?)\s*°?C\b/i) {
+			$cpu_temp //= $1;
+			next;
+			}
+
+		# Fan RPM
+		if (defined $chip && $chip =~ /fan$/i &&
+		    /\b(?:cpu[_ ]?fan(?:\s*\d+)?(?:\s*(?:speed|rpm))?|fan\d+)\s*:\s*(\d+)\s*rpm\b/i) {
+			my $rpm = $1 + 0;
+			$fan_rpm = $rpm if (!$fan_rpm || $rpm > $fan_rpm);
+			next;
+			}
+		}
+
+	# Update only what's missing
+	push(@cpu, { 'core' => 1, 'temp' => $ceil->($cpu_temp) })
+		if (!@cpu && defined $cpu_temp && $isa_volt >= 2);
+	push(@fans, { 'fan' => 1, 'rpm' => $fan_rpm })
+		if (!@fans && defined $fan_rpm);
+	}
+
 return (\@cpu, \@fans);
 }
 
 # get_cpu_io_usage()
-# Returns a list containing CPU user, kernel, idle, io and VM time, and IO
-# blocks in and out
+# Returns a list of "us", "sy", "id", "wa", "st", "bi", "bo" that match `vmstat`
+# output by using /proc with much lower overhead
 sub get_cpu_io_usage
 {
-my ($nodelay) = @_;
-my $interval;
-$interval = " 1 2"
-	if (!$nodelay);
-my ($out, @lines, @w);
-if (&has_command("vmstat")) {
-        $out = &backquote_command("vmstat$interval 2>/dev/null");
-        @lines = split(/\r?\n/, $out);
-        @w = split(/\s+/, $lines[$#lines]);
-        shift(@w) if ($w[0] eq '');
-        if ($w[8] =~ /^\d+$/ && $w[9] =~ /^\d+$/) {
-            return ( @w[12..16], $w[8], $w[9] );
-        }
-    } elsif (&has_command("dstat")) {
-        $out = &backquote_command("dstat 1 1 2>/dev/null");
-        @lines = split(/\r?\n/, $out);
-        @w = split(/[\s|]+/, $lines[$#lines]);
-        shift(@w) if ($w[0] eq '');
-        return( @w[0..4], @w[6..7]);
-    }
-    return undef;
+# Read CPU counters from /proc/stat, the first "cpu" line
+my $read_cpu = sub {
+	open(my $fh, '<', '/proc/stat') or return;
+	my $line = <$fh>;
+	close($fh);
+	return unless defined $line && $line =~ /^cpu\s+/;
+	my @v = split /\s+/, $line; shift @v;
+	push @v, (0) x (8-@v) if @v < 8;
+	return @v[0..7];
+};
+
+# Read pgpgin/pgpgout from /proc/vmstat (in KB). Note, that all modern kernels,
+# /proc/vmstat pgpgin/pgpgout are KiB (scale=1); not as *pages*, so no need to
+# convert deltas
+my $read_io = sub {
+	open(my $fh, '<', '/proc/vmstat') or return (undef, undef);
+	my ($in, $out);
+	while (my $l = <$fh>) {
+		$in  = $1 if !defined $in  && $l =~ /^pgpgin\s+(\d+)/;
+		$out = $1 if !defined $out && $l =~ /^pgpgout\s+(\d+)/;
+		last if defined $in && defined $out;
+		}
+	close($fh);
+	return ($in, $out);   	   # KB on kernels 2.6.18+; no conversion needed
+};
+
+# Sample A
+my @cb = $read_cpu->() or return;
+my ($pgin_b, $pgout_b) = $read_io->();
+
+# Sleep half a second
+select(undef, undef, undef, 0.5);
+
+# Sample B
+my @ca = $read_cpu->() or return;
+my ($pgin_a, $pgout_a) = $read_io->();
+
+# CPU percentages as in vmstat
+my @d = map { $ca[$_] - $cb[$_] } 0..7;
+for (@d) { $_ = 0 if $_ < 0 }
+my $tot = 0; $tot += $_ for @d[0..7];
+return if !$tot;
+
+# Calculate percentages
+my $us = int( (($d[0] + $d[1]) / $tot) * 100 );          # user+nice
+my $sy = int( (($d[2] + $d[5] + $d[6]) / $tot) * 100 );  # system+irq+softirq
+my $id = int( ( $d[3] / $tot ) * 100 );                  # idle
+my $wa = int( ( $d[4] / $tot ) * 100 );                  # iowait
+my $st = int( ( $d[7] / $tot ) * 100 );                  # steal
+
+# Calculate bi/bo in KiB/s over half a second
+my ($bi, $bo) = (0, 0);
+$bi = int( (($pgin_a  // 0) - ($pgin_b  // 0)) / 0.5 );
+$bo = int( (($pgout_a // 0) - ($pgout_b // 0)) / 0.5 );
+return ($us, $sy, $id, $wa, $st, $bi, $bo);
+}
+
+# has_disk_stats()
+# Returns 1 if disk I/O stats are available
+sub has_disk_stats
+{
+return 1;
+}
+
+# has_network_stats()
+# Returns 1 if network I/O stats are available
+sub has_network_stats
+{
+return 1;
 }
 
 1;

@@ -5,7 +5,7 @@ use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 # Globals from bind8-lib.pl
 our (%access, %text, %in);
 
@@ -20,12 +20,22 @@ my $desc = &ip6int_to_net(&arpa_to_ip($zone->{'name'}));
 
 my $file = &make_chroot(&absolute_path($zone->{'file'}));
 my @errs = &check_zone_records($zone);
+my @warns = &check_zone_warnings($zone);
 if (@errs) {
 	# Show list of errors
 	print "<b>",&text('check_errs', "<tt>$file</tt>"),"</b><p>\n";
 	print "<ul>\n";
 	foreach my $e (@errs) {
-		print "<li>".&html_escape($e)."\n";
+		print "<li>".&html_escape($e)."</li>\n";
+		}
+	print "</ul>\n";
+	}
+elsif (@warns) {
+	# Just show warnings
+	print "<b>",&text('check_warns', "<tt>$file</tt>"),"</b><p>\n";
+	print "<ul>\n";
+	foreach my $e (@warns) {
+		print "<li>".&html_escape($e)."</li>\n";
 		}
 	print "</ul>\n";
 	}

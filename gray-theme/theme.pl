@@ -22,20 +22,18 @@ our $ui_formcount;
 $main::WRAPPER_OPEN = 0;
 $main::COLUMNS_WRAPPER_OPEN = 0;
 
+# theme_ui_print_header(subtext, header-args...)
+# Prints the page header like the core, but wraps the text under the
+# title in a span of its own, then prints the subtext block
 sub theme_ui_print_header
 {
 my ($text, @args) = @_;
+if ($args[9] ne '') {
+	# Text under the title, such as a version, gets an element of its own
+	# so the stylesheet can make it smaller
+	$args[9] = "<span class='ui_header_below'>$args[9]</span>";
+	}
 &header(@args);
-print <<EOL;
-<script>
-(function () {
-	const body = document.querySelector('body');
-	try {
-    	body && body.classList.add('$module_name');
-	} catch (e) {}
-})();
-</script>
-EOL
 print &ui_post_header($text);
 }
 
@@ -260,49 +258,269 @@ if (url.indexOf('mode=modules') > 0) {
 EOF
 }
 
+# theme_prebody(header-args...)
+# Hides the module index link on Virtualmin pages, whose menu is already
+# in the left frame
 sub theme_prebody
 {
-if ($script_name =~ /session_login.cgi/) {
-	# Generate CSS link
-	print "<link rel='stylesheet' type='text/css' href='@{[&get_webprefix()]}/unauthenticated/reset-fonts-grids-base.css'>\n";
-	print "<link rel='stylesheet' type='text/css' href='@{[&get_webprefix()]}/unauthenticated/gray-theme.css'>\n";
-	print "<!--[if IE]>\n";
-	print "<style type=\"text/css\">\n";
-	print "table.formsection, table.ui_table, table.loginform { border-collapse: collapse; }\n";
-	print "</style>\n";
-	print "<![endif]-->\n";
-	}
 if (get_module_name() eq "virtual-server") {
 	# No need for Module Index link, as we have the left-side frame
 	$tconfig{'nomoduleindex'} = 1;
 	}
 }
 
+# theme_prehead()
+# Prints the head parts of every page: the color scheme meta, the scheme
+# and frame scripts, and the links to the stylesheet and the table sorting
+# script. Also sets the body attributes the stylesheet keys on: the module
+# name as a class and the forced color scheme, if any.
 sub theme_prehead
 {
-print "<link rel='stylesheet' type='text/css' href='@{[&get_webprefix()]}/unauthenticated/reset-fonts-grids-base.css'>\n";
-print "<link rel='stylesheet' type='text/css' href='@{[&get_webprefix()]}/unauthenticated/gray-theme.css' />\n";
-print "<!--[if IE]>\n";
-print "<style type=\"text/css\">\n";
-print "table.formsection, table.ui_table, table.loginform { border-collapse: collapse; }\n";
-print "</style>\n";
-print "<![endif]-->\n";
-print "<script>\n";
-print "var rowsel = new Array();\n";
-print "</script>\n";
-print "<script type='text/javascript' src='@{[&get_webprefix()]}/unauthenticated/sorttable.js'></script>\n";
+my $pfx = &get_webprefix();
+my $scheme = &theme_color_scheme();
+print "<meta name='color-scheme' content='".($scheme || "light dark")."'>\n";
+print &theme_scheme_script($scheme);
+print &theme_frame_script();
+print "<link rel='stylesheet' type='text/css' href='$pfx/unauthenticated/".
+      "gray-theme.css?".&theme_asset_key("gray-theme.css")."'>\n";
+print "<script type='text/javascript' src='$pfx/unauthenticated/".
+      "sorttable.js?".&theme_asset_key("sorttable.js")."'></script>\n";
+my @cls = grep { $_ } ( $main::gray_theme_body_class, &get_module_name() );
+$tconfig{'inbody'} = (@cls ? "class='".join(" ", @cls)."'" : "").
+		     ($scheme ? " data-scheme='$scheme'" : "");
 }
 
+# theme_scheme_script([forced-scheme])
+# Returns the scheme bootstrap and frame-wide keyboard shortcuts. The optional
+# forced scheme is the configured default. Alt+T stores a per-tab override
+# without changing that setting, and Alt+R reloads only the content frame.
+# Scheme changes reach the frameset and both frames. An automatic scheme uses
+# its last value before first paint, follows system changes, and is checked
+# again after load.
+sub theme_scheme_script
+{
+my ($forced) = @_;
+$forced = $forced && $forced =~ /^(light|dark)$/ ? $1 : "";
+my $rv = <<'EOF';
+<script type='text/javascript'>
+/* initializeGrayTheme(): Apply the scheme and bind frame shortcuts. */
+(function() {
+var key = 'gray-theme-scheme', overrideKey = key + '-override',
+    forced = '__GRAY_THEME_FORCED_SCHEME__',
+    root = document.documentElement,
+    mq = window.matchMedia('(prefers-color-scheme: dark)'),
+    stored = null, changed = false;
+try { stored = localStorage.getItem(key); } catch(e) { }
+/* valid(value): Return whether value is a supported scheme. */
+function valid(v) { return v == 'dark' || v == 'light'; }
+/* browserScheme(): Return the scheme selected by the browser. */
+function browserScheme() { return mq.matches ? 'dark' : 'light'; }
+/* baseScheme(): Return the configured scheme or system preference. */
+function baseScheme() { return valid(forced) ? forced : browserScheme(); }
+/* getOverride(): Read this tab's override when storage is available. */
+function getOverride() {
+	try { return sessionStorage.getItem(overrideKey); }
+	catch(e) { return null; }
+	}
+/* rememberOverride(value): Store only a scheme that differs from the base. */
+function rememberOverride(v) {
+	try {
+		/* Remove an override that now matches the base. */
+		if (v == baseScheme()) sessionStorage.removeItem(overrideKey);
+		/* Keep a different choice for later pages in this tab. */
+		else sessionStorage.setItem(overrideKey, v);
+		}
+	catch(e) { }
+	}
+/* apply(value, [remember]): Apply a scheme and optionally cache it. */
+function apply(v, remember) {
+	/* Ignore malformed values from storage or another frame. */
+	if (!valid(v)) return;
+	root.setAttribute('data-scheme', v);
+	/* Update body selectors once the body exists. */
+	if (document.body) document.body.setAttribute('data-scheme', v);
+	/* Let newly loaded frames inherit the frameset scheme. */
+	if (self == top) root.style.colorScheme = v;
+	/* Do not cache a scheme relayed from another frame. */
+	if (remember !== false) {
+		try { localStorage.setItem(key, v); } catch(e) { }
+		}
+	}
+/* grayThemeApplyScheme(value, [remember]): Apply a relayed scheme. */
+window.grayThemeApplyScheme = function(v, remember) {
+	changed = true;
+	/* Save a relayed user choice as this tab's override. */
+	if (remember) rememberOverride(v);
+	apply(v, false);
+	};
+/* applyEverywhere(value): Apply a scheme across the frameset. */
+function applyEverywhere(v) {
+	changed = true;
+	rememberOverride(v);
+	apply(v);
+	try {
+		/* Relay a child-frame change to the frameset. */
+		if (top != window && top.grayThemeApplyScheme)
+			top.grayThemeApplyScheme(v, true);
+		}
+	catch(e) { }
+	/* syncFrame(name): Apply the scheme to one named frame. */
+	['left', 'right'].forEach(function(name) {
+		try {
+			var frame = top.frames[name];
+			/* Skip this document and frames that are not ready. */
+			if (frame && frame != window && frame.grayThemeApplyScheme)
+				frame.grayThemeApplyScheme(v, true);
+			}
+		catch(e) { }
+		});
+	}
+/* Prefer the tab override, configured scheme, saved scheme, then system. */
+var override = getOverride();
+apply(valid(override) ? override :
+      valid(forced) ? forced :
+      valid(stored) ? stored : browserScheme());
+/* syncBodyScheme(): Copy the root scheme to the new body. */
+document.addEventListener('DOMContentLoaded', function() {
+	apply(root.getAttribute('data-scheme'), false);
+	});
+/* onchange(): Follow system changes unless a tab override is active. */
+function onchange() {
+	var override = getOverride(), current = browserScheme();
+	/* Preserve an override that differs from the system scheme. */
+	if (valid(override) && override != current) return;
+	/* Remove an override once the system reaches the same scheme. */
+	if (valid(override)) rememberOverride(current);
+	changed = true;
+	apply(current);
+	}
+/* A configured scheme does not follow system preference changes. */
+if (!valid(forced)) {
+	/* Prefer the current media-query listener API. */
+	if (mq.addEventListener) mq.addEventListener('change', onchange);
+	/* Fall back to the older listener API. */
+	else mq.addListener(onchange);
+	}
+/* handleThemeShortcut(event): Handle Alt+T and Alt+R in any frame. */
+document.addEventListener('keydown', function(event) {
+	/* Ignore other modifiers, repeats, composition and handled events. */
+	if (event.defaultPrevented || event.repeat || event.isComposing ||
+	    !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+		return;
+	/* Alt+T toggles the palette throughout the frameset. */
+	if (event.code == 'KeyT' || event.keyCode == 84) {
+		event.preventDefault();
+		event.stopPropagation();
+		applyEverywhere(root.getAttribute('data-scheme') == 'dark' ?
+			'light' : 'dark');
+		}
+	/* Alt+R reloads content without refreshing navigation. */
+	else if (event.code == 'KeyR' || event.keyCode == 82) {
+		var frame = null;
+		try { frame = top.frames['right']; } catch(e) { }
+		/* Do not claim the browser shortcut outside the main frameset. */
+		if (!frame) return;
+		event.preventDefault();
+		event.stopPropagation();
+		try { frame.location.reload(); } catch(e) { }
+		}
+	}, true);
+/* Recheck an automatic scheme after the top-level page loads. */
+if (self == top && !valid(forced))
+	/* refreshBrowserScheme(): Recheck after all frames load. */
+	window.addEventListener('load', function() {
+		/* refreshUnchangedScheme(): Correct untouched automatic state. */
+		setTimeout(function() {
+			/* Preserve user changes and tab overrides. */
+			if (!changed && !valid(getOverride()))
+				applyEverywhere(browserScheme());
+			}, 1000);
+		});
+})();
+</script>
+EOF
+$rv =~ s/__GRAY_THEME_FORCED_SCHEME__/$forced/g;
+return $rv;
+}
+
+# theme_frame_script()
+# Returns a script for a page shown in the right frame, which tells the
+# menu frame when the page starts to leave and when the next one has
+# loaded, so the menu can show a loader in between. It does nothing in
+# the menu frame itself, in popups and outside the frameset.
+sub theme_frame_script
+{
+return <<'EOF';
+<script type='text/javascript'>
+(function() {
+var menu = null;
+try { if (parent != window) menu = parent.frames['left']; } catch(e) { }
+if (!menu || menu == window) return;
+function tell(name) { try { if (menu[name]) menu[name](); } catch(e) { } }
+window.addEventListener('pagehide', function() { tell('rightLoading'); });
+window.addEventListener('DOMContentLoaded', function() { tell('rightLoaded'); });
+})();
+</script>
+EOF
+}
+
+# theme_color_scheme()
+# Returns light or dark when the theme settings force a color scheme, or an
+# empty string to follow the browser. The setting is stored with the other
+# system information page settings, per user unless they are global.
+sub theme_color_scheme
+{
+return $main::gray_theme_scheme if (defined($main::gray_theme_scheme));
+my $file = "$config_directory/$current_theme/sections";
+my %sects;
+&read_file($file, \%sects);
+if (!$sects{'global'}) {
+	# Unless the global settings are forced on everyone, the user's own
+	# file replaces them
+	my %usects;
+	%sects = %usects if (&read_file("$file.$remote_user", \%usects));
+	}
+$main::gray_theme_scheme = $sects{'scheme'} =~ /^(light|dark)$/ ? $1 : "";
+return $main::gray_theme_scheme;
+}
+
+# theme_asset_key(file)
+# Returns the modification time of a file under unauthenticated, used as a
+# cache key in its URL so browsers pick up a changed file at once
+sub theme_asset_key
+{
+my ($file) = @_;
+my @st = stat("$theme_root_directory/unauthenticated/$file");
+return @st ? $st[9] : &get_webmin_version();
+}
+
+# theme_tag_class(tags, class)
+# Adds a class to a string of tag attributes, merging it into an existing
+# class attribute so that a tag never gets two of them
+sub theme_tag_class
+{
+my ($tags, $class) = @_;
+return "class='$class'" if (!$tags);
+return $tags if ($tags =~ s/class=(['"])([^'"]*)\1/class=$1$2 $class$1/);
+return "$tags class='$class'";
+}
+
+# theme_popup_prehead(title, ...)
+# Popup windows and the frames get the same head as ordinary pages
 sub theme_popup_prehead
 {
 return &theme_prehead();
 }
 
-# ui_table_start(heading, [tabletags], [cols], [&default-tds], [right-heading])
-# A table with a heading and table inside
+# theme_ui_table_start(heading, [tabletags], [cols], [&default-tds],
+#		       [right-heading])
+# Returns HTML for the start of a form table: a card with the heading in
+# its head row and the label and value rows in a nested table
 sub theme_ui_table_start
 {
 my ($heading, $tabletags, $cols, $tds, $rightheading) = @_;
+# Expose the column count so CSS can size the form layout.
+my $formcols = $cols || 4;
 if (! $tabletags =~ /width/) { $tabletages .= " width=100%"; }
 if (defined($main::ui_table_cols)) {
   # Push on stack, for nested call
@@ -314,16 +532,21 @@ my $rv;
 my $colspan = 1;
 
 if (!$main::WRAPPER_OPEN) {
-	$rv .= "<table class='shrinkwrapper' $tabletags>\n";
+	# A class in the table tags, such as the login form's, joins the
+	# wrapper class instead of being lost as a second class attribute
+	$rv .= "<table ".&theme_tag_class($tabletags, 'shrinkwrapper').">\n";
 	$rv .= "<tr><td>\n";
 	}
 $main::WRAPPER_OPEN++;
 $rv .= "<table class='ui_table' $tabletags>\n";
 if (defined($heading) || defined($rightheading)) {
+	# Heading row, with an optional part at the right
         $rv .= "<thead><tr>";
+	# Add the main heading when present.
         if (defined($heading)) {
                 $rv .= "<td><b>$heading</b></td>"
                 }
+	# Put optional actions or context at the right.
         if (defined($rightheading)) {
                 $rv .= "<td align=right>$rightheading</td>";
                 $colspan++;
@@ -331,8 +554,8 @@ if (defined($heading) || defined($rightheading)) {
         $rv .= "</tr></thead>\n";
         }
 $rv .= "<tbody> <tr class='ui_table_body'> <td colspan=$colspan>".
-       "<table width=100%>\n";
-$main::ui_table_cols = $cols || 4;
+       "<table class='ui_form_rows ui_form_rows_$formcols' width=100%>\n";
+$main::ui_table_cols = $formcols;
 $main::ui_table_pos = 0;
 $main::ui_table_default_tds = $tds;
 return $rv;
@@ -389,8 +612,8 @@ $rv .= "</tr>\n";
 return $rv;
 }
 
-# ui_table_end()
-# The end of a table started by ui_table_start
+# theme_ui_table_end()
+# Returns HTML for the end of a table started by theme_ui_table_start
 sub theme_ui_table_end
 {
 my $rv;
@@ -399,18 +622,20 @@ if ($main::ui_table_cols == 4 && $main::ui_table_pos) {
   $rv .= &ui_table_row(" ", " ");
   }
 if (@main::ui_table_cols_stack) {
+  # Back to the column state of the enclosing table
   $main::ui_table_cols = pop(@main::ui_table_cols_stack);
   $main::ui_table_pos = pop(@main::ui_table_pos_stack);
   $main::ui_table_default_tds = pop(@main::ui_table_default_tds_stack);
   }
 else {
+  # No enclosing table
   $main::ui_table_cols = undef;
   $main::ui_table_pos = undef;
   $main::ui_table_default_tds = undef;
   }
 $rv .= "</tbody></table></td></tr></table>\n";
 if ($main::WRAPPER_OPEN==1) {
-	#$rv .= "</div>\n";
+	# Close the card around the outermost table
 	$rv .= "</td></tr>\n";
 	$rv .= "</table>\n";
 	}
@@ -420,114 +645,90 @@ return $rv;
 
 # theme_ui_tabs_start(&tabs, name, selected, show-border)
 # Render a row of tabs from which one can be selected. Each tab is an array
-# ref containing a name, title and link.
+# ref containing a name, title and link. The tabs are links in a div, and
+# select_tab switches their classes and the visible tab body.
 sub theme_ui_tabs_start
 {
 my ($tabs, $name, $sel, $border) = @_;
 my $rv;
 if (!$main::ui_hidden_start_donejs++) {
+  # The tab switching script is printed once per page
   $rv .= &ui_hidden_javascript();
   }
 
-# Build list of tab titles and names
-my $tabnames = "[".join(",", map { "\"".&quote_escape($_->[0])."\"" } @$tabs)."]";
-my $tabtitles = "[".join(",", map { "\"".&quote_escape($_->[1])."\"" } @$tabs)."]";
+# List of tab names, used by select_tab to find the tabs and bodies
+my $tabnames = &convert_to_json([map { $_->[0] } @$tabs]);
 $rv .= "<script>\n";
 $rv .= "document.${name}_tabnames = $tabnames;\n";
-$rv .= "document.${name}_tabtitles = $tabtitles;\n";
 $rv .= "</script>\n";
 
 # Output the tabs
-my $imgdir = "@{[&get_webprefix()]}/images";
 $rv .= &ui_hidden($name, $sel)."\n";
-$rv .= "<table border=0 cellpadding=0 cellspacing=0 class='ui_tabs'>\n";
-$rv .= "<tr><td bgcolor=#ffffff colspan=".(scalar(@$tabs)*2+1).">";
-if ($ENV{'HTTP_USER_AGENT'} !~ /msie/i) {
-	# For some reason, the 1-pixel space above the tabs appears huge on IE!
-	$rv .= "<img src=$imgdir/1x1.gif>";
-	}
-$rv .= "</td></tr>\n";
-$rv .= "<tr>\n";
-$rv .= "<td bgcolor=#ffffff width=1><img src=$imgdir/1x1.gif></td>\n";
+$rv .= "<div class='ui_tabs' id='tabs_$name'>\n";
 foreach my $t (@$tabs) {
-	if ($t ne $tabs[0]) {
-		# Spacer
-		$rv .= "<td width=2 bgcolor=#ffffff class='ui_tab_spacer'>".
-		       "<img src=$imgdir/1x1.gif></td>\n";
-		}
-	my $tabid = "tab_".$t->[0];
-	$rv .= "<td id=${tabid} class='ui_tab'>";
-	$rv .= "<table cellpadding=0 cellspacing=0 border=0><tr>";
-	if ($t->[0] eq $sel) {
-		# Selected tab
-		$rv .= "<td valign=top class='tabSelected'>".
-		       "<img src=$imgdir/lc2.gif alt=\"\"></td>";
-		$rv .= "<td class='tabSelected' nowrap>".
-		       "&nbsp;<b>$t->[1]</b>&nbsp;</td>";
-		$rv .= "<td valign=top class='tabSelected'>".
-		       "<img src=$imgdir/rc2.gif alt=\"\"></td>";
-		}
-	else {
-		# Other tab (which has a link)
-		$rv .= "<td valign=top class='tabUnselected'>".
-		       "<img src=$imgdir/lc1.gif alt=\"\"></td>";
-		$rv .= "<td class='tabUnselected' nowrap>".
-		       "&nbsp;<a href='$t->[2]' ".
-		       "onClick='return select_tab(\"$name\", \"$t->[0]\")'>".
-		       "$t->[1]</a>&nbsp;</td>";
-		$rv .= "<td valign=top class='tabUnselected'>".
-		       "<img src=$imgdir/rc1.gif ".
-		       "alt=\"\"></td>";
-		$rv .= "</td>\n";
-		}
-	$rv .= "</tr></table>";
-	$rv .= "</td>\n";
+	my $cls = $t->[0] eq $sel ? "ui_tab ui_tab_selected" : "ui_tab";
+	my $href = $t->[2] ne '' ? $t->[2] : '#';
+	$rv .= "<a id='tab_$t->[0]' class='$cls' href='$href' ".
+	       "onClick='return select_tab(\"$name\", \"$t->[0]\")'>".
+	       "$t->[1]</a>\n";
 	}
-$rv .= "<td bgcolor=#ffffff width=1><img src=$imgdir/1x1.gif></td>\n";
-$rv .= "</table>\n";
+$rv .= "</div>\n";
 
 if ($border) {
-	# All tabs are within a grey box
-	$rv .= "<table width=100% cellpadding=0 cellspacing=0 ".
-	       "class='ui_tabs_box'>\n";
-	$rv .= "<tr> <td bgcolor=#ffffff rowspan=3 width=1><img src=$imgdir/1x1.gif></td>\n";
-	$rv .= "<td $cb colspan=3 height=2><img src=$imgdir/1x1.gif></td> </tr>\n";
-	$rv .= "<tr> <td $cb width=2><img src=$imgdir/1x1.gif></td>\n";
-	$rv .= "<td valign=top>";
+	# All tab bodies are within a box
+	$rv .= "<div class='ui_tabs_box'>\n";
 	}
 $main::ui_tabs_selected = $sel;
 return $rv;
 }
 
-# theme_ui_columns_start(&headings, [width-percent], [noborder], [&tdtags], [title])
-# Returns HTML for a multi-column table, with the given headings
+# theme_ui_tabs_end(show-border)
+# Closes the box opened by theme_ui_tabs_start
+sub theme_ui_tabs_end
+{
+my ($border) = @_;
+return $border ? "</div>\n" : "";
+}
+
+# theme_ui_columns_start(&headings, [width-percent], [no-border],
+#                        [&td-tags], [title], [sortable], [class])
+# Returns HTML for a multi-column table. The sortable flag forces client-side
+# sorting, and class adds a table class.
 sub theme_ui_columns_start
 {
-my ($heads, $width, $noborder, $tdtags, $title) = @_;
+my ($heads, $width, $noborder, $tdtags, $title, $sortable, $class) = @_;
 my ($href) = grep { $_ =~ /<a\s+href/i } @$heads;
 my $rv;
 $theme_ui_columns_row_toggle = 0;
 if (!$noborder && !$main::COLUMNS_WRAPPER_OPEN) {
+	# The outermost bordered table opens the card and a container that
+	# scrolls wide columns without widening the page.
 	$rv .= "<table class='wrapper' width="
 	     . ($width ? $width : "100")
 	     . "%>\n";
-	$rv .= "<tr><td>\n";
+	$rv .= "<tr><td><div class='ui_columns_scroll'>\n";
 	}
 if (!$noborder) {
+	# Nested bordered tables share that card
 	$main::COLUMNS_WRAPPER_OPEN++;
 	}
+# Tables are sorted by sorttable.js unless their headings are links, or
+# always when the caller asked for a sortable table
 my @classes;
 push(@classes, "ui_table") if (!$noborder);
-push(@classes, "sortable") if (!$href);
+push(@classes, "sortable") if (!$href || $sortable);
 push(@classes, "ui_columns");
+push(@classes, $class) if ($class);
 $rv .= "<table".(@classes ? " class='".join(" ", @classes)."'" : "").
-    (defined($width) ? " width=$width%" : "").">\n";
+    (defined($width) ? " width=$width%" : "").
+    ($sortable ? " data-sortable='1'" : "").">\n";
 if ($title) {
-  $rv .= "<thead> <tr $tb class='ui_columns_heading'>".
+  # Title row spanning the table, above the column headings
+  $rv .= "<thead> <tr ".&theme_tag_class($tb, 'ui_columns_heading').">".
 	 "<td colspan=".scalar(@$heads)."><b>$title</b></td>".
 	 "</tr> </thead> <tbody>\n";
   }
-$rv .= "<thead> <tr $tb class='ui_columns_heads'>\n";
+$rv .= "<thead> <tr ".&theme_tag_class($tb, 'ui_columns_heads').">\n";
 my $i;
 for($i=0; $i<@$heads; $i++) {
   $rv .= "<td ".$tdtags->[$i]."><b>".
@@ -538,14 +739,30 @@ $theme_ui_columns_count++;
 return $rv;
 }
 
+# theme_ui_columns_header(&columns, &tdtags)
+# Returns HTML for a heading row inside a multi-column table
+sub theme_ui_columns_header
+{
+my ($cols, $tdtags) = @_;
+my $rv;
+$rv .= "<tr ".&theme_tag_class($tb, 'ui_columns_header').">\n";
+for(my $i=0; $i<@$cols; $i++) {
+	$rv .= "<td ".$tdtags->[$i]."><b>".
+	       ($cols->[$i] eq "" ? "<br>" : $cols->[$i])."</b></td>\n";
+	}
+$rv .= "</tr>\n";
+return $rv;
+}
+
 # theme_ui_columns_row(&columns, &tdtags)
-# Returns HTML for a row in a multi-column table
+# Returns HTML for a row in a multi-column table. Rows are highlighted on
+# hover and when checked by the stylesheet, so no handlers are needed.
 sub theme_ui_columns_row
 {
 $theme_ui_columns_row_toggle = $theme_ui_columns_row_toggle ? '0' : '1';
 local ($cols, $tdtags) = @_;
 my $rv;
-$rv .= "<tr class='ui_columns_row row$theme_ui_columns_row_toggle' onMouseOver=\"this.className='mainhigh'\" onMouseOut=\"this.className='mainbody row$theme_ui_columns_row_toggle'\">\n";
+$rv .= "<tr class='ui_columns_row row$theme_ui_columns_row_toggle'>\n";
 my $i;
 for($i=0; $i<@$cols; $i++) {
 	$rv .= "<td ".$tdtags->[$i].">".
@@ -556,13 +773,15 @@ return $rv;
 }
 
 # theme_ui_columns_end()
-# Returns HTML to end a table started by ui_columns_start
+# Ends a table from theme_ui_columns_start. Also closes the scroll container
+# and card opened for the outermost bordered table.
 sub theme_ui_columns_end
 {
 my $rv;
 $rv = "</tbody> </table>\n";
-if ($main::COLUMNS_WRAPPER_OPEN == 1) { # Last wrapper
-	$rv .= "</td> </tr> </table>\n";
+# Close the shared scroll container with the outermost table.
+if ($main::COLUMNS_WRAPPER_OPEN == 1) {
+	$rv .= "</div></td> </tr> </table>\n";
 	}
 $main::COLUMNS_WRAPPER_OPEN--;
 return $rv;
@@ -649,7 +868,7 @@ if (!$main::WRAPPER_OPEN) { # If we're not already inside of a wrapper, wrap it
 	}
 $main::WRAPPER_OPEN++;
 my $colspan = 1;
-$rv .= "<details class='ui_hidden_table_start'$opened>";
+$rv .= "<details data-name='$name' class='ui_hidden_table_start'$opened $tabletags>";
 $rv .= "<summary>$header $rheader</summary>\n";
 $rv .= "<table width=100%>\n";
 $main::ui_table_cols = $cols || 4;
@@ -672,88 +891,35 @@ elsif ($main::WRAPPER_OPEN) { $main::WRAPPER_OPEN--; }
 return $rv;
 }
 
-# theme_select_all_link(field, form, text)
-# Adds support for row highlighting to the normal select all
-sub theme_select_all_link
-{
-local ($field, $form, $text) = @_;
-$form = int($form);
-$text ||= $text{'ui_selall'};
-return "<a class='select_all' href='#' onClick='f = document.forms[$form]; ff = f.$field; ff.checked = true; r = document.getElementById(\"row_\"+ff.id); if (r) { r.className = \"mainsel\" }; for(i=0; i<f.$field.length; i++) { ff = f.${field}[i]; if (!ff.disabled) { ff.checked = true; r = document.getElementById(\"row_\"+ff.id); if (r) { r.className = \"mainsel\" } } } return false'>$text</a>";
-}
-
-# theme_select_invert_link(field, form, text)
-# Adds support for row highlighting to the normal invert selection
-sub theme_select_invert_link
-{
-local ($field, $form, $text) = @_;
-$form = int($form);
-$text ||= $text{'ui_selinv'};
-return "<a class='select_invert' href='#' onClick='f = document.forms[$form]; ff = f.$field; ff.checked = !f.$field.checked; r = document.getElementById(\"row_\"+ff.id); if (r) { r.className = ff.checked ? \"mainsel\" : \"mainbody\" }; for(i=0; i<f.$field.length; i++) { ff = f.${field}[i]; if (!ff.disabled) { ff.checked = !ff.checked; r = document.getElementById(\"row_\"+ff.id); if (r) { r.className = ff.checked ? \"mainsel\" : \"mainbody row\"+((i+1)%2) } } } return false'>$text</a>";
-}
-
-# theme_select_status_link(name, form, &folder, &mails, start, end, status, label)
-# Adds support for row highlighting to read mail module selector
-# XXX can delete after Usermin 1.400
-sub theme_select_status_link
-{
-local ($name, $formno, $folder, $mail, $start, $end, $status, $label) = @_;
-$formno = int($formno);
-local @sel;
-for(my $i=$start; $i<=$end; $i++) {
-	local $read = &get_mail_read($folder, $mail->[$i]);
-	if ($status == 0) {
-		push(@sel, ($read&1) ? 0 : 1);
-		}
-	elsif ($status == 1) {
-		push(@sel, ($read&1) ? 1 : 0);
-		}
-	elsif ($status == 2) {
-		push(@sel, ($read&2) ? 1 : 0);
-		}
-	}
-my $js = "var sel = [ ".join(",", @sel)." ]; ";
-$js .= "var f = document.forms[$formno]; ";
-$js .= "for(var i=0; i<sel.length; i++) { document.forms[$formno].${name}[i].checked = sel[i]; var ff = f.${name}[i]; var r = document.getElementById(\"row_\"+ff.id); if (r) { r.className = ff.checked ? \"mainsel\" : \"mainbody row\"+((i+1)%2) } }";
-$js .= "return false;";
-return "<a class='select_status' href='#' onClick='$js'>$label</a>";
-}
-
-sub theme_select_rows_link
-{
-local ($field, $form, $text, $rows) = @_;
-$form = int($form);
-my $js = "var sel = { ".join(",", map { "\"".&quote_escape($_)."\":1" } @$rows)." }; ";
-$js .= "for(var i=0; i<document.forms[$form].${field}.length; i++) { var ff = document.forms[$form].${field}[i]; var r = document.getElementById(\"row_\"+ff.id); ff.checked = sel[ff.value]; if (r) { r.className = ff.checked ? \"mainsel\" : \"mainbody row\"+((i+1)%2) } } ";
-$js .= "return false;";
-return "<a class='select_rows' href='#' onClick='$js'>$text</a>";
-}
-
+# theme_ui_checked_columns_row(&columns, &tdtags, checkname, checkvalue,
+#			       [checked], [disabled], [tags])
+# Returns HTML for a row with a checkbox in its first column. The row is
+# highlighted by the stylesheet while its checkbox is checked.
 sub theme_ui_checked_columns_row
 {
 $theme_ui_columns_row_toggle = $theme_ui_columns_row_toggle ? '0' : '1';
 local ($cols, $tdtags, $checkname, $checkvalue, $checked, $disabled, $tags) = @_;
 my $rv;
-my $cbid = &quote_escape("${checkname}_${checkvalue}");
 my $rid = &quote_escape("row_${checkname}_${checkvalue}");
-my $mycb = $cb;
-if ($checked) {
-	$mycb =~ s/mainbody/mainsel/g;
-	}
-$mycb =~ s/class='/class='row$theme_ui_columns_row_toggle ui_checked_columns /;
-$rv .= "<tr id=\"$rid\" $mycb onMouseOver=\"this.className = document.getElementById('$cbid').checked ? 'mainhighsel' : 'mainhigh'\" onMouseOut=\"this.className = document.getElementById('$cbid').checked ? 'mainsel' : 'mainbody row$theme_ui_columns_row_toggle'\">\n";
+my $mycb = &theme_tag_class($cb,
+	"row$theme_ui_columns_row_toggle ui_checked_columns");
+$rv .= "<tr id=\"$rid\" $mycb>\n";
 $rv .= "<td class='ui_checked_checkbox' ".$tdtags->[0].">".
-       &ui_checkbox($checkname, $checkvalue, undef, $checked, $tags." "."onClick=\"document.getElementById('$rid').className = this.checked ? 'mainhighsel' : 'mainhigh';\"", $disabled).
+       &ui_checkbox($checkname, $checkvalue, undef, $checked, $tags,
+		    $disabled).
        "</td>\n";
 my $i;
 for($i=0; $i<@$cols; $i++) {
 	$rv .= "<td ".$tdtags->[$i+1].">";
 	if ($cols->[$i] !~ /<a\s+href|<input|<select|<textarea/) {
+		# Plain cells become labels for the control, so a click on
+		# them selects it
 		$rv .= "<label for=\"".
 			&quote_escape("${checkname}_${checkvalue}")."\">";
 		}
 	$rv .= ($cols->[$i] !~ /\S/ ? "<br>" : $cols->[$i]);
 	if ($cols->[$i] !~ /<a\s+href|<input|<select|<textarea/) {
+		# Close that label
 		$rv .= "</label>";
 		}
 	$rv .= "</td>\n";
@@ -762,31 +928,32 @@ $rv .= "</tr>\n";
 return $rv;
 }
 
+# theme_ui_radio_columns_row(&columns, &tdtags, checkname, checkvalue,
+#			     [checked])
+# Returns HTML for a row with a radio button in its first column. The row
+# is highlighted by the stylesheet while its button is selected.
 sub theme_ui_radio_columns_row
 {
 local ($cols, $tdtags, $checkname, $checkvalue, $checked) = @_;
 my $rv;
-my $cbid = &quote_escape("${checkname}_${checkvalue}");
 my $rid = &quote_escape("row_${checkname}_${checkvalue}");
-my $mycb = $cb;
-if ($checked) {
-	$mycb =~ s/mainbody/mainsel/g;
-	}
-
-$mycb =~ s/class='/class='ui_radio_columns /;
-$rv .= "<tr $mycb id=\"$rid\" onMouseOver=\"this.className = document.getElementById('$cbid').checked ? 'mainhighsel' : 'mainhigh'\" onMouseOut=\"this.className = document.getElementById('$cbid').checked ? 'mainsel' : 'mainbody'\">\n";
+my $mycb = &theme_tag_class($cb, "ui_radio_columns");
+$rv .= "<tr $mycb id=\"$rid\">\n";
 $rv .= "<td ".$tdtags->[0]." class='ui_radio_radio'>".
-       &ui_oneradio($checkname, $checkvalue, undef, $checked, "onClick=\"for(i=0; i<form.$checkname.length; i++) { ff = form.${checkname}[i]; r = document.getElementById('row_'+ff.id); if (r) { r.className = 'mainbody' } } document.getElementById('$rid').className = this.checked ? 'mainhighsel' : 'mainhigh';\"").
+       &ui_oneradio($checkname, $checkvalue, undef, $checked).
        "</td>\n";
 my $i;
 for($i=0; $i<@$cols; $i++) {
 	$rv .= "<td ".$tdtags->[$i+1].">";
 	if ($cols->[$i] !~ /<a\s+href|<input|<select|<textarea/) {
+		# Plain cells become labels for the control, so a click on
+		# them selects it
 		$rv .= "<label for=\"".
 			&quote_escape("${checkname}_${checkvalue}")."\">";
 		}
 	$rv .= ($cols->[$i] !~ /\S/ ? "<br>" : $cols->[$i]);
 	if ($cols->[$i] !~ /<a\s+href|<input|<select|<textarea/) {
+		# Close that label
 		$rv .= "</label>";
 		}
 	$rv .= "</td>\n";
@@ -800,15 +967,97 @@ return $rv;
 sub theme_ui_nav_link
 {
 my ($direction, $url, $disabled) = @_;
-my $alt = $direction eq "left" ? '<-' : '->';
+my $icon = &ui_svg_icon($direction eq "left" ? "chevron-left"
+					      : "chevron-right",
+			{ 'size' => 14,
+			  'title' => $direction eq "left" ? '<-' : '->' });
 if ($disabled) {
-  return "<img alt=\"$alt\" align=\"middle\""
-       . "src=\"@{[&get_webprefix()]}/images/$direction-grey.gif\">\n";
+  # A disabled arrow is plain, not a link
+  return "<span class='ui_nav_link ui_nav_link_disabled'>$icon</span>\n";
   }
 else {
-  return "<a href=\"$url\"><img alt=\"$alt\" align=\"top\""
-       . "src=\"@{[&get_webprefix()]}/images/$direction.gif\"></a>\n";
+  # Arrow linking to the page
+  return "<a class='ui_nav_link' href=\"$url\">$icon</a>\n";
   }
+}
+
+# theme_ui_links_row(&links)
+# Returns links in a toolbar wrapper. Gray Theme hides the legacy separators
+# and styles each link as a button.
+sub theme_ui_links_row
+{
+my ($links) = @_;
+# An empty list does not need a toolbar container.
+return "" if (!$links || !@$links);
+my @button_links = map {
+	my $link = $_;
+	# Drop the final period from the button without changing its source text.
+	$link =~ s/(?<!\.)\.(?=(?:\s*<\/[^>]+>)*\s*<\/a>\s*$)//i;
+	$link;
+	} @$links;
+return "<div class='ui_links_row'>".
+       join(" <span class='ui_links_sep'>|</span> ", @button_links).
+       "</div>\n";
+}
+
+# theme_file_chooser_button(input, type, [form], [chroot], [addmode])
+# Returns a button that opens the file chooser, in a window large enough
+# for the theme's controls unless the Webmin configuration sets a size
+sub theme_file_chooser_button
+{
+my ($input, $type, $form, $chroot, $add) = @_;
+$chroot = "/" if (!defined($chroot));
+$add = int($add);
+my ($w, $h) = (560, 500);
+($w, $h) = split(/x/, $gconfig{'db_sizefile'}) if ($gconfig{'db_sizefile'});
+return "<input type='button' class='ui_button ui_chooser_button' ".
+       "onClick='ifield = form.$input; chooser = window.open(\"".
+       &get_webprefix()."/chooser.cgi?add=$add&type=$type&chroot=$chroot".
+       "&file=\"+encodeURIComponent(ifield.value), \"chooser\", ".
+       "\"toolbar=no,menubar=no,scrollbars=no,resizable=yes,".
+       "width=$w,height=$h\"); chooser.ifield = ifield; ".
+       "window.ifield = ifield' value=\"...\">\n";
+}
+
+# theme_user_chooser_button(input, multiple, [form])
+# Returns a button that opens the user chooser, sized like the file chooser
+sub theme_user_chooser_button
+{
+my ($input, $multi) = @_;
+return &theme_chooser_button("user_chooser.cgi", "user", $input, $multi);
+}
+
+# theme_group_chooser_button(input, multiple, [form])
+# Returns a button that opens the group chooser, sized like the file chooser
+sub theme_group_chooser_button
+{
+my ($input, $multi) = @_;
+return &theme_chooser_button("group_chooser.cgi", "group", $input, $multi);
+}
+
+# theme_chooser_button(script, param, input, multiple)
+# Returns the button shared by the user and group choosers. The multiple
+# selection window has two panes and so is wider.
+sub theme_chooser_button
+{
+my ($script, $param, $input, $multi) = @_;
+my ($w, $h) = $multi ? (640, 500) : (420, 500);
+if ($multi && $gconfig{'db_sizeusers'}) {
+	# Size of the multiple selection chooser from the Webmin config
+	($w, $h) = split(/x/, $gconfig{'db_sizeusers'});
+	}
+elsif (!$multi && $gconfig{'db_sizeuser'}) {
+	# Size of the single selection chooser from the Webmin config
+	($w, $h) = split(/x/, $gconfig{'db_sizeuser'});
+	}
+$multi = int($multi);
+return "<button type='button' class='ui_button ui_chooser_button' ".
+       "onClick='ifield = form.$input; chooser = window.open(\"".
+       &get_webprefix()."/$script?multi=$multi&$param=\"+".
+       "escape(ifield.value), \"chooser\", ".
+       "\"toolbar=no,menubar=no,scrollbars=yes,resizable=yes,".
+       "width=$w,height=$h\"); chooser.ifield = ifield; ".
+       "window.ifield = ifield'>...</button>\n";
 }
 
 # theme_footer([page, name]+, [noendbody])
@@ -816,12 +1065,15 @@ else {
 sub theme_footer
 {
 my $i;
-my $count = 0;
+my @links;
 my %module_info = get_module_info(get_module_name());
 for($i=0; $i+1<@_; $i+=2) {
 	local $url = $_[$i];
 	if ($url ne '/' || !$tconfig{'noindex'}) {
+		# Turn the shortcut into a URL, unless the theme hides the
+		# Webmin index link
 		if ($url eq '/') {
+			# Webmin index, opened at the module's category
 			$url = "/?cat=$module_info{'category'}";
 			}
 		elsif ($url eq '' && get_module_name() eq 'virtual-server' ||
@@ -847,26 +1099,32 @@ for($i=0; $i+1<@_; $i+=2) {
 			next;
 			}
 		elsif ($url eq '' && get_module_name()) {
+			# Index page of the current module
 			$url = "/".get_module_name()."/".
 			       $module_info{'index_link'};
 			}
 		elsif ($url =~ /^\?/ && get_module_name()) {
+			# Index page of the module with parameters
 			$url = "/".get_module_name()."/$url";
 			}
 		$url = "@{[&get_webprefix()]}$url" if ($url =~ /^\//);
-		if ($count++ == 0) {
-			print theme_ui_nav_link("left", $url);
-			}
-		else {
-			print "&nbsp;|\n";
-			}
-		print "&nbsp;<a href=\"$url\">",&text('main_return', $_[$i+1]),"</a>\n";
+		push(@links, "<a href=\"$url\">".
+			     &text('main_return', $_[$i+1])."</a>");
 		}
 	}
-print "<br>\n";
+if (@links) {
+	# Return links, with a chevron before the first
+	print "<div class='ui_footer_links'>\n";
+	print &ui_svg_icon("chevron-left", { 'size' => 14 }),"\n";
+	print join(" <span class='ui_footer_sep'>|</span>\n", @links),"\n";
+	print "</div>\n";
+	}
 if (!$_[$i]) {
+	# End the page, unless the caller keeps the body open
 	my $postbody = $tconfig{'postbody'};
 	if ($postbody) {
+		# Text from the theme config at the end of every page, with
+		# its placeholders filled in
 		my $hostname = &get_display_hostname();
 		my $version = &get_webmin_version();
 		my $os_type = $gconfig{'real_os_type'} ||
@@ -880,6 +1138,7 @@ if (!$_[$i]) {
 		print "$postbody\n";
 		}
 	if ($tconfig{'postbodyinclude'}) {
+		# File from the theme directory at the end of every page
 		local $_;
 		open(INC, "$theme_root_directory/$tconfig{'postbodyinclude'}");
 		while(<INC>) {
@@ -888,17 +1147,22 @@ if (!$_[$i]) {
 		close(INC);
 		}
 	if (defined(&theme_postbody)) {
+		# Hook of an overlay theme
 		&theme_postbody(@_);
 		}
 	print "</body></html>\n";
 	}
 }
 
-# Don't show virtualmin menu
+# theme_redirect(original-url, url)
+# Prints a redirect like the core, except that a Virtualmin page sending
+# the browser to the server root goes to the framed system information
+# page, since the Virtualmin menu is already in the left frame
 sub theme_redirect
 {
 local ($orig, $url) = @_;
 if (get_module_name() eq "virtual-server" && $orig eq "" &&
+    # Virtualmin's return to the root
     $url =~ /^((http|https):\/\/([^\/]+))\//) {
 	$url = "$1/right.cgi";
 	}
@@ -906,75 +1170,213 @@ print "Location: $url\n\n";
 }
 
 # theme_ui_hidden_javascript()
-# Returns <script> and <style> sections for hiding functions and CSS
+# Returns the script that switches tabs and opens hidden sections. Both
+# only change classes; the stylesheet does the rest.
 sub theme_ui_hidden_javascript
 {
-my $rv;
-my $imgdir = "@{[&get_webprefix()]}/images";
-
 return <<EOF;
-<style>
-.opener_shown {display:inline}
-.opener_hidden {display:none}
-</style>
 <script>
 // Open or close a hidden section
 function hidden_opener(divid, openerid)
 {
 var divobj = document.getElementById(divid);
 var openerobj = document.getElementById(openerid);
-if (divobj.className == 'opener_shown') {
-  divobj.className = 'opener_hidden';
-  openerobj.innerHTML = '<img border=0 src=$imgdir/closed.gif>';
-  }
-else {
-  divobj.className = 'opener_shown';
-  openerobj.innerHTML = '<img border=0 src=$imgdir/open.gif>';
+var shown = divobj.className == 'opener_shown';
+divobj.className = shown ? 'opener_hidden' : 'opener_shown';
+if (openerobj) {
+  // Turn the arrow of the link that opens the section
+  openerobj.className = shown ? 'opener_closed' : 'opener_open';
   }
 }
 
-// Show a tab
+// Show a tab and hide the others
 function select_tab(name, tabname, form)
 {
 var tabnames = document[name+'_tabnames'];
-var tabtitles = document[name+'_tabtitles'];
 for(var i=0; i<tabnames.length; i++) {
   var tabobj = document.getElementById('tab_'+tabnames[i]);
   var divobj = document.getElementById('div_'+tabnames[i]);
-  var title = tabtitles[i];
-  if (tabnames[i] == tabname) {
-    // Selected table
-    tabobj.innerHTML = '<table cellpadding=0 cellspacing=0><tr>'+
-		       '<td valign=top class=\\'tabSelected\\'>'+
-		       '<img src=$imgdir/lc2.gif alt=""></td>'+
-		       '<td class=\\'tabSelected\\' nowrap>'+
-		       '&nbsp;<b>'+title+'</b>&nbsp;</td>'+
-	               '<td valign=top class=\\'tabSelected\\'>'+
-		       '<img src=$imgdir/rc2.gif alt=""></td>'+
-		       '</tr></table>';
-    divobj.className = 'opener_shown';
+  var selected = tabnames[i] == tabname;
+  if (tabobj) {
+    // Mark the tab itself
+    tabobj.className = selected ? 'ui_tab ui_tab_selected' : 'ui_tab';
     }
-  else {
-    // Non-selected tab
-    tabobj.innerHTML = '<table cellpadding=0 cellspacing=0><tr>'+
-		       '<td valign=top class=\\'tabUnselected\\'>'+
-		       '<img src=$imgdir/lc1.gif alt=""></td>'+
-		       '<td class=\\'tabUnselected\\' nowrap>'+
-                       '&nbsp;<a href=\\'\\' onClick=\\'return select_tab("'+
-		       name+'", "'+tabnames[i]+'")\\'>'+title+'</a>&nbsp;</td>'+
-		       '<td valign=top class=\\'tabUnselected\\'>'+
-    		       '<img src=$imgdir/rc1.gif alt=""></td>'+
-		       '</tr></table>';
-    divobj.className = 'opener_hidden';
+  if (!divobj) {
+    // A tab that is only a link has no body
+    continue;
+    }
+  divobj.className = (selected ? 'opener_shown' : 'opener_hidden')+
+		     ' ui_tabs_start';
+  if (selected) {
+    // Point the submit buttons of a nested form at it
+    try {
+	var nestedForm = divobj.querySelector("form[data-form-nested]");
+	if (nestedForm) {
+		var nestedFormId = nestedForm.getAttribute("data-form-nested"),
+		formSubmitters = document
+			.querySelectorAll(
+				"[data-submit-nested='" + nestedFormId + "']");
+		if (formSubmitters) {
+			formSubmitters.forEach(function(submitter) {
+				submitter.setAttribute(
+					"form", nestedForm.getAttribute('id'));
+			});
+		}
+	}
+    } catch(e) {
+	console.warn('Cannot set the related submitter ID of the nested form : ' + e);
+    }
     }
   }
 if (document.forms[0] && document.forms[0][name]) {
+  // Remember the tab in the hidden field, so a submit returns to it
   document.forms[0][name].value = tabname;
   }
 return false;
 }
 </script>
 EOF
+}
+
+# Icons drawn before notices, by notice type and by the Font Awesome class
+# names that modules pass to ui_alert
+my %theme_alert_icons = (
+	'success' => 'check-circle',
+	'info' => 'info-circle',
+	'warning' => 'warning',
+	'danger' => 'x-circle',
+	'danger-fatal' => 'x-circle',
+	);
+my %theme_fa_icons = (
+	'fa-check-circle' => 'check-circle',
+	'fa-check' => 'check',
+	'fa-info-circle' => 'info-circle',
+	'fa-question-circle' => 'question-circle',
+	'fa-exclamation-triangle' => 'warning',
+	'fa-warning' => 'warning',
+	'fa-bolt' => 'x-circle',
+	'fa-times-circle' => 'x-circle',
+	'fa-clock' => 'clock',
+	'fa-clock-o' => 'clock',
+	'fa-hdd-o' => 'hard-drive',
+	'fa-lock' => 'shield',
+	'fa-shield' => 'shield',
+	'fa-plug' => 'power',
+	'fa-power-off' => 'power',
+	'fa-download' => 'download',
+	'fa-upload' => 'upload',
+	'fa-refresh' => 'refresh',
+	'fa-search' => 'search',
+	'fa-server' => 'server',
+	'fa-user' => 'user',
+	'fa-trash' => 'trash',
+	'fa-cog' => 'gear',
+	'fa-globe' => 'globe',
+	'fa-star' => 'star',
+	'fa-play' => 'play',
+	'fa-stop' => 'stop',
+	'fa-terminal' => 'terminal',
+	'fa-book' => 'book',
+	'fa-filter' => 'filter',
+	'fa-pencil' => 'edit',
+	'fa-edit' => 'edit',
+	'fa-external-link' => 'external',
+	);
+
+# theme_alert_icon(type, [fa-classes])
+# Returns the icon shown before a notice, from a Font Awesome class name
+# when the theme has an equivalent, else from the notice type
+sub theme_alert_icon
+{
+my ($type, $fa) = @_;
+my $name;
+if ($fa) {
+	# Prefer the icon the module asked for, when the theme has it
+	my ($known) = grep { $theme_fa_icons{$_} } split(/\s+/, $fa);
+	$name = $theme_fa_icons{$known} if ($known);
+	}
+$name ||= $theme_alert_icons{$type} || 'info-circle';
+return "<span class='ui_alert_icon'>".
+       &ui_svg_icon($name, { 'size' => 18 })."</span>";
+}
+
+# theme_ui_alert_box(message, type, [style], [new-line], [title], [icon])
+# Returns HTML for a notice box with an icon, taking the same arguments as
+# the Authentic theme. The type can be success, info, warn, danger or
+# danger-fatal, and picks the colors, the icon and the default title. The
+# style is added to the box. With new-line set, the message starts under
+# the title instead of after it. A title replaces the default one, and an
+# empty title removes it. The icon is a Font Awesome class name, used when
+# the theme has an equivalent. Buttons that the message puts on a line of
+# their own, after a <p>, are wrapped together with the text before them,
+# so both can share one line.
+sub theme_ui_alert_box
+{
+my ($msg, $class, $style, $new_line, $desc_to_title, $desc_icon) = @_;
+my %types = ( 'success' => [ 'success', $text{'ui_success'} ],
+	      'info' => [ 'info', $text{'ui_info'} ],
+	      'warn' => [ 'warning', $text{'ui_warning'} ],
+	      'warning' => [ 'warning', $text{'ui_warning'} ],
+	      'danger' => [ 'danger', $text{'ui_error'} ],
+	      'danger-fatal' => [ 'danger-fatal', $text{'ui_error_fatal'} ] );
+my ($type, $title) = @{$types{$class} || $types{'info'}};
+# The default titles end in an exclamation mark, as in the Authentic theme
+$title .= "!" if ($title ne '');
+$title = $desc_to_title if (defined($desc_to_title));
+my $lead = $title =~ /\S/ ?
+	"<strong>$title</strong>".($new_line ? "<br>" : " ") : "";
+if ($msg =~ s/^(.*?)<p>\s*(<form\b.*?<\/form>)/<span class='ui_alert_text'>$lead$1<\/span><span class='ui_alert_actions'>$2<\/span>/is) {
+	# A form of buttons after the text
+	}
+elsif ($msg =~ s/(<form\b[^>]*>)(.*?)<p>\s*((?:<input\b[^>]*>\s*)+)(<\/form>)/$1<span class='ui_alert_text'>$lead$2<\/span><span class='ui_alert_actions'>$3<\/span>$4/is) {
+	# Buttons after the text, inside its form
+	}
+elsif ($msg =~ s/(<form\b[^>]*>)(.*?)<p>\s*((?:<input\b[^>]*>\s*)*<table\b[^>]*class=['"]ui_form_end_buttons['"].*?<\/table>)\s*(<\/form>)/$1<span class='ui_alert_text'>$lead$2<\/span><span class='ui_alert_actions'>$3<\/span>$4/is) {
+	# Buttons after the text, as a form end table inside its form
+	}
+else {
+	# Plain message after the title
+	$msg = $lead.$msg;
+	}
+return "<div class='ui_alert_box alert alert-$type'".
+       ($style ? " style='".&quote_escape($style)."'" : "").">".
+       &theme_alert_icon($type, $desc_icon).
+       "<div class='ui_alert_body'>$msg</div></div>\n";
+}
+
+# theme_ui_alert(content, [type], [icon], [&attrs])
+# Returns HTML for an alert with an icon and a title, like the core
+# ui_alert but drawn with the theme's SVG icons. The icon can be a Font
+# Awesome class name, or an array of [ class, title, no-line-break ].
+sub theme_ui_alert
+{
+my ($content, $type, $icon, $attrs) = @_;
+$type ||= 'info';
+my %titles = ( 'success' => $text{'ui_success'},
+	       'info' => $text{'ui_info'},
+	       'warning' => $text{'ui_warning'},
+	       'danger' => $text{'ui_error'},
+	       'danger-fatal' => $text{'ui_error_fatal'} );
+my ($fa, $title, $br) = (undef, $titles{$type}, 1);
+if (ref($icon)) {
+	# Icon given with its own title and line break flag
+	$fa = $icon->[0];
+	$title = $icon->[1] if (defined($icon->[1]));
+	$br = 0 if ($icon->[2]);
+	}
+elsif (defined($icon)) {
+	# Icon name alone
+	$fa = $icon;
+	}
+my %a = %{$attrs || {}};
+$a{'class'} = join(" ", grep { $_ } ("alert", "alert-$type", $a{'class'}));
+my $body = "";
+$body .= "<strong>$title</strong>".($br ? "<br>" : " ") if ($title ne '');
+$body .= "<span>$content</span>";
+return &ui_tag_start('div', \%a).
+       &theme_alert_icon($type, $fa).
+       "<div class='ui_alert_body'>$body</div>".
+       &ui_tag_end('div')."\n";
 }
 
 # XXX Temporary until ui-lib.pl valign stuff gets cleaned up
@@ -997,9 +1399,11 @@ EOF
 # no-sort - Set to 1 to disable sorting by theme
 # title - Text to appear above the table
 # empty-msg - Message to display if no data
+# sortable - Set to 1 to mark the table for client-side sorting
 sub theme_ui_columns_table
 {
-my ($heads, $width, $data, $types, $nosort, $title, $emptymsg) = @_;
+my ($heads, $width, $data, $types, $nosort, $title, $emptymsg,
+    $sortable) = @_;
 my $rv;
 
 # Just show empty message if no data
@@ -1023,7 +1427,7 @@ foreach my $r (@$data) {
 		}
 	$maxwidth = $cc if ($cc > $maxwidth);
 	}
-$rv .= &ui_columns_start($heads, $width, 0, \@tds, $title);
+$rv .= &ui_columns_start($heads, $width, 0, \@tds, $title, $sortable);
 
 # Add the data rows
 foreach my $r (@$data) {

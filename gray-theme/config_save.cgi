@@ -7,7 +7,10 @@ require './config-lib.pl';
 &ReadParse();
 $m = $in{'module'};
 &error_setup($text{'config_err'});
-&foreign_available($m) || &error($text{'config_eaccess'});
+%module_info = &get_module_info($m);
+%module_info || &error($text{'config_emodule'});
+&foreign_available($m) || $module_info{'noacl'} ||
+	&error($text{'config_eaccess'});
 %access = &get_module_acl(undef, $m);
 $access{'noconfig'} && &error($text{'config_ecannot'});
 
@@ -41,8 +44,8 @@ if (&foreign_require($m) &&
 	}
 
 &webmin_log("_config_", undef, undef, \%in, $m);
-$redir = &link_config_cparams($m, \%in);
 if ($in{'save_next'}) {
+	$redir = &link_config_cparams($m, \%in, 1);
 	$params = $redir =~ /\?(.*)$/ ? "&".$1 : "";
 	&redirect("config.cgi?module=$in{'module'}&section=$in{'section_next'}".
 		  $params);
@@ -51,6 +54,7 @@ elsif ($m eq "virtual-server") {
 	&redirect("/right.cgi");
 	}
 else {
+	$redir = &link_config_cparams($m, \%in);
 	&redirect($redir);
 	}
 

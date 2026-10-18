@@ -1,13 +1,16 @@
 # log_parser.pl
 # Functions for parsing this module's logs
+use strict;
+use warnings;
 
-do 'bind8-lib.pl';
+do 'bind8-lib.pl';    ## no critic
+our (%text);
 
 # parse_webmin_log(user, script, action, type, object, &params)
 # Converts logged information from this module into human-readable form
 sub parse_webmin_log
 {
-local ($user, $script, $action, $type, $object, $p) = @_;
+my ($user, $script, $action, $type, $object, $p) = @_;
 if ($type eq 'record') {
 	if ($p->{'type'} eq 'PTR') {
 		return &text("log_${action}_record", $text{"type_$p->{'type'}"},
@@ -33,12 +36,18 @@ if ($type eq 'record') {
 		}
 	}
 elsif ($type eq 'recs') {
-	return &text("log_${action}_recs", $object);
+	if ($p->{'dom'}) {
+		return &text("log_${action}_recs2", $object,
+			     "<tt>".&html_escape($p->{'dom'})."</tt>");
+		}
+	else {
+		return &text("log_${action}_recs", $object);
+		}
 	}
 elsif ($type eq 'zones') {
 	return &text("log_${action}_zones", $object);
 	}
-elsif ($type eq "host" || $type eq "group") {
+elsif ($type eq "host" || $type eq "group" || $type eq "tls") {
 	return &text("log_${action}_${type}", "<tt>$object</tt>");
 	}
 elsif ($action eq 'create') {
@@ -82,7 +91,7 @@ elsif ($text{"log_${action}"}) {
 	return $text{"log_${action}"};
 	}
 else {
-	return undef;
+	return;
 	}
 }
 

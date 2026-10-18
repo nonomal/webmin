@@ -1,5 +1,6 @@
 index_screate=یک کاربر ایمن جدید ایجاد کنید.
 index_twofactor=احراز هویت دو عاملی
+index_twofactor_enabled=احراز هویت دو مرحله‌ای برای این کاربر فعال است
 index_joingroup=افزودن به گروه:
 index_eulist=Failed to list users : $1
 index_eglist=Failed to list groups : $1
@@ -8,6 +9,7 @@ edit_title3=کاربر وبمین ایمن ایجاد کنید
 edit_readonly=This Webmin user should not be edited as it is managed by the $1 module. <a href='$2'>Click here</a> to bypass this warning and edit the user anyway - but beware that any manual changes may be over-written!
 edit_cloneof=کلونینگ کاربر وبمین
 edit_real=اسم واقعی
+edit_email=ایمیل تماس
 edit_passlocked=Password has not been changed for $1 days - account locked!
 edit_passmax=Password has not been changed for $1 days - must be changed at next login
 edit_passold=Password was last changed $1 days ago
@@ -26,6 +28,7 @@ edit_nochange=روزهای تغییر رمز عبور را اجرا می کنی�
 edit_egone=کاربر انتخاب شده دیگر وجود ندارد!
 edit_overlay=پوشش شخصی موضوع
 edit_overlayglobal=هیچ یک - از پیش فرض های موضوعی استفاده نکنید
+edit_forgot=ارسال لینک بازیابی رمز عبور
 edit_global=مجوز برای همه ماژول ها
 edit_templock=به طور موقت قفل شده است
 edit_temppass=تغییر نیرو در ورود بعدی
@@ -58,6 +61,7 @@ save_edays=هیچ روز اجازه انتخاب وجود ندارد
 save_ehours=بارهای نامعتبر یا نامعتبر است
 save_ehours2=زمان شروع اجازه باید قبل از پایان باشد
 save_etemp=The option to force a password change at next login cannot be used unless <a href='$1'>prompting users to enter new passwords</a> is enabled
+save_eemail=آدرس ایمیل نمی‌تواند شامل کاراکتر : باشد
 
 delete_eanonuser=این کاربر برای دسترسی به ماژول ناشناس استفاده می شود
 
@@ -78,6 +82,9 @@ log_sync=همگام سازی کاربر یونیکس تغییر کرده است
 log_sql=بانک اطلاعاتی کاربر و گروه تغییر یافت
 log_twofactor=Enrolled user $1 with two-factor provider $2
 log_onefactor=Dis-enrolled user $1 for two-factor authentication
+log_forgot_send=ایمیل بازنشانی رمز عبور برای کاربران $1 تا $2 ارسال شد
+log_forgot_reset=بازنشانی رمز عبور برای کاربر $1 با ایمیل $2
+log_forgot_admin=مدیر ایمیل بازنشانی رمز عبور را برای کاربران $1 تا $2 ارسال کرد
 
 gedit_desc=توضیحات گروه
 gedit_egone=گروه منتخب دیگر وجود ندارد!
@@ -94,12 +101,17 @@ sync_when=چه موقع همگام سازی
 sync_modify=با تغییر نام کاربر یونیکس ، به کاربر مطابق وبمین تغییر نام دهید.
 
 unix_err=ذخیره احراز هویت یونیکس انجام نشد
-unix_sel=به کاربران Unix که در زیر ذکر شده اجازه دهید وارد شوید..
+unix_desc=این صفحه به کاربران یونیکس و کاربران دایرکتوری-پشتیبانی‌شده و همچنین کاربران PAM-only اجازه می‌دهد تا بدون ایجاد حساب کاربری جداگانه برای هر کاربر در وب‌مین، وارد سیستم شوند. هر ورود، حقوق دسترسی را دریافت می‌کند و از روش احراز هویت کاربر وب‌مین نگاشت‌شده استفاده می‌کند.
+unix_def=فقط به کاربران وب‌مین اجازه ورود بدهید
+unix_sel=به کاربران و گروه‌های مشخص‌شده در زیر اجازه ورود بدهید
 unix_mode=اجازه
 unix_mall=تمام کاربران
-unix_group=اعضای گروه..
+unix_group=اعضای گروه
+unix_user=کاربر یونیکس
 unix_who=کاربر یا گروه
-unix_to=به عنوان کاربر وبمین
+unix_to=کاربر نگاشت‌شده وب‌مین
+unix_mapdesc=کاربر وب‌مین انتخاب‌شده، هم حقوق دسترسی و هم روش احراز هویت را ارائه می‌دهد. برای احراز هویت نام کاربری اصلی از طریق PAM، SSSD یا پایگاه داده رمز عبور سیستم، یک کاربر وب‌مین پیکربندی‌شده برای <b>احراز هویت یونیکس</b> را انتخاب کنید. اگر کاربر انتخاب‌شده رمز عبور وب‌مین داشته باشد، هر ورود منطبق با آن از آن رمز عبور مشترک استفاده می‌کند.
+unix_webminpass=رمز عبور وب‌مین
 unix_restrict2=محدودیت های اضافی
 unix_ewhogroup=Missing group to allow in row $1
 unix_ewhouser=Missing user to allow in row $1
@@ -110,8 +122,9 @@ unix_pamany=Treat logins that only pass PAM validation as $1
 unix_esudo=The $1 command is not installed
 unix_esudomod=The Perl module $1 needed for <tt>sudo</tt> authentication is not installed
 unix_header=تنظیمات تأیید اعتبار کاربر یونیکس
-unix_utable=کاربران مجاز Unix
+unix_utable=نگاشت‌های ورود
 
+sessions_login_ago=آخرین فعالیت پیش
 sessions_host=آدرس آی پی
 sessions_actions=اقدامات..
 sessions_all=تمام جلسات..
@@ -124,8 +137,6 @@ sessions_out=خارج شد
 sessions_kill=قطع شدن..
 
 logins_title=ورود به وب اخیر
-
-rbac_ecpan=You do not have access to Webmin's Perl Modules page in order to install the necessary $1 module for RBAC integration.
 
 udeletes_err=کاربران حذف نشدند
 udeletes_jerr=افزودن کاربران به گروه انجام نشد
@@ -153,7 +164,7 @@ pass_maxdays=روزهای قبل باید رمزعبور تغییر کند
 pass_lockdays=روزها قبل از تغییر حساب قفل رمز عبور بدون تغییر
 pass_nomaxdays=تغییر هرگز مورد نیاز نیست
 pass_nolockdays=حساب هرگز قفل نیست
-pass_nouser=Ú¯Ø°Ø±ÙØ§ÚÙ‌ÙØ§Û Ø­Ø§ÙÛ ÙØ§Ù Ú©Ø§Ø±Ø¨Ø±Û ÙØ¬Ø§Ø² ÙÛØ³ØªØ
+pass_nouser=رمزهای عبور حاوی نام کاربری را غیرفعال کنید؟
 pass_nodict=کلمه عبور کلمه لغت را مجاز نمی دانید؟
 pass_oldblock=تعداد کلمه عبورهای قدیمی برای رد کردن
 pass_nooldblock=محدودیتی برای استفاده مجدد از گذرواژه وجود ندارد
@@ -255,3 +266,29 @@ twofactor_failed=.. enrollment failed : $1
 twofactor_done=.. complete. Your ID with this provider is <tt>$1</tt>.
 twofactor_setup=Two-factor authentication has not been enabled on this system yet, but can be turned on using the <a href='$1'>Webmin Configuration</a> module.
 twofactor_ebutton=هیچ دکمه ای کلیک نشد!
+twofactor_testdesc=قبل از خروج، می‌توانید با وارد کردن یک توکن، تنظیمات احراز هویت دو مرحله‌ای جدید خود را اینجا آزمایش کنید. اگر به هر دلیلی کار نکرد، احراز هویت دو مرحله‌ای را غیرفعال کنید و دوباره آن را تنظیم کنید.
+twofactor_testfield=توکن دو عاملی
+twofactor_test=اعتبارسنجی توکن
+twofactor_terr=تست تنظیمات دو مرحله‌ای ناموفق بود
+twofactor_etestuser=ورود دو مرحله‌ای فعال نیست!
+twofactor_testing=آزمایش اعتبارسنجی دو عاملی با $1 ..
+twofactor_testfailed=.. تست ناموفق بود! شاید توکن اشتباهی وارد شده باشد، یا برنامه احراز هویت شما به درستی پیکربندی نشده باشد؟
+twofactor_testok=.. آزمون با موفقیت انجام شد! اکنون می‌توانید با خیال راحت با استفاده از احراز هویت دو مرحله‌ای وارد سیستم شوید.
+twofactor_testdis=همین حالا احراز هویت دو مرحله‌ای را غیرفعال کنید
+
+forgot_title=ارسال لینک بازیابی رمز عبور
+forgot_err=ارسال لینک بازیابی رمز عبور ناموفق بود
+forgot_header=جزئیات لینک بازنشانی رمز عبور
+forgot_user=بازنشانی رمز عبور برای کاربر
+forgot_email=روش تحویل لینک
+forgot_email_def=نمایش لینک در وب‌مین
+forgot_email_sel=ارسال لینک از طریق ایمیل به
+forgot_send=ارسال لینک
+forgot_desc=این صفحه به شما امکان می‌دهد لینکی ایجاد کنید یا آن را به هر آدرس ایمیلی ارسال کنید که می‌تواند برای انتخاب رمز عبور جدید برای کاربر وب‌مین استفاده شود. مراقب باشید که این لینک را به کدام آدرس ایمیل ارسال می‌کنید، زیرا عملاً دسترسی کامل به ورود به وب‌مین را اعطا می‌کند!
+forgot_adminmsg=شما این ایمیل را از مدیر سیستم وب‌مین در $3، برای ورود به سیستم $1 دریافت می‌کنید.\n\nاگر مایل به تنظیم مجدد رمز عبور هستید، این لینک را دنبال کنید:\n$2
+forgot_sending=ارسال ایمیل بازنشانی رمز عبور برای $2 تا $1 ..
+forgot_sent=.. ارسال شد
+forgot_link=از لینک زیر می‌توان برای تنظیم مجدد رمز عبور وب‌مین برای $1 در $2 دقیقه بعدی استفاده کرد :
+forgot_enosudo=سودو روی این سیستم در دسترس نیست!
+forgot_ecansudo=کاربر وارد شده مجوزهای sudo را ندارد
+forgot_eunix=کاربر وارد شده که قابلیت sudo دارد، وجود ندارد!

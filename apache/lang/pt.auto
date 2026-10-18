@@ -37,7 +37,7 @@ index_delete=Excluir servidores selecionados
 cvirt_eroot3=Você não tem permissão para usar o diretório raiz '$1'
 cvirt_eroot4=Nenhum usuário definido na configuração do Apache
 cvirt_etaken=Já existe um servidor virtual com o mesmo nome e porta
-cvirt_efile=Falha ao gravar em $1 : $2 
+cvirt_efile=Falha ao gravar em $1 : $2
 cvirt_emissing=O novo servidor virtual foi adicionado a $1, mas esse arquivo não é usado pelo Apache. Verifique a <a href='$2'>configuração do módulo</a> e verifique se o 'Arquivo ou diretório ao qual adicionar servidores virtuais' está correto.
 
 default_serv=servidor padrão
@@ -120,7 +120,7 @@ acl_defserv=Servidor Padrão
 acl_apply=Pode aplicar alterações?
 acl_aliasdir=Limitar aliases ao diretório
 acl_names=Pode editar nomes de servidores?
-acl_dirs=Diretivas Apache disponíveis <br><font size=-1> (Sujeito ao limite de tipos acima) </font>
+acl_dirs=Diretivas Apache disponíveis, limitadas pelos tipos de diretiva selecionados acima
 acl_dirs0=Todos
 acl_dirs1=Apenas listado ..
 acl_dirs2=Todos, exceto listados ..

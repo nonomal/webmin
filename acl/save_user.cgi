@@ -6,7 +6,7 @@ use strict;
 use warnings;
 no warnings 'redefine';
 no warnings 'uninitialized';
-require './acl-lib.pl';
+require './acl-lib.pl';    ## no critic
 our (%in, %text, %config, %access, $config_directory, $base_remote_user);
 &foreign_require("webmin", "webmin-lib.pl");
 &ReadParse();
@@ -14,24 +14,28 @@ our (%in, %text, %config, %access, $config_directory, $base_remote_user);
 # Check for special button clicks, and redirect
 if ($in{'but_clone'}) {
 	&redirect("edit_user.cgi?clone=".&urlize($in{'old'}));
-	exit;
+	return;
 	}
 elsif ($in{'but_log'}) {
 	&redirect("../webminlog/search.cgi?uall=0&mall=1&tall=1&user=".
 		  &urlize($in{'old'}));
-	exit;
+	return;
 	}
 elsif ($in{'but_switch'}) {
 	&redirect("switch.cgi?user=".&urlize($in{'old'}));
-	exit;
+	return;
 	}
 elsif ($in{'but_delete'}) {
 	&redirect("delete_user.cgi?user=".&urlize($in{'old'}));
-	exit;
+	return;
 	}
 elsif ($in{'twofactor'}) {
 	&redirect("twofactor_form.cgi?user=".&urlize($in{'old'}));
-	exit;
+	return;
+	}
+elsif ($in{'but_forgot'}) {
+	&redirect("forgot_form.cgi?user=".&urlize($in{'old'}));
+	return;
 	}
 
 # Get the user object
@@ -52,8 +56,16 @@ else {
 	}
 &error_setup($text{'save_err'});
 
+if ((!$in{'old'} ||
+     $in{'name'} ne $in{'old'}) &&
+    $in{'name'} =~ /^(root|admin|sysadm)$/) {
+	# User has one of the privileged names, make sure this user can
+	# edit ACLs to prevent creation of RPC-root users
+	$access{'acl'} || &error($text{'save_ecreateroot'});
+	}
+
 # Validate username, and check for a clash
-$in{'name'} =~ /^[A-z0-9\-\_\.\@]+$/ && $in{'name'} !~ /^\@/ ||
+$in{'name'} =~ /^[A-Za-z0-9\-\_\.\@]+$/ && $in{'name'} !~ /^\@/ ||
 	&error(&text('save_ename', &html_escape($in{'name'})));
 $in{'name'} eq 'webmin' && &error($text{'save_enamewebmin'});
 if (!$in{'old'} || $in{'old'} ne $in{'name'}) {
@@ -100,11 +112,6 @@ foreach my $u (@ulist) {
 
 # Find the current group
 my $oldgroup = $in{'old'} ? &get_users_group($in{'old'}) : undef;
-
-if (&supports_rbac()) {
-	# Save RBAC mode
-	$user{'rbacdeny'} = $in{'rbacdeny'};
-	}
 
 my $newgroup;
 if (defined($in{'group'})) {
@@ -225,6 +232,8 @@ $user{'nochange'} = !$access{'nochange'} || !defined($in{'nochange'}) ?
 $user{'lastchange'} = $old->{'lastchange'};
 $user{'olds'} = $old->{'olds'};
 $user{'real'} = $in{'real'} =~ /\S/ ? $in{'real'} : undef;
+$in{'email'} =~ /:/ && &error($text{'save_eemail'});
+$user{'email'} = $in{'email'};
 my $raddr = $ENV{'REMOTE_ADDR'};
 my @ips;
 if ($access{'ips'}) {
@@ -368,11 +377,13 @@ else {
 	}
 
 my $aclfile = "$config_directory/$in{'name'}.acl";
-if ($in{'old'} && $in{'acl_security_form'} && !$newgroup && !$in{'safe'}) {
-	# Update user's global ACL
+if ($in{'acl_security_form'} && !$newgroup && !$in{'safe'}) {
+	# Update user's global ACL, and merge in RPC setting which has
+	# been moved out of this form
 	&foreign_require("", "acl_security.pl");
 	my %uaccess;
 	&foreign_call("", "acl_security_save", \%uaccess, \%in);
+	$uaccess{'rpc'} = $in{'rpc'};
 	&lock_file($aclfile);
 	&save_module_acl(\%uaccess, $in{'name'}, "", 1);
 	&set_ownership_permissions(undef, undef, 0640, $aclfile);

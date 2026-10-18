@@ -1,12 +1,14 @@
 index_title=Webalizer Log Dosyası Analizi
 index_version=Webalizer verssiyon $1
-index_ewebalizer=Sisteminizde webalizer komutu bulunamadı.Kurulmamış ş veya , <a href='$2'>module configuration</a> hatalı olabilir.
-index_econf=Webalizer konfigürasyon dosyası bulunamadı.Kurulmamış ş veya , <a href='$2'>module configuration</a> hatalı olabilir.
+index_version_webalizer=Webalizer sürüm $1
+index_version_awffull=AWFFull
+index_ewebalizer=$1 günlük analiz komutu sisteminizde bulunamadı. Kurulu olmayabilir veya <a href='$2'>modül yapılandırmanız</a> hatalı olabilir.
+index_econf=$1 Webalizer yapılandırma dosyası sisteminizde bulunamadı. Kurulu olmayabilir veya <a href='$2'>modül yapılandırmanız</a> hatalı olabilir.
 index_add=Analiz için yeni bir log dosyası ekle.
 index_path=Log dosyası
 index_type=Tür
 index_size=Boyut
-index_latest=Son değiştirme 
+index_latest=Son değiştirme
 index_nologs=Hehangi bir log dosyası bulunamadı veya analiz için henüz eklenmemiş.
 index_empty=Boş
 index_type1=Apache
@@ -29,15 +31,15 @@ edit_title1=Log Dosyası Ekle
 edit_title2=Log Dosyası Düzenle
 edit_header=Log dosyası rapor seçenekleri
 edit_file=Log dosyayolu
-edit_files=All logfiles in report
-edit_dir=Raporun saklanacağı klasör 
-edit_user=Webalizer'in yürütüleceği kullanıcı 
+edit_files=Rapordaki tüm günlük dosyaları
+edit_dir=Raporun saklanacağı klasör
+edit_user=Webalizer'in yürütüleceği kullanıcı
 edit_view=Rapor İncele
 edit_run=Şimdi raporla
 edit_sched=Rapor zaman planına uygun üretilsin mi?
 edit_sched0=Hayır
-edit_sched1=Evet, aşağıda seçili zamanlarda .. 
-edit_type=Log dosyası biçimi 
+edit_sched1=Evet, aşağıda seçili zamanlarda ..
+edit_type=Log dosyası biçimi
 edit_global=Düzenleme seçenekleri
 edit_return=log detayları
 edit_over=Herzaman log dosyalarını yeniden işle?
@@ -64,7 +66,7 @@ save_euser=Eksik veya geçersiz Webalizer kullanıcısı
 save_ewuser=$1 diye bir unix kullanıcısı yok
 save_ehost=Eksik veya geçersiz websitesi makinismi
 save_etitle=Eksik rapor başlığı
-save_ecannot= Yalnızca $1 klasörü altındaki log dosyaları için rapor düzenleyebilirisiniz
+save_ecannot=Yalnızca $1 klasörü altındaki log dosyaları için rapor düzenleyebilirisiniz
 
 view_epath=Geçersiz PATH_INFO
 view_efile=Geçersiz rapor dosyaismi
@@ -110,7 +112,7 @@ global_TopExit=Cıkış sayfaları
 global_TopSearch=Arama motorları
 global_TopUsers=Kullanıcılar
 global_index=Klasör indeks sayfaları
-global_all=Generate pages listing all
+global_all=Tümünü listeleyen sayfalar oluştur
 global_AllSites=Ziyaretçiler
 global_AllURLs=URL
 global_AllReferrers=Yönlendiriciler
@@ -144,7 +146,7 @@ global_ehistory=Eksik veya geçersiz geçmiş dosyası ismi
 global_ecurrent=Eksik veya geçersiz Webalizer dosyası
 global_ecache=Eksik veya geçersiz DNS biriktirme dosyası
 
-log_create_log=$1	için rapor yaratıdı
+log_create_log=$1 için rapor yaratıdı
 log_modify_log=$1 için rapor güncellendi
 log_delete_log=$1 için rapor silindi
 log_generate_log=$1 için rapor oluşturuldu
@@ -156,7 +158,9 @@ log_disable_logs=$1 logları için planlı raporlama pasif
 acl_view=Yalnızca mevcut raporları inceleyebilir?
 acl_global=Webalizer seçeneklerini düzenleyebilir?
 acl_dir=Bu dosya altındaki log dosyalarını inceleyebilir ve düzenleyebilir
-acl_user=Webalizer'in yürütüleceği kullanıcı 
+acl_user=Webalizer'in yürütüleceği kullanıcı
 acl_this=Şuanki webmin kullanıcısı
 acl_any=Herhangibir kullanıcı
 acl_add=Analiz için log dosyası ekleyebilir?
+
+__norefs=1

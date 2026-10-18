@@ -4,6 +4,8 @@
 
 require './status-lib.pl';
 $access{'sched'} || &error($text{'sched_ecannot'});
+&foreign_require("mailboxes");
+my %mconfig = &foreign_config("mailboxes");
 &ui_print_header(undef, $text{'sched_title'}, "");
 
 print &ui_form_start("save_sched.cgi", "post");
@@ -48,23 +50,55 @@ print &ui_table_row($text{'sched_warn'},
 		  [ [ 1, $text{'sched_warn1'} ],
 		    [ 0, $text{'sched_warn0'} ],
 		    [ 3, $text{'sched_warn3'} ],
-		    [ 2, $text{'sched_warn2'} ] ]), 3);
+		    [ 2, $text{'sched_warn2'} ],
+		    [ 4, $text{'sched_warn4'} ] ]), 3);
 
 # Send email to
+my $e = $config{'sched_email'};
+my $edef = (!$e || $e eq '*' && !$gconfig{'webmin_email_to'}) ? 1 :
+	   $e eq '*' ? 2 : 0;
+my $edis = &js_disable_inputs([ "email" ], [ ], "onClick");
+my $een = &js_disable_inputs([ ], [ "email" ], "onClick");
+my @opts = (
+	[ 1, $text{'sched_none'}."<br>", $edis ],
+	[ 0, $text{'sched_email_custom'}." ".
+	     &ui_textbox("email", $e eq '*'
+	     	? undef
+		: $e, 30, $edef != 0), $een
+	] );
+if ($gconfig{'webmin_email_to'}) {
+	splice(@opts, 1, 0, [ 2, &text('sched_email_def',
+				 "<tt>$gconfig{'webmin_email_to'}</tt>")."<br>",
+			    $edis ]);
+	}
 print &ui_table_row($text{'sched_email'},
-	&ui_opt_textbox("email", $config{'sched_email'}, 30,
-			$text{'sched_none'}, $text{'sched_email'}), 3);
+		    &ui_radio("email_def", $edef, \@opts));
 
 # From: address
+my $fromdef = $mconfig{'webmin_from'} =~ /\@/ ? $mconfig{'webmin_from'} :
+	      !$mconfig{'webmin_from'}
+	      	? "webmin-noreply\@".&mailboxes::get_from_domain()
+		: "$mconfig{'webmin_from'}\@".&mailboxes::get_from_domain();
 print &ui_table_row($text{'sched_from'},
 	&ui_opt_textbox("from", $config{'sched_from'}, 30,
-		        "$text{'default'} (webmin)"), 3);
+		        &text('sched_from_def', "<tt>$fromdef</tt>")), 3);
 
 # SMTP server
 print &ui_table_row($text{'sched_smtp'},
 	&ui_opt_textbox("smtp", $config{'sched_smtp'}, 30,
 			$text{'sched_smtp_prog'},
 			$text{'sched_smtp_server'}), 3);
+
+# SMTP authentication
+$user = $config{'smtp_user'};
+$pass = $config{'smtp_pass'};
+print &ui_table_row($text{'sched_login'},
+	&ui_radio("login_def", $user ? 0 : 1,
+		  [ [ 1, $text{'sched_login1'}."<br>" ],
+		    [ 0, $text{'sched_login0'} ] ])." ".
+	&ui_textbox("smtp_user", $user, 20)." ".
+	$text{'sched_pass'}." ".
+	&ui_textbox("smtp_pass", $pass, 20));
 
 if ($config{'pager_cmd'}) {
 	# Pager number

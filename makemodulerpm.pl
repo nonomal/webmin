@@ -32,34 +32,67 @@ my $release = 1;
 $ENV{'PATH'} = "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin";
 my $allow_overwrite = 0;
 
-my ($force_theme, $rpmdepends, $no_prefix, $vendor, $provides, $url,
-    $force_usermin, $final_mod, $sign, $keyname, $epoch, $dir, $ver, @extrareqs,
-    @exclude);
+my ($force_theme, $no_prefix, $set_prefix,
+    $obsolete_wbm, $vendor, $url, $force_usermin, $final_mod, $sign, $keyname,
+    $epoch, $dir, $ver, @exclude, $copy_tar,
+
+    $rpmdepends, $norpmdepends, $rpmrecommends, $norpmrecommends,
+    $no_requires, $no_recommends, $no_suggests, $no_conflicts, $no_provides,
+    $no_obsoletes);
+
+my $mod_list  = 'full';
 
 # Parse command-line args
 while(@ARGV) {
 	# XXX Untainting isn't needed when running as non-root?
 	my $a = &untaint(shift(@ARGV));
-	if ($a eq "--force-theme") {
-		$force_theme = 1;
-		}
-	elsif ($a eq "--rpm-dir") {
-		$basedir = &untaint(shift(@ARGV));
-		}
-	elsif ($a eq "--licence" || $a eq "--license") {
-		$licence = &untaint(shift(@ARGV));
-		}
-	elsif ($a eq "--rpm-depends") {
+	if ($a eq "--rpm-depends" || $a eq "--mod-depends") {
 		$rpmdepends = 1;
+		}
+	elsif ($a eq "--no-mod-depends") {
+		$norpmdepends = 1;
+		}
+	elsif ($a eq "--rpm-recommends" || $a eq "--mod-recommends") {
+		$rpmrecommends = 1;
+		}
+	elsif ($a eq "--no-mod-recommends") {
+		$norpmrecommends = 1;
+		}
+	# --requires, --recommends, --suggests, --conflicts, --provides and
+	# --obsoletes are not for Webmin modules, and not meant to have prefix,
+	# and populated from module.info automatically
+	# --no-requires, --no-recommends, --no-suggests,
+	# --no-conflicts, --no-provides, --no-obsoletes can be used
+	# to disable the automatic population of these fields from module.info
+	elsif ($a eq "--no-requires") {
+		$no_requires = 1;
+		}
+	elsif ($a eq "--no-recommends") {
+		$no_recommends = 1;
+		}
+	elsif ($a eq "--no-suggests") {
+		$no_suggests = 1;
+		}
+	elsif ($a eq "--no-conflicts") {
+		$no_conflicts = 1;
+		}
+	elsif ($a eq "--no-provides") {
+		$no_provides = 1;
+		}
+	elsif ($a eq "--no-obsoletes") {
+		$no_obsoletes = 1;
 		}
 	elsif ($a eq "--no-prefix") {
 		$no_prefix = 1;
 		}
-	elsif ($a eq "--vendor") {
-		$vendor = &untaint(shift(@ARGV));
+	elsif ($a eq "--prefix") {
+		$set_prefix = &untaint(shift(@ARGV));
 		}
-	elsif ($a eq "--provides") {
-		$provides = &untaint(shift(@ARGV));
+	elsif ($a eq "--obsolete-wbm") {
+		$obsolete_wbm = 1;
+		}
+	elsif ($a eq "--licence" || $a eq "--license") {
+		$licence = &untaint(shift(@ARGV));
 		}
 	elsif ($a eq "--url") {
 		$url = shift(@ARGV);
@@ -76,11 +109,17 @@ while(@ARGV) {
 	elsif ($a eq "--dir") {
 		$final_mod = &untaint(shift(@ARGV));
 		}
-	elsif ($a eq "--requires") {
-		push(@extrareqs, shift(@ARGV));
-		}
 	elsif ($a eq "--allow-overwrite") {
 		$allow_overwrite = 1;
+		}
+	elsif ($a eq "--force-theme") {
+		$force_theme = 1;
+		}
+	elsif ($a eq "--rpm-dir") {
+		$basedir = &untaint(shift(@ARGV));
+		}
+	elsif ($a eq "--vendor") {
+		$vendor = &untaint(shift(@ARGV));
 		}
 	elsif ($a eq "--sign") {
 		$sign = 1;
@@ -93,6 +132,12 @@ while(@ARGV) {
 		}
 	elsif ($a eq "--exclude") {
 		push(@exclude, shift(@ARGV));
+		}
+	elsif ($a eq "--mod-list") {
+		$mod_list = shift(@ARGV);
+		}
+	elsif ($a eq "--copy-tar") {
+		$copy_tar = 1;
 		}
 	elsif ($a =~ /^\-\-/) {
 		print STDERR "Unknown option $a\n";
@@ -108,26 +153,41 @@ while(@ARGV) {
 		}
 	}
 
+# Disable module's depends and recommends if set in extra flags
+$rpmdepends = 0 if ($norpmdepends);
+$rpmrecommends = 0 if ($norpmrecommends);
+
 # Validate args
 if (!$dir) {
 	print "usage: ";
-	print CYAN, "makemodulerpm.pl ";
-	print YELLOW, "[--force-theme]\n";
+	print CYAN, "makemodulerpm.pl <module> [version]", RESET;
+	print YELLOW, "\n";
+	print "                        [--mod-depends] [--no-mod-depends]\n";
+	print "                        [--mod-recommends] [--no-mod-recommends]\n";
+	print "			       [--no-requires]\n";
+	print "			       [--no-suggests]\n";
+	print "			       [--no-conflicts]\n";
+	print "			       [--no-provides]\n";
+	print "			       [--no-obsoletes]\n";
 	print "                        [--rpm-dir directory]\n";
-	print "                        [--rpm-depends]\n";
 	print "                        [--no-prefix]\n";
+	print "                        [--prefix prefix]\n";
+	print "                        [--no-wbm-prefix]\n";
 	print "                        [--vendor name]\n";
 	print "                        [--licence name]\n";
 	print "                        [--url url]\n";
-	print "                        [--provides provides]\n";
 	print "                        [--usermin]\n";
 	print "                        [--release number]\n";
 	print "                        [--epoch number]\n";
 	print "                        [--target-dir directory]\n";
 	print "                        [--dir directory-in-package]\n";
 	print "                        [--allow-overwrite]\n";
-	print CYAN, "                        <module> ";
-	print YELLOW, "[version]\n", RESET;
+	print "                        [--force-theme]\n";
+	print "                        [--sign]\n";
+	print "                        [--key keyname]\n";
+	print "                        [--exclude file]\n";
+	print "                        [--mod-list full|core|minimal]\n";
+	print RESET, "\n";
 	exit(1);
 	}
 my $par;
@@ -157,7 +217,8 @@ if (!-d $spec_dir || !-d $rpm_source_dir || !-d $rpm_dir) {
 
 # Is this actually a module or theme directory?
 -d $source_dir || die "$dir is not a directory";
-my ($depends, $prefix, $desc, $prog, $iver, $istheme, $post_config);
+my ($depends, $prefix, $prefix_auto, $desc, $prog, $iver,
+    $istheme, $post_config);
 if ($minfo{'desc'}) {
 	$depends = join(" ", map { s/\/[0-9\.]+//; $_ }
 				grep { !/^[0-9\.]+$/ }
@@ -193,16 +254,19 @@ elsif ($tinfo{'desc'}) {
 else {
 	die "$source_dir does not appear to be a webmin module or theme";
 	}
+$prefix_auto = $prefix;
 $prefix = "" if ($no_prefix);
+$prefix = $set_prefix if ($set_prefix);
 my $ucprog = ucfirst($prog);
 
 # Copy the directory to a temp location for tarring
 system("/bin/mkdir -p /tmp/makemodulerpm");
 system("cd $par && /bin/cp -rpL $source_mod /tmp/makemodulerpm/$mod");
 system("/usr/bin/find /tmp/makemodulerpm -name .git | xargs rm -rf");
+system("/usr/bin/find /tmp/makemodulerpm -name .github | xargs rm -rf");
 system("/usr/bin/find /tmp/makemodulerpm -name RELEASE | xargs rm -rf");
 system("/usr/bin/find /tmp/makemodulerpm -name RELEASE.sh | xargs rm -rf");
-system("/usr/bin/find /tmp/makemodulerpm -name t | xargs rm -rf");
+system("/usr/bin/find /tmp/makemodulerpm -type d \\( -name t -o -name xt \\) | xargs rm -rf");
 if (-r "/tmp/makemodulerpm/$mod/EXCLUDE") {
 	system("cd /tmp/makemodulerpm/$mod && cat EXCLUDE | xargs rm -rf");
 	system("rm -f /tmp/makemodulerpm/$mod/EXCLUDE");
@@ -233,7 +297,7 @@ system("/bin/rm -rf /tmp/makemodulerpm");
 
 # Build list of dependencies on other RPMs, for inclusion as an RPM
 # Requires: header
-my $rdeps;
+my $rdeps = "";
 if ($rpmdepends && defined($minfo{'depends'})) {
 	my @rdeps;
 	foreach my $d (split(/\s+/, $minfo{'depends'})) {
@@ -259,23 +323,91 @@ if ($rpmdepends && defined($minfo{'depends'})) {
 			my $curr_dir = $0;
 			($curr_dir) = $curr_dir =~ /^(.+)\/[^\/]+$/;
 			$curr_dir = "." if ($curr_dir !~ /^\//);
-			open(my $fh, '<', "$curr_dir/mod_def_list.txt") || die "Error opening \"mod_def_list.txt\" : $!\n";
+			my $mod_def_file = "$curr_dir/mod_${mod_list}_list.txt";
+			next if (! -r $mod_def_file);
+			open(my $fh, '<', $mod_def_file) ||
+				die "Error opening \"$mod_def_file\" : $!\n";
 			$mod_def_list = do { local $/; <$fh> };
 			close($fh);
 			@mod_def_list = split(/\s+/, $mod_def_list);
-			if ( grep( /^$dmod$/, @mod_def_list ) ) {
-				  next;
-				}
+			next if (grep( /^$dmod$/, @mod_def_list ));
 			}
 		push(@rdeps, $dwebmin ? ("webmin", ">=", $dwebmin) :
 			     $dver ? ($prefix.$dmod, ">=", $dver) :
 				     ($prefix.$dmod));
 		}
-	$rdeps = join(" ", @rdeps, @extrareqs);
+	$rdeps = join(" ", @rdeps);
+	}
+
+# Build list of recommended packages on other RPMs, for inclusion as an RPM
+# Recommends: header (Webmin module with prefixes)
+my $rrecom = "";
+if ($rpmrecommends && defined($minfo{'recommends'})) {
+	my @rrecom;
+	foreach my $d (split(/\s+/, $minfo{'recommends'})) {
+		push(@rrecom, $prefix.$d);
+		}
+	$rrecom = join(" ", @rrecom);
+	}
+
+# Build (append) list of required packages (not Webmin modules)
+my @rrequires = ( );
+if (!$no_requires && exists($minfo{'rpm_requires'})) {
+	foreach my $rpmrequire (split(/\s+/, $minfo{'rpm_requires'})) {
+		push(@rrequires, $rpmrequire);
+		}
+	$rdeps .= ($rdeps ? ' ' : '') . join(" ", @rrequires) if (@rrequires);
+	}
+
+# Build (append) list of recommended packages (not Webmin modules)
+my @rrecommends = ( );
+if (!$no_recommends && exists($minfo{'rpm_recommends'})) {
+	foreach my $rpmrecommend (split(/\s+/, $minfo{'rpm_recommends'})) {
+		push(@rrecommends, $rpmrecommend);
+		}
+	$rrecom .= ($rrecom ? ' ' : '') . join(" ", @rrecommends)
+		if (@rrecommends);
+	}
+
+# Build (standalone) list of suggested packages (not Webmin modules)
+my @rsuggests = ( );
+if (!$no_suggests && exists($minfo{'rpm_suggests'})) {
+	foreach my $rpmsuggest (split(/\s+/, $minfo{'rpm_suggests'})) {
+		push(@rsuggests, $rpmsuggest);
+		}
+	}
+
+# Build (standalone) list of conflicts (not Webmin modules)
+my @rconflicts = ( );
+if (!$no_conflicts && exists($minfo{'rpm_conflicts'})) {
+	foreach my $rpmconflict (split(/\s+/, $minfo{'rpm_conflicts'})) {
+		push(@rconflicts, $rpmconflict);
+		}
+	}
+
+# Build (standalone) list of provides (not Webmin modules)
+my @rprovides = ( );
+if (!$no_provides && exists($minfo{'rpm_provides'})) {
+	foreach my $rpmprovide (split(/\s+/, $minfo{'rpm_provides'})) {
+		push(@rprovides, $rpmprovide);
+		}
+	}
+
+# Build (standalone) list of obsoletes (not Webmin modules)
+my @robsoletes = ( );
+if (!$no_obsoletes && exists($minfo{'rpm_obsoletes'})) {
+	foreach my $rpmobsolete (split(/\s+/, $minfo{'rpm_obsoletes'})) {
+		push(@robsoletes, $rpmobsolete);
+		}
+	}
+
+# Fix support for old module name prefixes
+if ($obsolete_wbm) {
+	push(@rprovides, "$prefix_auto$mod");
+	push(@robsoletes, "$prefix_auto$mod");
 	}
 
 # Create the SPEC file
-my $providesheader = $provides ? "Provides: $provides" : "";
 my $vendorheader = $vendor ? "Vendor: $vendor" : "";
 my $urlheader = $url ? "URL: $url" : "";
 my $epochheader = $epoch ? "Epoch: $epoch" : "";
@@ -291,7 +423,14 @@ Summary: $desc
 Name: $prefix$mod
 Version: $ver
 Release: $release
-Requires: /bin/sh /usr/bin/perl /usr/libexec/$prog $rdeps
+Requires: /bin/sh /usr/bin/perl $prog $rdeps
+EOF
+print $SPEC "Recommends: $rrecom\n" if ($rrecom);
+print $SPEC "Suggests: " . join(" ", @rsuggests) . "\n" if (@rsuggests);
+print $SPEC "Conflicts: " . join(" ", @rconflicts) . "\n" if (@rconflicts);
+print $SPEC "Provides: " . join(" ", @rprovides) . "\n" if (@rprovides);
+print $SPEC "Obsoletes: " . join(" ", @robsoletes) . "\n" if (@robsoletes);
+print $SPEC <<EOF;
 Autoreq: 0
 Autoprov: 0
 License: $licence
@@ -300,7 +439,6 @@ Source: $mod.tar.gz
 BuildRoot: /tmp/%{name}-%{version}
 BuildArchitectures: noarch
 $epochheader
-$providesheader
 $vendorheader
 $urlheader
 %description
@@ -354,7 +492,7 @@ if [ "$post_config" = "1" ]; then
 	os_version=`grep "^os_version=" /etc/$prog/config | sed -e 's/os_version=//g'`
 	real_os_type=`grep "^real_os_type=" /etc/$prog/config | sed -e 's/real_os_type=//g'`
 	real_os_version=`grep "^real_os_version=" /etc/$prog/config | sed -e 's/real_os_version=//g'`
-	/usr/bin/perl /usr/libexec/$prog/copyconfig.pl "\$os_type/\$real_os_type" "\$os_version/\$real_os_version" /usr/libexec/$prog /etc/$prog $mod
+	/usr/bin/perl /usr/libexec/$prog/copyconfig.pl "\$os_type/\$real_os_type" "\$os_version/\$real_os_version" /usr/libexec/$prog /etc/$prog $mod >/dev/null
 
 	# Update the ACL for the root user, or the first user in the ACL
 	grep "^root:" /etc/$prog/webmin.acl >/dev/null
@@ -413,6 +551,9 @@ if [ "$istheme" = "1" -a "\$1" = "0" ]; then
 fi
 # Run the pre-uninstall script, if we are not upgrading
 if [ "$prog" = "webmin" -a "\$1" = "0" -a -r "/usr/libexec/$prog/$mod/uninstall.pl" ]; then
+	# Skip if replaced by a different package (wbm-foo - webmin-foo)
+	owner=\$(rpm -qf --qf '%%{NAME}\\n' "/usr/libexec/$prog/$mod/uninstall.pl" 2>/dev/null || true)
+	[ -n "\$owner" -a "\$owner" != "%{name}" ] && exit 0
 	cd /usr/libexec/$prog
 	WEBMIN_CONFIG=/etc/$prog WEBMIN_VAR=/var/$prog /usr/libexec/$prog/run-uninstalls.pl $mod
 fi
@@ -421,6 +562,15 @@ fi
 %postun
 EOF
 close($SPEC);
+
+# Put the tar in /tmp too if tar package is requested
+my $tar_release_file;
+if ($copy_tar) {
+	my $tar_release = $release;
+	$tar_release =~ s/^[0-9]+//;
+	$tar_release_file = "$prefix$mod-$ver$tar_release.tar.gz";
+	system("cp $rpm_source_dir/$mod.tar.gz /tmp/$tar_release_file");
+	}
 
 # Build the actual RPM
 my $cmd = -x "/usr/bin/rpmbuild" ? "/usr/bin/rpmbuild" : "/bin/rpm";
@@ -436,10 +586,20 @@ if ($sign) {
 if ($target_dir =~ /:/) {
 	# scp to dest
 	system("scp $rpm_dir/$prefix$mod-$ver-$release.noarch.rpm $target_dir/$prefix$mod-$ver-$release.noarch.rpm");
+	# scp the tar too if requested
+	if ($copy_tar) {
+		system("scp /tmp/$tar_release_file $target_dir/$tar_release_file");
+		unlink("/tmp/$tar_release_file");
+		}
 	}
 elsif ($rpm_dir ne $target_dir) {
 	# Just copy
 	system("/bin/cp $rpm_dir/$prefix$mod-$ver-$release.noarch.rpm $target_dir/$prefix$mod-$ver-$release.noarch.rpm");
+	# Copy the tar too if requested
+	if ($copy_tar) {
+		system("/bin/cp /tmp/$tar_release_file $target_dir/$tar_release_file");
+		unlink("/tmp/$tar_release_file");
+		}
 	}
 
 # read_file(file, &assoc, [&order], [lowercase])

@@ -70,7 +70,7 @@ if (!$in{'gid_def'} || $in{'old'} ne '') {
 			}
 		}
 	}
-elsif ( $in{'gid_def'} eq '1' ) {
+elsif ($in{'gid_def'} == 1) {
 	# Can assign GID here
 	$in{'gid'} = int($config{'base_gid'} > $access{'lowgid'} ?
 			 $config{'base_gid'} : $access{'lowgid'});
@@ -82,16 +82,15 @@ elsif ( $in{'gid_def'} eq '1' ) {
 		&error($text{'gsave_eallgid'});
 		}
 	}
-
-elsif ( $in{'gid_def'} eq '2' ) {
+elsif ($in{'gid_def'} == 2) {
 	# Can calculate GID here
-        if ( $config{'gid_calc'} ) {
-            $in{'gid'} = &mkgid($in{'group'});
-        } else {
-            $in{'gid'} = &berkeley_cksum($in{'group'});
-        }
-        &error("Unable to calculate GID, invalid group name specified") if ( $in{'gid'} lt 0 );
-
+        if ($config{'gid_calc'}) {
+		$in{'gid'} = &mkgid($in{'group'});
+		}
+	else {
+		$in{'gid'} = &berkeley_cksum($in{'group'});
+		}
+        &error($text{'gsave_egidcalc'}) if ($in{'gid'} < 0);
 	while($used{$in{'gid'}}) {
 		$in{'gid'}++;
 		}
@@ -100,8 +99,26 @@ elsif ( $in{'gid_def'} eq '2' ) {
 		&error($text{'gsave_eallgid'});
 		}
 	}
+else {
+	# Invalid value!
+	&error($text{'gsave_egid_def'});
+	}
 
 @mems = split(/\r?\n/, $in{'members'});
+if ($access{'uedit_mode'} != 0) {
+	# Only users the Webmin user is allowed to edit can be added to or
+	# removed from the group
+	@ulist = &list_users();
+	%omems = map { $_, 1 } split(/,/, $ogroup{'members'});
+	%nmems = map { $_, 1 } @mems;
+	foreach $u (@ulist) {
+		$n = $u->{'user'};
+		next if (!$omems{$n} == !$nmems{$n});
+		next if (&can_edit_user(\%access, $u));
+		&error(&text($omems{$n} ? 'gsave_ememberr' : 'gsave_emember',
+			     &html_escape($n)));
+		}
+	}
 $group{'members'} = join(',', @mems);
 $group{'gid'} = $in{'gid'};
 

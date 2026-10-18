@@ -13,6 +13,7 @@ $network_interfaces = '/proc/net/dev';
 $sysctl_config = "/etc/sysctl.conf";
 
 do 'linux-lib.pl';
+do 'ifupdown-lib.pl' if (!defined(&ifupdown_get_interface_defs));
 
 # boot_interfaces()
 # Returns a list of interfaces brought up at boot time
@@ -71,6 +72,8 @@ foreach $iface (@ifaces) {
 				$cfg->{'ether'} = $v[1];
 				}
 			elsif ($param eq 'bridge_ports') {
+				# An interface with bridge ports is a bridge
+				$cfg->{'bridge'} = 1;
 				$cfg->{'bridgeto'} = $value;
 				}
 			elsif ($param eq 'bridge_stp') {
@@ -229,12 +232,12 @@ if ($cfg->{'bridge'}) {
 
 # Set bonding parameters
 if(($cfg->{'bond'} == 1) && ($gconfig{'os_version'} >= 5)) {
-	push(@options, [&bonding_option('mode').' '.$cfg->{'mode'}]);
-	push(@options, [&bonding_option('miimon').' '.$cfg->{'miimon'}]) if ($cfg->{'miimon'});
-	push(@options, [&bonding_option('updelay').' '.$cfg->{'updelay'}]) if ($cfg->{'updelay'});
-	push(@options, [&bonding_option('downdelay').' '.$cfg->{'downdelay'}]) if ($cfg->{'downdelay'});
-	push(@options, [&bonding_option('primary').' '.$cfg->{'primary'}]) if ($cfg->{'primary'});
-	push(@options, ['slaves '.$cfg->{'partner'}]);
+	push(@options, [&bonding_option('mode'), $cfg->{'mode'}]);
+	push(@options, [&bonding_option('miimon'), $cfg->{'miimon'}]) if ($cfg->{'miimon'});
+	push(@options, [&bonding_option('updelay'), $cfg->{'updelay'}]) if ($cfg->{'updelay'});
+	push(@options, [&bonding_option('downdelay'), $cfg->{'downdelay'}]) if ($cfg->{'downdelay'});
+	push(@options, [&bonding_option('primary'), $cfg->{'primary'}]) if ($cfg->{'primary'});
+	push(@options, ['slaves', $cfg->{'partner'}]);
 	}
 elsif ($cfg->{'bond'} == 1) {
 	push(@options, ['up', '/sbin/ifenslave '.$cfg->{'name'}." ".
@@ -254,7 +257,12 @@ if(($cfg->{'vlan'} == 1) && ($gconfig{'os_version'} < 5)) {
 		}
 	}
 if(($cfg->{'vlan'} == 1) && ($cfg->{'mtu'})) {
-	push(@options, ['pre-up', '/sbin/ifconfig '.$cfg->{'physical'}.' mtu '.$cfg->{'mtu'}]);
+	if (&has_command("ip")) {
+		push(@options, ['pre-up', 'ip link set mtu '.$cfg->{'mtu'}.' dev '.$cfg->{'physical'}]);
+		}
+	else {
+		push(@options, ['pre-up', '/sbin/ifconfig '.$cfg->{'physical'}.' mtu '.$cfg->{'mtu'}]);
+		}
 	}
 
 # Find the existing interface section
@@ -328,9 +336,6 @@ else {
 my @options6;
 my @address6 = @{$cfg->{'address6'}};
 my @netmask6 = @{$cfg->{'netmask6'}};
-if (@address6 || $cfg->{'auto6'}) {
-	push(@options6, ['pre-up', '/sbin/modprobe -q ipv6 ; /bin/true']);
-	}
 if (@address6) {
 	push(@options6, [ "address", shift(@address6) ]);
 	push(@options6, [ "netmask", shift(@netmask6) ]);
@@ -338,7 +343,12 @@ if (@address6) {
 while(@address6) {
 	my $a = shift(@address6);
 	my $n = shift(@netmask6);
-	push(@options6, [ "up","ifconfig $cfg->{'fullname'} inet6 add $a/$n" ]);
+	if (&has_command("ip")) {
+		push(@options6, [ "up", "ip addr add $a/$n dev $cfg->{'fullname'}" ]);
+		}
+	else {
+		push(@options6, [ "up", "ifconfig $cfg->{'fullname'} inet6 add $a/$n" ]);
+		}
 	}
 if ($cfg->{'gateway6'}) {
 	push(@options6, [ "gateway", $cfg->{'gateway6'} ]);
@@ -795,106 +805,7 @@ sub get_interface_defs
 {
 my ($file, $done) = @_;
 $file ||= $network_interfaces_config;
-$done ||= { };
-return ( ) if ($done->{$file}++);
-my $fh;
-my @ret;
-open($fh, $file) || return ();
-# read the file line by line
-my $line = <$fh>;
-my $lnum = 0;
-my $err;
-while (defined $line) {
-	last if ($err);
-	chomp($line);
-	# skip comments
-	if ($line =~ /^\s*#/ || $line =~ /^\s*$/) {
-		$line = <$fh>;
-		$lnum++;
-		next;
-		}
-	if ($line =~ /^\s*auto/) {
-		# skip auto stanzas
-		$line = <$fh>;
-		$lnum++;
-		while(defined($line) && $line !~ /^\s*(iface|mapping|auto|source|allow-hotplug)/) {
-			$line = <$fh>;
-			$lnum++;
-			next;
-			}
-		}
-	elsif ($line =~ /^\s*mapping/) {
-		# skip mapping stanzas
-		$line = <$fh>;
-		$lnum++;
-		while(defined($line) && $line !~ /^\s*(iface|mapping|auto|source|allow-hotplug)/) {
-			$line = <$fh>;
-			$lnum++;
-			next;
-			}
-		}
-	elsif ($line =~ /^\s*(source|source-directory)\s+(\S+)/) {
-		# Expand includes
-		$line = <$fh>;
-		$lnum++;
-		my ($dir, $src) = ($1, $2);
-		my @srcs;
-		if ($dir eq "source-directory") {
-			opendir(SRCDIR, $src);
-			@srcs = grep { /^[a-zA-Z0-9_-]+$/ } readdir(SRCDIR);
-			closedir(SRCDIR);
-			@srcs = map { "$src/$_" } @srcs
-				if (@srcs);
-			}
-		else {
-			@srcs = glob($src);
-			}
-		foreach $src (@srcs) {
-			my @inc = &get_interface_defs($src, $done);
-			push(@ret, @inc);
-			}
-		}
-	elsif ($line =~ /^\s*allow-hotplug/) {
-		# Skip hotplug lines
-		$line = <$fh>;
-		$lnum++;
-		}
-	elsif (my ($name, $addrfam, $method) = ($line =~ /^\s*iface\s+(\S+)\s+(\S+)\s+(\S+)\s*$/) ) {
-		# only lines starting with "iface" are expected here
-		my @iface_options;
-		# now read everything until the next iface definition
-		$line = <$fh>;
-		$lnum++;
-		while (defined $line && ! ($line =~ /^\s*(iface|mapping|auto|source|allow-hotplug)/)) {
-			# skip comments and empty lines
-			if ($line =~ /^\s*#/ || $line =~ /^\s*$/) {
-				$line = <$fh>;
-				$lnum++;
-				next;
-				}
-			my ($param, $value);
-			if ( ($param, $value) = ($line =~ /^\s*(\S+)\s+(.*)\s*$/) ) {
-				push(@iface_options, [$param, $value]);
-				}
-			elsif ( ($param) = ($line =~ /^\s*(\S+)\s*$/) ) {
-				push(@iface_options, [$param, '']);
-				}
-			else {
-				error("Error in option line: '$line' invalid");
-				}
-			$line = <$fh>;
-			$lnum++;
-			}
-		push(@ret, [$name, $addrfam, $method, \@iface_options,
-			    $file, $lnum]);
-		}
-	else {
-		$err++;
-		error("Error reading file $network_interfaces_config: unexpected line '$line'");
-		}
-	}
-close($fh);
-return @ret;
+return &ifupdown_get_interface_defs($file, $done);
 }
 
 # get_auto_defs()
@@ -951,6 +862,8 @@ sub modify_interface_def
 {
 my ($name, $addrfam, $method, $options, $mode, $file) = @_;
 $file ||= $network_interfaces_config;
+&validate_interface_options($options);
+
 # make a backup copy
 &copy_source_dest($file, $file."~");
 local *OLDCFGFILE, *NEWCFGFILE;
@@ -998,7 +911,7 @@ while (defined ($line=<OLDCFGFILE>)) {
                # write only upon first entrance here
                if ($mode == 0 && $new_options_wrote == 0) {
                        $new_options_wrote = 1;
-                       foreach $option (@$options) {
+                       foreach my $option (@$options) {
 				my ($param, $value) = @$option;
 				&print_tempfile(NEWCFGFILE,"\t$param $value\n");
 				}
@@ -1019,17 +932,33 @@ close(OLDCFGFILE);
 sub new_interface_def
 {
 local ($name, $addrfam, $method, $options, $file) = @_;
+&validate_interface_options($options);
 $file ||= $network_interfaces_config;
 local *CFGFILE;
 &open_lock_tempfile(CFGFILE, ">>$file") ||
 	error("Unable to open $file");
 &print_tempfile(CFGFILE, "\niface $name $addrfam $method\n");
-foreach $option (@$options) {
+foreach my $option (@$options) {
 	my ($param, $value) = @$option;
 	&print_tempfile(CFGFILE, "\t$param $value\n");
 	}
 &close_tempfile(CFGFILE);
 &unlock_file($file);
+}
+
+# validate_interface_options(&options)
+# Call error if any interface option name or valid is not suitable
+# for the config file
+sub validate_interface_options
+{
+my ($options) = @_;
+foreach my $option (@$options) {
+	my ($param, $value) = @$option;
+	$param =~ /\r|\n/ && &error("Invalid interface parameter name ".
+				    &html_escape($param));
+	$value =~ /\r|\n/ && &error("Invalid interface parameter value ".
+				    &html_escape($value));
+	}
 }
 
 # delete an already defined interface

@@ -6,7 +6,13 @@ use IO::Handle;
 sub list_processes
 {
 local($pcmd, $line, $i, %pidmap, @plist);
-$pcmd = @_ ? "-p $_[0]" : "";
+if (@_) {
+	$_[0] =~ /^\d+$/ || return ( );
+	$pcmd = "-p ".quotemeta($_[0]);
+	}
+else {
+	$pcmd = "";
+	}
 open(PS, "ps -axwwww -o pid,ppid,user,vsz,%cpu,time,nice,tty,ruser,rgid,pgid,lstart,lim,command $pcmd |");
 for($i=0; $line=<PS>; $i++) {
 	chop($line);
@@ -37,7 +43,8 @@ return @plist;
 sub renice_proc
 {
 return undef if (&is_readonly_mode());
-local $out = &backquote_logged("renice $_[1] -p $_[0] 2>&1");
+local $out = &backquote_logged("renice ".quotemeta($_[1])." -p ".
+			       quotemeta($_[0])." 2>&1");
 if ($?) { return $out; }
 return undef;
 }
@@ -101,7 +108,16 @@ ioctl($ttyfh, 536900705, 0);
 sub get_memory_info
 {
 my $sysctl = {};
-my $sysctl_output = &backquote_command("/sbin/sysctl -a 2>/dev/null");
+# Get only the specific values we need not all with -a
+my @needed = qw(
+	hw.physmem
+	hw.pagesize
+	vm.stats.vm.v_inactive_count
+	vm.stats.vm.v_cache_count
+	vm.stats.vm.v_free_count
+	);
+my $sysctl_output = &backquote_command("/sbin/sysctl " .
+	join(" ", @needed) . " 2>/dev/null");
 return ( ) if ($?);
 foreach my $line (split(/\n/, $sysctl_output)) {
 	if ($line =~ m/^([^:]+):\s+(.+)\s*$/s) {
@@ -173,7 +189,34 @@ return ( ) if ($?);
 my @lines = split(/\r?\n/, $out);
 my @w = split(/\s+/, $lines[$#lines]);
 shift(@w) if ($w[0] eq '');
-return ( $w[-3], $w[-2], $w[-1], 0, 0, undef, undef );
+my ($bi, $bo) = (0, 0);
+my $out2 = &backquote_command("iostat -Ix -d -t da 0.25 2 2>/dev/null");
+if (!$?) {
+	foreach my $l (split(/\r?\n/, $out2)) {
+		# Getting the 4th and 5th columns of the last line for direct access device
+		# device           r/i         w/i         kr/i         kw/i qlen   tsvc_t/i      sb/i  
+		# ada0          3457.0    134574.0      61068.0    8443152.0    0       36.3      19.2
+		if ($l =~ /^.*?da\d+\s+\S+\s+\S+\s+(\S+)\s+(\S+)\s+\d/) {
+			$bi = int($1) * 4; # kr/i per period, i.e. 0.25 seconds
+			$bo = int($2) * 4; # kw/i per period, i.e. 0.25 seconds
+			}
+		}
+	}
+return ( $w[-3], $w[-2], $w[-1], 0, 0, $bi, $bo );
+}
+
+# has_disk_stats()
+# Returns 1 if disk I/O stats are available
+sub has_disk_stats
+{
+return &has_command("iostat") ? 1 : 0;
+}
+
+# has_network_stats()
+# Returns 1 if network I/O stats are available
+sub has_network_stats
+{
+return &has_command("netstat") ? 1 : 0;
 }
 
 1;

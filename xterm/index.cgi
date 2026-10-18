@@ -1,41 +1,52 @@
 #!/usr/local/bin/perl
 # Show a terminal that is connected to a Websockets server via Webmin proxying
-require './xterm-lib.pl';
-&ReadParse();
+
+use strict;
+use warnings;
+no warnings 'uninitialized';
+our $unsafe_index_cgi = 1;
+require './xterm-lib.pl';    ## no critic
+our (%in, %text, %config, %gconfig, %access, %module_info,
+     $module_name, $module_config_directory, $module_var_directory,
+     $remote_user, $session_id);
+ReadParse();
 
 # Check for needed modules
-my @modnames = ("Digest::SHA", "Digest::MD5", "IO::Pty",
-                "IO::Select", "Time::HiRes",
-                "Net::WebSocket::Server");
-foreach my $modname (@modnames) {
-	eval "use ${modname};";
-	if ($@) {
-		&ui_print_header(undef, $text{'index_title'}, "", undef, 1, 1, 0);
-		my $missinglink = &text('index_cpan', "<tt>$modname</tt>",
-			    "../cpan/download.cgi?source=3&cpan=$modname&mode=2&return=/$module_name/&returndesc=".&urlize($module_info{'desc'}));
-		if ($gconfig{'os_type'} eq 'redhat-linux') {
-			$missinglink .= " ".
-				&text('index_epel',
-					'https://docs.fedoraproject.org/en-US/epel');
-			}
-		elsif ($gconfig{'os_type'} eq 'suse-linux') {
-			$missinglink =
-				&text('index_suse', "<tt>$modname</tt>",
-					'https://software.opensuse.org/download/package?package=perl-IO-Tty&project=devel%3Alanguages%3Aperl');
-			}
-		if (&get_product_name() eq 'usermin') {
-			print &text('index_missing', $modname) ."<p>\n";
-			}
-		else {
-			print $missinglink ."<p>\n";
-			}
-		&ui_print_footer("/", $text{'index'});
-		exit;
+my @modload = (
+	['Digest::SHA',            sub { eval { require Digest::SHA;            Digest::SHA->import;            1 } }],
+	['Digest::MD5',            sub { eval { require Digest::MD5;            Digest::MD5->import;            1 } }],
+	['IO::Select',             sub { eval { require IO::Select;             IO::Select->import;             1 } }],
+	['Time::HiRes',            sub { eval { require Time::HiRes;            Time::HiRes->import;            1 } }],
+	['Net::WebSocket::Server', sub { eval { require Net::WebSocket::Server; Net::WebSocket::Server->import; 1 } }],
+	);
+foreach my $m (@modload) {
+	my ($modname, $loader) = @$m;
+	next if ($loader->());
+	ui_print_header(undef, $text{'index_title'}, "", undef, 1, 1, 0);
+	my $missinglink = text('index_cpan', "<tt>$modname</tt>",
+		    "../cpan/download.cgi?source=3&cpan=$modname&mode=2&return=/$module_name/&returndesc=".urlize($module_info{'desc'}));
+	if ($gconfig{'os_type'} eq 'redhat-linux') {
+		$missinglink .= " ".
+			text('index_epel',
+				'https://docs.fedoraproject.org/en-US/epel');
 		}
+	elsif ($gconfig{'os_type'} eq 'suse-linux') {
+		$missinglink =
+			text('index_suse', "<tt>$modname</tt>",
+				'https://software.opensuse.org/download/package?package=perl-IO-Tty&project=devel%3Alanguages%3Aperl');
+		}
+	if (get_product_name() eq 'usermin') {
+		print text('index_missing', $modname) ."<p>\n";
+		}
+	else {
+		print $missinglink ."<p>\n";
+		}
+	ui_print_footer("/", $text{'index'});
+	exit;
 	}
 
 # Get Webmin current version for links serial
-my $wver = &get_webmin_version();
+my $wver = get_webmin_version();
 $wver =~ s/\.//;
 
 # Build Xterm dependency links
@@ -44,18 +55,17 @@ my $termlinks =
 	  'js'  => ["xterm.js?$wver",
 	            "xterm-addon-attach.js?$wver",
 	            "xterm-addon-fit.js?$wver",
-	            "xterm-addon-canvas.js?$wver",
 	            "xterm-addon-webgl.js?$wver"] };
 
 # Pre-process options
 my $conf_size_str = $config{'size'};
 my $def_cols_n = 80;
 my $def_rows_n = 24;
-my $xmlhr = $ENV{'HTTP_X_REQUESTED_WITH'} eq "XMLHttpRequest";
-my %term_opts;
+my $xmlhr = ($ENV{'HTTP_X_REQUESTED_WITH'} || '') eq "XMLHttpRequest";
+my $font_size = $config{'fontsize'} || 14;
 
 # Parse module config
-my ($conf_cols_n, $conf_rows_n) = ($conf_size_str =~ /([\d]+)X([\d]+)/i);
+my ($conf_cols_n, $conf_rows_n) = (($conf_size_str || '') =~ /([\d]+)X([\d]+)/i);
 $conf_cols_n = int($conf_cols_n);
 $conf_rows_n = int($conf_rows_n);
 
@@ -67,12 +77,30 @@ my $env_rows = $conf_rows_n || $def_rows_n;
 # in fixed mode, and only for old themes
 if ($conf_cols_n && $conf_rows_n && !$xmlhr) {
 	$ENV{'COLUMNS'} = $conf_cols_n;
-	$ENV{'LINES'} = $conf_rows_n;	
+	$ENV{'LINES'} = $conf_rows_n;
 	}
+
+# Resolve colors once for both the standalone terminal and theme clients.
+my $terminal_options = get_terminal_options($config{'theme'});
+# Auto clients choose between the same palettes used by explicit selections.
+my $terminal_themes = $config{'theme'} eq 'auto' ? {
+    'dark' => get_terminal_options('dark'),
+    'light' => get_terminal_options('light'),
+    } : undef;
+my $terminal_theme_json = convert_to_json($terminal_options->{'theme'});
+my $terminal_background = $terminal_options->{'theme'}->{'background'};
+my $terminal_foreground = $terminal_options->{'theme'}->{'foreground'};
+my $terminal_contrast = $terminal_options->{'minimumContrastRatio'};
 
 # Define columns and rows
 my $conf_screen_reader = $config{'screen_reader'} eq 'true' ? 'true' : 'false';
-$termjs_opts{'Options'} = "{ cols: $env_cols, rows: $env_rows, screenReaderMode: $conf_screen_reader }";
+my %term_opts;
+$term_opts{'Options'} = "{ cols: $env_cols, rows: $env_rows, ".
+			    "screenReaderMode: $conf_screen_reader, ".
+			    "overviewRuler: { width: 9 }, ".
+			    "theme: $terminal_theme_json, ".
+			    "minimumContrastRatio: $terminal_contrast, ".
+			    "fontSize: $font_size }";
 
 my $term_size = "
 	min-width: ".($conf_cols_n ? "".($conf_cols_n * 9)."px" : "calc(100vw - 22px)").";
@@ -90,8 +118,9 @@ body[style='height:100%'] {
 	white-space: nowrap;
 }
 #terminal {
-	border: 1px solid #000;
-	background-color: #000;
+	border: 1px solid var(--terminal-background, #000);
+	background-color: var(--terminal-background, #000);
+	color: var(--terminal-foreground, #fff);
 	padding: 2px;
 	margin: 0 auto;
 	$term_size
@@ -112,8 +141,8 @@ body[style='height:100%'] {
     box-sizing: border-box;
 
     border: 1px solid transparent;
-    border-top-color: rgba(255, 255, 255, 0.8);
-    border-bottom-color: rgba(255, 255, 255, 0.8);
+    border-top-color: var(--terminal-foreground, #fff);
+    border-bottom-color: var(--terminal-foreground, #fff);
     animation: jumping-spinner 1s ease infinite;
 }
 
@@ -124,7 +153,7 @@ body[style='height:100%'] {
     margin-left: 24px;
     margin-top: -16px;
     font-weight: 100;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--terminal-foreground, #fff);
     font-family: "Lucida Console", Courier, monospace;
     font-size: 14px;
     text-transform: uppercase;
@@ -153,8 +182,11 @@ body[style='height:100%'] {
 
 EOF
 
+# Share loading colors and Auto updates with other terminal modules.
+my $terminal_loading_script = get_terminal_theme_script($config{'theme'});
+
 # Print header
-&ui_print_header(undef, $text{'index_title'}, "", undef, 1, 1, 0, undef,
+ui_print_header(undef, $text{'index_title'}, "", undef, 1, 1, 0, undef,
 		 "<link rel=stylesheet href=\"$termlinks->{'css'}[0]\">\n".
 		 "<script src=\"$termlinks->{'js'}[0]\"></script>\n".
 		 "<script src=\"$termlinks->{'js'}[1]\"></script>\n".
@@ -163,26 +195,28 @@ EOF
 		);
 
 # Print main container
-print "<div data-label=\"$text{'index_connecting'}\" id=\"terminal\"></div>\n";
+print "<div data-label=\"$text{'index_connecting'}\" id=\"terminal\" ".
+      "style=\"--terminal-background: $terminal_background; ".
+      "--terminal-foreground: $terminal_foreground\"></div>\n".
+      ($terminal_themes ? $terminal_loading_script : '');
 
-# Get a free port that can be used for the socket
-my $port = &allocate_miniserv_websocket();
-
-# Check permissions for user to run as
-my $user = $access{'user'};
-if ($user eq "*") {
-	$user = $remote_user;
+# Get a free port that can be used for the socket. Normal browser sessions
+# are revalidated by miniserv while the websocket stays open. Proxied or
+# Basic-auth requests may not have a session cookie, so only those routes get
+# a one-time backend handshake secret.
+my $websocket_session_id = $session_id;
+my $backend_session;
+if (!$websocket_session_id) {
+	$websocket_session_id = generate_miniserv_websocket_token();
+	$backend_session = $websocket_session_id;
 	}
-$user = $config{'user'} if ($user eq 'root' && $config{'user'});
+my $port = allocate_miniserv_websocket(
+	$module_name, undef, $backend_session);
 
-# Switch to given user
-if ($user eq "root" && $in{'user'}) {
-	defined(getpwnam($in{'user'})) ||
-		&error(&text('index_euser', &html_escape($in{'user'})));
-	$user = $in{'user'};
-	}
+# Decide which Unix account the terminal will run as
+my $user = resolve_shell_user(\%access, $remote_user, \%in, \%config);
 my @uinfo = getpwnam($user);
-@uinfo || &error(&text('index_euser', &html_escape($user)));
+@uinfo || error(text('index_euser', html_escape($user)));
 
 # Check for directory to start the shell in
 my $dir = $in{'dir'};
@@ -190,68 +224,66 @@ my $dir = $in{'dir'};
 # Launch the shell server on the allocated port
 my $shellserver_cmd = "$module_config_directory/shellserver.pl";
 if (!-r $shellserver_cmd) {
-	&create_wrapper($shellserver_cmd, $module_name, "shellserver.pl");
+	create_wrapper($shellserver_cmd, $module_name, "shellserver.pl");
 	}
-my $tmpdir = &tempname_dir();
-$ENV{'SESSION_ID'} = $main::session_id;
-&system_logged($shellserver_cmd." ".quotemeta($port)." ".quotemeta($user).
+# shellserver.pl validates the backend websocket key against SESSION_ID. For
+# normal sessions miniserv forwards the browser session; no-cookie routes use
+# the one-time backend_session stored in miniserv.conf above.
+$ENV{'SESSION_ID'} = $websocket_session_id;
+system_logged($shellserver_cmd." ".quotemeta($port)." ".quotemeta($user).
 	       ($dir ? " ".quotemeta($dir) : "").
-	       " >$tmpdir/ws-$port.out 2>&1 </dev/null");
+	       " >$module_var_directory/websocket-connection-$port.out 2>&1 </dev/null");
 
 # Open the terminal
-my $ws_proto = lc($ENV{'HTTPS'}) eq 'on' ? 'wss' : 'ws';
-my $http_host_conf = &trim($config{'host'});
-if ($http_host_conf) {
-		if ($http_host_conf !~ /^wss?:\/\//) {
-			$http_host_conf = "$ws_proto://$http_host_conf";
-			}
-		$http_host_conf =~ s/[\/]+$//g;
-		}
-my $http_host = $http_host_conf || "$ws_proto://$ENV{'HTTP_HOST'}";
-my $url = "$http_host/$module_name/ws-$port";
-my $canvasAddon = $termlinks->{'js'}[3];
-my $webGLAddon = $termlinks->{'js'}[4];
+my $url = get_miniserv_websocket_url($port, $config{'host'}, $module_name);
+my $webGLAddon = $termlinks->{'js'}[3];
 my $term_script = <<EOF;
 
 (function() {
 	const socket = new WebSocket('$url', 'binary'),
 	      termcont = document.getElementById('terminal'),
-	      err_conn_cannot = 'Cannot connect to the socket $url',
-	      err_conn_lost = 'Connection to the socket $url lost',
+	      err_conn_cannot = 'Cannot connect to the socket ' + socket.url,
+	      err_conn_lost = 'Connection to the socket ' + socket.url + ' lost',
 	      webGLAddonLink = '$webGLAddon',
-	      canvasAddonLink = '$canvasAddon',
 	      detectWebGLContext = (function() {
 	          const canvas = document.createElement("canvas"),
-	          gl = canvas.getContext("webgl") ||
-	               canvas.getContext("experimental-webgl");
+	                gl = canvas.getContext("webgl") ||
+	                     canvas.getContext("experimental-webgl");
 	          return gl instanceof WebGLRenderingContext ? true : false;
 	      })();
 	socket.onopen = function() {
-		const term = new Terminal($termjs_opts{'Options'}),
+		const term = new Terminal($term_opts{'Options'}),
 		      attachAddon = new AttachAddon.AttachAddon(this),
 		      fitAddon = new FitAddon.FitAddon(),
 		      renderScript = document.createElement('script');
-	  renderScript.src = detectWebGLContext ? webGLAddonLink : canvasAddonLink;
+
+	  // Attach the renderer to the palette used while connecting.
+	  if (termcont.xtermTheme) termcont.xtermTheme(term);
+
+	  renderScript.src = webGLAddonLink;
 	  renderScript.async = false;
 	  document.body.appendChild(renderScript);
 
 	  // Wait to load requested render addon
 	  renderScript.addEventListener('load', function() {
-	      const rendererAddon = detectWebGLContext ?
-	              new WebglAddon.WebglAddon() :
-	              new CanvasAddon.CanvasAddon();
+	      let rendererAddon;
+
+	      if (detectWebGLContext && typeof WebglAddon === 'object') {
+	          rendererAddon = new WebglAddon.WebglAddon();
+	          term.loadAddon(rendererAddon);
+
+	          // Handle case of dropping WebGL context
+	          if (rendererAddon.onContextLoss) {
+	              rendererAddon.onContextLoss(function() {
+	                  rendererAddon.dispose();
+	              });
+	          }
+	      }
+
 	      term.loadAddon(attachAddon);
 	      term.loadAddon(fitAddon);
-	      term.loadAddon(rendererAddon);
 	      term.open(termcont);
-		  setTimeout(function() {term.focus()}, 6e2);
-
-	      // Handle case of dropping WebGL context
-	      if (typeof WebglAddon === 'object') {
-	        rendererAddon.onContextLoss(function() {
-	          rendererAddon.dispose();
-	        });
-	      }
+	      setTimeout(function() { term.focus() }, 6e2);
 
 	      // On resize event triggered by fit()
 	      term.onResize(function(e) {
@@ -265,10 +297,12 @@ my $term_script = <<EOF;
 	  });
 	};
 	socket.onerror = function() {
+		if (termcont.xtermTheme) termcont.xtermTheme.dispose();
 		termcont.innerHTML = '<tt style="color: \#ff0000">Error: ' +
 			err_conn_cannot + '</tt>';
 	};
 	socket.onclose = function() {
+		if (termcont.xtermTheme) termcont.xtermTheme.dispose();
 		termcont.innerHTML = '<tt style="color: \#ff0000">Error: ' +
 			err_conn_lost + '</tt>';
 	};
@@ -276,21 +310,21 @@ my $term_script = <<EOF;
 
 EOF
 
-# Return inline script data depending on type
+# Expose the same options in full pages and XHR responses. Themes can also
+# read them when a proxy returns the standalone page instead of an XHR response.
 print "<script>\n";
-if ($xmlhr) {
-	print "var xterm_argv = ".
-          &convert_to_json(
+print "var xterm_argv = ".
+          convert_to_json(
             { 'conf'  => \%config,
+              'options' => $terminal_options,
+              'themes' => $terminal_themes,
               'files' => $termlinks,
               'socket_url' => $url,
               'port'  => $port,
               'cols'  => $env_cols,
               'rows'  => $env_rows,
-              'uinfo'  => \@uinfo });
-	}
-else {
-	print $term_script;
-	}
+              'uinfo'  => \@uinfo }).";\n";
+# Only standalone pages start their own terminal client.
+print $term_script if (!$xmlhr);
 print "</script>\n";
-&ui_print_footer();
+ui_print_footer();

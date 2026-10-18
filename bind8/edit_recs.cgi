@@ -7,7 +7,7 @@ no warnings 'redefine';
 no warnings 'uninitialized';
 our (%access, %text, %in, %config, %is_extra);
 
-require './bind8-lib.pl';
+require './bind8-lib.pl';    ## no critic
 &ReadParse();
 my $zone = &get_zone_name_or_error($in{'zone'}, $in{'view'});
 my $dom = $zone->{'name'};
@@ -23,6 +23,7 @@ my $typedesc = $text{"recs_$in{'type'}"} || $in{'type'};
 # Show form for adding a record
 my $type = $zone->{'type'};
 $type = 'master' if ($type eq 'primary');
+$type = 'slave' if ($type eq 'secondary');
 my $file = $zone->{'file'};
 my $form = 0;
 my $shown_create_form;
@@ -171,6 +172,7 @@ for(my $i=0; $i<@_; $i++) {
 	else {
 		$name = $r->{'name'};
 		}
+	$name //= "";
 	my @cols;
 	$name = &html_escape($name);
 	my $id = &record_id($r);
@@ -249,6 +251,10 @@ for(my $i=0; $i<@_; $i++) {
 				elsif ($j == 1) {
 					$v = $text{'value_caa_'.$v} || $v;
 					}
+				}
+			elsif ($in{'type'} eq "NSEC3PARAM" && $j == 3) {
+				$v = $text{'value_NSEC3PARAM4_none'}
+					if ($v eq "-");
 				}
 			}
 		if (length($v) > 80) {

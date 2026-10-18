@@ -24,17 +24,64 @@ my $copyright_file = "$debian_dir/copyright";
 my $changelog_file = "$debian_dir/changelog";
 my $files_file = "$debian_dir/files";
 
--r "/etc/debian_version" ||
-	die RED, "makemoduledeb.pl must be run on Debian", RESET;
-
 # Parse command-line args
-my ($force_theme, $url, $upstream, $debdepends, $no_prefix, $force_usermin,
-    $release, $allow_overwrite, $final_mod, $dsc_file, $dir, $ver, @exclude);
+my ($force_theme, $url, $upstream,
+    $no_prefix, $force_usermin, $release, $allow_overwrite, $final_mod,
+    $dsc_file, $dir, $ver, @exclude,
+    
+    $debdepends, $nodebdepends, $debrecommends, $nodebrecommends,
+    $no_requires, $no_recommends, $no_suggests, $no_conflicts, $no_replaces,
+    $no_breaks, $no_provides, $no_obsoletes);
+
+my $mod_list  = 'full';
 
 while(@ARGV) {
 	my $a = shift(@ARGV);
-	if ($a eq "--force-theme") {
-		$force_theme = 1;
+	if ($a eq "--deb-depends" || $a eq "--mod-depends") {
+		$debdepends = 1;
+		}
+	elsif ($a eq "--no-mod-depends") {
+		$nodebdepends = 1;
+		}
+	elsif ($a eq "--deb-recommends" || $a eq "--mod-recommends") {
+		$debrecommends = 1;
+		}
+	elsif ($a eq "--no-mod-recommends") {
+		$nodebrecommends = 1;
+		}
+	# --recommends, --suggests, --conflicts, --provides and --obsoletes are
+	# not for Webmin modules, and not meant to have prefix, and populated
+	# from module.info automatically
+	# --no-requires, --no-recommends, --no-suggests,
+	# --no-conflicts, --no-replaces, --no-breaks, --no-provides,
+	# --no-obsoletes can be used to disable the automatic population of
+	# these fields from module.info
+	elsif ($a eq "--no-requires") {
+		$no_requires = 1;
+		}
+	elsif ($a eq "--no-recommends") {
+		$no_recommends = 1;
+		}
+	elsif ($a eq "--no-suggests") {
+		$no_suggests = 1;
+		}
+	elsif ($a eq "--no-conflicts") {
+		$no_conflicts = 1;
+		}
+	elsif ($a eq "--no-replaces") {
+		$no_replaces = 1;
+		}
+	elsif ($a eq "--no-breaks") {
+		$no_breaks = 1;
+		}
+	elsif ($a eq "--no-provides") {
+		$no_provides = 1;
+		}
+	elsif ($a eq "--no-obsoletes") {
+		$no_obsoletes = 1;
+		}
+	elsif ($a eq "--no-prefix") {
+		$no_prefix = 1;
 		}
 	elsif ($a eq "--licence" || $a eq "--license") {
 		$licence = shift(@ARGV);
@@ -48,11 +95,8 @@ while(@ARGV) {
 	elsif ($a eq "--upstream") {
 		$upstream = shift(@ARGV);
 		}
-	elsif ($a eq "--deb-depends") {
-		$debdepends = 1;
-		}
-	elsif ($a eq "--no-prefix") {
-		$no_prefix = 1;
+	elsif ($a eq "--release") {
+		$release = shift(@ARGV);
 		}
 	elsif ($a eq "--usermin") {
 		$force_usermin = 1;
@@ -63,17 +107,20 @@ while(@ARGV) {
 	elsif ($a eq "--dir") {
 		$final_mod = shift(@ARGV);
 		}
-	elsif ($a eq "--release") {
-		$release = shift(@ARGV);
-		}
 	elsif ($a eq "--allow-overwrite") {
 		$allow_overwrite = 1;
 		}
 	elsif ($a eq "--dsc-file") {
 		$dsc_file = shift(@ARGV);
 		}
+	elsif ($a eq "--force-theme") {
+		$force_theme = 1;
+		}
 	elsif ($a eq "--exclude") {
 		push(@exclude, shift(@ARGV));
+		}
+	elsif ($a eq "--mod-list") {
+		$mod_list = shift(@ARGV);
 		}
 	elsif ($a =~ /^\-\-/) {
 		print STDERR "Unknown option $a\n";
@@ -89,23 +136,39 @@ while(@ARGV) {
 		}
 	}
 
+# Disable module's depends and recommends if set in extra flags
+$debdepends = 0 if ($nodebdepends);
+$debrecommends = 0 if ($nodebrecommends);
+
 # Validate args
 if (!$dir) {
 	print "usage: ", CYAN, "makemoduledeb.pl ";
-	print YELLOW, "[--force-theme]\n";
-	print "                        [--deb-depends]\n";
+	print CYAN, "<module> [version]";
+	print YELLOW, "\n";
+	print "                        [--mod-depends] [--no-mod-depends]\n";
+	print "                        [--mod-recommends] [--no-mod-recommends]\n";
+	print "                        [--no-requires]\n";
+	print "                        [--no-suggests]\n";
+	print "                        [--no-conflicts]\n";
+	print "                        [--no-replaces]\n";
+	print "                        [--no-breaks]\n";
+	print "                        [--no-provides]\n";
+	print "                        [--no-obsoletes]\n";
 	print "                        [--no-prefix]\n";
 	print "                        [--licence name]\n";
 	print "                        [--email 'name <address>']\n";
+	print "                        [--url url]\n";
 	print "                        [--upstream 'name <address>']\n";
-	print "                        [--provides provides]\n";
+	print "                        [--release version]\n";
 	print "                        [--usermin]\n";
 	print "                        [--target-dir directory]\n";
 	print "                        [--dir directory-in-package]\n";
 	print "                        [--allow-overwrite]\n";
 	print "                        [--dsc-file file.dsc]\n";
-	print CYAN, "                        <module> ";
-	print YELLOW, "[version]\n", RESET;
+	print "                        [--force-theme]\n";
+	print "                        [--exclude file-or-dir]\n";
+	print "                        [--mod-list full|core|minimal]\n";
+	print RESET, "\n";
 	exit(1);
 	}
 chop(my $par = `dirname $dir`);
@@ -178,8 +241,10 @@ if ($< == 0) {
         system("cd $usr_dir && chown -R root:bin .");
         }
 system("find $usr_dir -name .git | xargs rm -rf");
+system("find $usr_dir -name .github | xargs rm -rf");
 system("find $usr_dir -name RELEASE | xargs rm -rf");
 system("find $usr_dir -name RELEASE.sh | xargs rm -rf");
+system("find $usr_dir -type d \\( -name t -o -name xt \\) | xargs rm -rf");
 if (-r "$usr_dir/$mod/EXCLUDE") {
 	system("cd $usr_dir/$mod && cat EXCLUDE | xargs rm -rf");
 	system("rm -f $usr_dir/$mod/EXCLUDE");
@@ -238,13 +303,14 @@ if ($debdepends && exists($minfo{'depends'})) {
 			my $curr_dir = $0;
 			($curr_dir) = $curr_dir =~ /^(.+)\/[^\/]+$/;
 			$curr_dir = "." if ($curr_dir !~ /^\//);
-			open(my $fh, '<', "$curr_dir/mod_def_list.txt") || die "Error opening \"mod_def_list.txt\" : $!\n";
+			my $mod_def_file = "$curr_dir/mod_${mod_list}_list.txt";
+			next if (! -r $mod_def_file);
+			open(my $fh, '<', $mod_def_file) ||
+				die "Error opening \"$mod_def_file\" : $!\n";
 			$mod_def_list = do { local $/; <$fh> };
 			close($fh);
 			@mod_def_list = split(/\s+/, $mod_def_list);
-			if ( grep( /^$dmod$/, @mod_def_list ) ) {
-			  next;
-				}
+			next if (grep( /^$dmod$/, @mod_def_list ));
 			}
 		push(@rdeps, $dwebmin ? ("$product (>= $dwebmin)") :
 			     $dver ? ("$prefix$dmod (>= $dver)") :
@@ -252,6 +318,84 @@ if ($debdepends && exists($minfo{'depends'})) {
 		}
 	}
 my $rdeps = join(", ", @rdeps);
+
+# Build list of recommended packages on other DEBs, for inclusion as an DEB
+# Recommends: header (Webmin module with prefixes)
+my $rrecom = "";
+if ($debrecommends && defined($minfo{'recommends'})) {
+	my @rrecom;
+	foreach my $d (split(/\s+/, $minfo{'recommends'})) {
+		push(@rrecom, $prefix.$d);
+		}
+	$rrecom = join(", ", @rrecom);
+	}
+
+# Build (append) list of required packages (not Webmin modules)
+my @rrequires = ( );
+if (!$no_requires && exists($minfo{'deb_requires'})) {
+	foreach my $debrequire (split(/\s+/, $minfo{'deb_requires'})) {
+		push(@rrequires, $debrequire);
+		}
+	$rdeps .= ($rdeps ? ', ' : '') . join(", ", @rrequires) if (@rrequires);
+	}
+
+# Build (append) list of recommended packages (not Webmin modules)
+my @rrecommends = ( );
+if (!$no_recommends && exists($minfo{'deb_recommends'})) {
+	foreach my $debrecommend (split(/\s+/, $minfo{'deb_recommends'})) {
+		push(@rrecommends, $debrecommend);
+		}
+	$rrecom .= ($rrecom ? ', ' : '') . join(", ", @rrecommends)
+		if (@rrecommends);
+	}
+
+# Build (standalone) list of suggested packages (not Webmin modules)
+my @rsuggests = ( );
+if (!$no_suggests && exists($minfo{'deb_suggests'})) {
+	foreach my $debsuggest (split(/\s+/, $minfo{'deb_suggests'})) {
+		push(@rsuggests, $debsuggest);
+		}
+	}
+
+# Build (standalone) list of conflicts (not Webmin modules)
+my @rconflicts = ( );
+if (!$no_conflicts && exists($minfo{'deb_conflicts'})) {
+	foreach my $debconflict (split(/\s+/, $minfo{'deb_conflicts'})) {
+		push(@rconflicts, $debconflict);
+		}
+	}
+
+# Build (standalone) list of replaces (not Webmin modules)
+my @rreplaces = ( );
+if (!$no_replaces && exists($minfo{'deb_replaces'})) {
+	foreach my $debreplace (split(/\s+/, $minfo{'deb_replaces'})) {
+		push(@rreplaces, $debreplace);
+		}
+	}
+
+# Build (standalone) list of breaks (not Webmin modules)
+my @rbreaks = ( );
+if (!$no_breaks && exists($minfo{'deb_breaks'})) {
+	foreach my $debbreak (split(/\s+/, $minfo{'deb_breaks'})) {
+		push(@rbreaks, $debbreak);
+		}
+	}
+
+# Build (standalone) list of obsoletes (replaces+conflicts) (not Webmin modules)
+if (!$no_obsoletes && exists($minfo{'deb_obsoletes'})) {
+	foreach my $debobsolete (split(/\s+/, $minfo{'deb_obsoletes'})) {
+		push(@rconflicts, $debobsolete);
+		push(@rreplaces, $debobsolete);
+		}
+	}
+
+# Build (standalone) list of provides (not Webmin modules)
+my @rprovides = ( );
+if (!$no_provides && exists($minfo{'deb_provides'})) {
+	foreach my $debprovide (split(/\s+/, $minfo{'deb_provides'})) {
+		push(@rprovides, $debprovide);
+		}
+	}
 
 # Create the control file
 my $kbsize = int(($size-1) / 1024)+1;
@@ -264,10 +408,17 @@ Priority: optional
 Architecture: all
 Essential: no
 Depends: $rdeps
+EOF
+print $CONTROL "Recommends: $rrecom\n" if ($rrecom);
+print $CONTROL "Suggests: ", join(", ", @rsuggests), "\n" if (@rsuggests);
+print $CONTROL "Conflicts: ", join(", ", @rconflicts), "\n" if (@rconflicts);
+print $CONTROL "Replaces: ", join(", ", @rreplaces), "\n" if (@rreplaces);
+print $CONTROL "Breaks: ", join(", ", @rbreaks), "\n" if (@rbreaks);
+print $CONTROL "Provides: ", join(", ", @rprovides), "\n" if (@rprovides);
+print $CONTROL <<EOF;
 Pre-Depends: bash, perl
 Installed-Size: $kbsize
 Maintainer: $email
-Provides: $prefix$mod
 Description: $desc
 EOF
 close($CONTROL);
@@ -378,7 +529,7 @@ if [ "$post_config" = "1" ]; then
 	# Copy config file to /etc/webmin or /etc/usermin
 	os_type=`grep "^os_type=" /etc/$product/config | sed -e 's/os_type=//g'`
 	os_version=`grep "^os_version=" /etc/$product/config | sed -e 's/os_version=//g'`
-	/usr/bin/perl /usr/share/$product/copyconfig.pl \$os_type \$os_version /usr/share/$product /etc/$product $mod
+	/usr/bin/perl /usr/share/$product/copyconfig.pl \$os_type \$os_version /usr/share/$product /etc/$product $mod >/dev/null
 
 	# Update the ACL for the root user, or the first user in the ACL
 	grep "^root:" /etc/$product/webmin.acl >/dev/null
@@ -442,7 +593,7 @@ if [ "$istheme" = "1" -a "\$1" != "upgrade" ]; then
 	fi
 fi
 # Run the pre-uninstall script, if we are not upgrading
-if [ "$product" = "webmin" -a "\$1" = "0" -a -r "/usr/share/$product/$mod/uninstall.pl" ]; then
+if [ "$product" = "webmin" -a "\$1" != "upgrade" -a -r "/usr/share/$product/$mod/uninstall.pl" ]; then
 	cd /usr/share/$product
 	WEBMIN_CONFIG=/etc/$product WEBMIN_VAR=/var/$product /usr/share/$product/run-uninstalls.pl $mod
 fi
@@ -471,10 +622,10 @@ if ($dsc_file) {
 	$diffmd5 =~ s/\s+.*\n//g;
 	my @diffst = stat($diff_file);
 
-	# Create a tar file of the module directory
+	# Create a tar file of the cleaned staged module directory
 	my $tar_file = $dsc_file;
 	$tar_file =~ s/[^\/]+$//; $tar_file .= "$prefix$mod-$ver.tar.gz";
-	system("cd $par ; tar czf $tar_file $source_mod");
+	system("cd $usr_dir ; tar czf $tar_file $mod");
 	my $md5 = `md5sum $tar_file`;
 	$md5 =~ s/\s+.*\n//g;
 	my @st = stat($tar_file);

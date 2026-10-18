@@ -34,7 +34,7 @@ index_installon=نصب کنید
 index_upgradeon=سرورهای به روزرسانی
 index_update=ماژول ها را به روز کنید
 index_updateon=سرورها برای بروزرسانی
-index_updatedesc=این فرم به شما امکان می دهد ماژول های Usermin را که پیدا شده است شامل اشکالات یا حفره های امنیتی از <a href=http://www.webmin.com/updates.html>Usermin Updates</a> یا از منبع دیگری باشد ، به روز کنید.
+index_updatedesc=این فرم به شما امکان می دهد ماژول های Usermin را که پیدا شده است شامل اشکالات یا حفره های امنیتی از <a href=https://webmin.com/updates.html>Usermin Updates</a> یا از منبع دیگری باشد ، به روز کنید.
 index_thost=نام میزبان
 index_tdesc=شرح
 index_tver=نسخه
@@ -310,7 +310,7 @@ upgrade_ok=بسته موفقیت Usermin $1 را با موفقیت به روز �
 upgrade_failed=نصب در $1 : $2 انجام نشد
 upgrade_done=.. انجام شده
 upgrade_efast=فقط سرورهایی که از حالت RPC سریع استفاده می کنند قابل ارتقا هستند
-upgrade_ereconn=بعد از بروزرسانی دوباره به Usermin وصل نشد!  :$1
+upgrade_ereconn=بعد از بروزرسانی دوباره به Usermin وصل نشد! :$1
 
 update_title=ماژول ها را به روز کنید
 update_header=در حال به روز رسانی ماژول ها همه میزبان ها ..

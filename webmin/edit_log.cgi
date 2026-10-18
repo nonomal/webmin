@@ -23,16 +23,34 @@ print &ui_table_row($text{'log_status'},
 print &ui_table_row($text{'log_resolv'},
 	&ui_yesno_radio("loghost", int($miniserv{'loghost'})));
 
+# Log IP provided by proxy?
+print &ui_table_row($text{'log_trust'},
+	&ui_yesno_radio("logtrust", int($miniserv{'logtrust'})));
+
 # Use common log format
 print &ui_table_row($text{'log_clf'},
 	&ui_yesno_radio("logclf", int($miniserv{'logclf'})));
 
-# Clear logs regularly
+# Clear logs regularly, or hand them over to logrotate when available
+my @clear_opts = ( [ 1, &text('log_period',
+			&ui_textbox("logtime", $miniserv{'logtime'}, 10)) ] );
+my $logclear = int($miniserv{'logclear'});
+if (&miniserv_logrotate_available()) {
+	push(@clear_opts, [ 2, $text{'log_logrotate'} ]);
+	$logclear = 2 if (!$logclear &&
+			  &get_miniserv_logrotate_section(\%miniserv));
+	}
+push(@clear_opts, [ 0, $text{'no'} ]);
 print &ui_table_row($text{'log_clear2'},
-	&ui_radio("logclear", int($miniserv{'logclear'}),
-		  [ [ 1, &text('log_period',
-			&ui_textbox("logtime", $miniserv{'logtime'}, 10)) ],
-		    [ 0, $text{'no'} ] ]));
+	&ui_radio("logclear", $logclear, \@clear_opts));
+
+# A systemd service can keep Miniserv errors in the journal instead.
+if (&miniserv_systemd_journal_available("webmin.service")) {
+	print &ui_table_row($text{'log_error'},
+		&ui_radio("error_journal", $miniserv{'errorlog'} eq '-' ? 1 : 0,
+			  [ [ 0, $text{'log_error_file'} ],
+			    [ 1, $text{'log_error_journal'} ] ]));
+	}
 
 print &ui_table_hr();
 
@@ -97,4 +115,3 @@ print &ui_table_end();
 print &ui_form_end([ [ "save", $text{'save'} ] ]);
 
 &ui_print_footer("", $text{'index_return'});
-

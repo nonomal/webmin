@@ -67,13 +67,44 @@ $password_func = $config{'passwd_mode'} ? "old_password" : "password";
 	    'enum', 'set');
 
 @priv_cols = ('Host', 'User', 'Password', 'Select_priv', 'Insert_priv', 'Update_priv', 'Delete_priv', 'Create_priv', 'Drop_priv', 'Reload_priv', 'Shutdown_priv', 'Process_priv', 'File_priv', 'Grant_priv', 'References_priv', 'Index_priv', 'Alter_priv', 'Show_db_priv', 'Super_priv', 'Create_tmp_table_priv', 'Lock_tables_priv', 'Execute_priv', 'Repl_slave_priv', 'Repl_client_priv', 'Create_view_priv', 'Show_view_priv', 'Create_routine_priv', 'Alter_routine_priv', 'Create_user_priv');
-
+$driver_info = &dbi_driver_info();
 if (!$config{'nodbi'}) {
-	# Check if we have DBI::mysql
-	eval <<EOF;
-use DBI;
-\$driver_handle = DBI->install_driver("mysql");
-EOF
+	# Check if we have DBI::mysql or DBI::MariaDB
+	eval "require DBI;
+	     \$driver_handle = DBI->install_driver(\$driver_info->{'drv'});";
+	}
+
+# dbi_driver_info()
+# Based on the current database variant, returns info about the DBI driver.
+# Falls back to MySQL if the preferred driver is not available.
+sub dbi_driver_info
+{
+my %dbmap = (
+      'mysql'   => { drv => 'mysql',   opt => 'mysql',   mod => 'DBD::mysql' },
+      'mariadb' => { drv => 'MariaDB', opt => 'mariadb', mod => 'DBD::MariaDB' }
+);
+my $want = ($mysql_version && $mysql_version =~ /mariadb/i)
+	? 'mariadb'
+	: 'mysql';
+
+# Try preferred driver
+my $m = $dbmap{$want}->{'mod'};
+my $ok = eval "require $m; 1;";
+$dbmap{$want}->{'avail'}  = $ok ? 1 : 0;
+$dbmap{$want}->{'prefer'} = $dbmap{$want}->{'mod'};
+return $dbmap{$want} if $ok;
+
+# If MariaDB preferred but unavailable, fallback to MySQL
+if ($want eq 'mariadb') {
+	$m = $dbmap{'mysql'}->{'mod'};
+	$ok = eval "require $m; 1;";
+	$dbmap{'mysql'}->{'avail'}  = $ok ? 1 : 0;
+	$dbmap{'mysql'}->{'prefer'} = $dbmap{$want}->{'mod'};
+	return $dbmap{'mysql'};
+	}
+
+# Preferred driver unavailable, no fallback
+return $dbmap{$want};
 }
 
 # Fix text if we're running MariaDB
@@ -88,20 +119,13 @@ if ($mysql_version =~ /mariadb/i) {
 }
 &fix_mysql_text(\%text);
 
-if (&compare_version_numbers($mysql_version, "5.5") >= 0) {
-	@mysql_set_variables = ( "key_buffer_size", "sort_buffer_size",
-				 "net_buffer_length" );
-	}
-else {
-	@mysql_set_variables = ( "key_buffer", "sort_buffer",
-				 "net_buffer_length" );
-	}
 if (&compare_version_numbers($mysql_version, "5.6") >= 0) {
 	@mysql_number_variables = ( "table_open_cache", "max_connections" );
 	}
 else {
 	@mysql_number_variables = ( "table_cache", "max_connections" );
 	}
+
 @mysql_byte_variables = ( "max_allowed_packet" );
 my $mysql8_optout = &compare_version_numbers($mysql_version, "8.0") >= 0 && $mysql_version !~ /maria/i;
 if (!$mysql8_optout) {
@@ -113,6 +137,15 @@ if (&compare_version_numbers($mysql_version, "5") >= 0) {
 	}
 else {
 	push(@mysql_set_variables, "myisam_sort_buffer_size");
+	}
+
+if (&compare_version_numbers($mysql_version, "5.5") >= 0) {
+	push(@mysql_byte_variables, "key_buffer_size", "sort_buffer_size",
+				    "net_buffer_length");
+	}
+else {
+	@mysql_set_variables = ( "key_buffer", "sort_buffer",
+				 "net_buffer_length" );
 	}
 
 # make_authstr([login], [pass], [host], [port], [sock], [unix-user], [ssl])
@@ -212,6 +245,8 @@ if (!@rv || $@) {
 	ref($t) || &error("Failed to list databases : $t");
 	@rv = map { $_->[0] } @{$t->{'data'}};
 	}
+# Ignore raw dot directories exposed with the legacy MySQL 5.0 prefix.
+@rv = grep { !/^#mysql50#\./ } @rv;
 return sort { lc($a) cmp lc($b) } @rv;
 }
 
@@ -322,20 +357,33 @@ $sql = &escape_backslashes_in_quotes($sql);
 if ($driver_handle && !$config{'nodbi'}) {
 	# Use the DBI interface
 	local $cstr = "database=$_[0]";
+	local $drv = $driver_info->{opt};
 	$cstr .= ";host=$config{'host'}" if ($config{'host'});
 	$cstr .= ";port=$config{'port'}" if ($config{'port'});
-	$cstr .= ";mysql_socket=$config{'sock'}" if ($config{'sock'});
-	$cstr .= ";mysql_read_default_file=$config{'my_cnf'}"
+	$cstr .= ";${drv}_socket=$config{'sock'}" if ($config{'sock'});
+	$cstr .= ";${drv}_read_default_file=$config{'my_cnf'}"
 		if (-r $config{'my_cnf'});
 	if ($config{'ssl'}) {
-		$cstr .= ";mysql_ssl=1";
+		$cstr .= ";${drv}_ssl=1";
 		if ($DBD::mysql::VERSION >= 4.043) {
-			$cstr .= ";mysql_ssl_optional=1";
+			$cstr .= ";${drv}_ssl_optional=1";
 			}
 		}
 	local $dbh = $driver_handle->connect($cstr, $mysql_login, $mysql_pass,
 					     { });
 	$dbh || &error("DBI connect failed : ",$driver_handle->errstr);
+	if ($disable_session_binlog) {
+		# A point-in-time restore must not add its own SQL to the log that
+		# it is replaying, because that would make later retries unsafe
+		local $nologsql = "set session sql_log_bin = 0";
+		local $nologcmd = $dbh->prepare($nologsql);
+		if (!$nologcmd || !$nologcmd->execute()) {
+			&error(&text('esql',
+				     "<tt>".&html_escape($nologsql)."</tt>",
+				     "<tt>".&html_escape($dbh->errstr)."</tt>"));
+			}
+		$nologcmd->finish();
+		}
 	if ($sql_charset) {
 		# Switch to correct character set
 		local $sql = "set names '$sql_charset'";
@@ -377,6 +425,10 @@ else {
 		$sql = &replace_sql_parameters($sql, @params);
 		}
 	open(TEMP, ">$temp");
+	if ($disable_session_binlog) {
+		# Keep point-in-time restore statements out of the binary log
+		print TEMP "set session sql_log_bin = 0;\n";
+		}
 	if ($sql_charset) {
 		print TEMP "set names '$sql_charset';\n";
 		}
@@ -552,6 +604,15 @@ return $_[0] ne "information_schema" &&
        $_[0] ne "performance_schema";
 }
 
+# supports_sandbox_flag()
+# Returns 1 if the mysql client command supports the --sandbox flag
+sub supports_sandbox_flag
+{
+my $mysql = &quote_path($config{'mysql'});
+my $out = &backquote_command("$mysql --help 2>&1 </dev/null");
+return $out =~ /--sandbox/ ? 1 : 0;
+}
+
 # list_accessible_databases()
 # Returns a list of databases that the current user may access to. Returns
 # an empty list if he has all of them.
@@ -650,13 +711,14 @@ return $rv;
 
 sub quote_table
 {
-return &quotestr($_[0]);
+my ($rv) = @_;
+return &quotestr($rv);
 }
 
 # quotestr(string)
 sub quotestr
 {
-local $rv = $_[0];
+my ($rv) = @_;
 if (&supports_quoting()) {
 	return "`$rv`";
 	}
@@ -675,11 +737,21 @@ $db =~ s/%/\\%/g;
 return $db;
 }
 
+# unquote_mysql_database(name)
+# Returns a MySQL database name with \% and \_ characters unescaped
+sub unquote_mysql_database
+{
+my ($db) = @_;
+$db =~ s/\\%/%/g;
+$db =~ s/\\_/_/g;
+return $db;
+}
+
 # escapestr(string)
 # Returns a string with quotes escaped, for use in SQL
 sub escapestr
 {
-local $rv = $_[0];
+my ($rv) = @_;
 $rv =~ s/'/''/g;
 return $rv;
 }
@@ -688,8 +760,8 @@ return $rv;
 # Escapes backslashes, but only inside quoted strings
 sub escape_backslashes_in_quotes
 {
-local ($str) = @_;
-local $rv;
+my ($str) = @_;
+my $rv;
 while($str =~ /^([^"]*)"([^"]*)"(.*)$/) {
 	local ($before, $quoted, $after) = ($1, $2, $3);
 	$quoted =~ s/\\/\\\\/g;
@@ -713,6 +785,14 @@ return &compare_version_numbers($mysql_version, "3.23.6") >= 0;
 sub supports_mysqldump_events
 {
 return &compare_version_numbers($mysql_version, "5.1.8") >= 0;
+}
+
+# supports_mysqldump_setgtid()
+# Returns 1 if mysqldump supports --set-gtid-purged flag
+sub supports_mysqldump_setgtid
+{
+my $out = &backquote_command("$config{'mysqldump'} --help 2>&1 </dev/null");
+return $out =~ /--set-gtid-purged/ ? 1 : 0;
 }
 
 # supports_routines()
@@ -833,7 +913,7 @@ ${$_[0]} = $out if ($_[0]);
 if ($out =~ /lib\S+\.so/) {
 	return -1;
 	}
-elsif ($out =~ /(distrib|Ver|from)\s+((3|4|5|6|7|8|9|10|11)\.[0-9\.]*(\-[a-z0-9]+)?)/i) {
+elsif ($out =~ /(distrib|Ver|from)\s+((3|4|5|6|7|8|9|10|11|12)\.[0-9\.]*(\-[a-z0-9]+)?)/i) {
 	return $2;
 	}
 else {
@@ -875,6 +955,38 @@ if ($ver && $variant_ &&
 return ($rv, $variant);
 }
 
+# get_binary_log_status()
+# Returns the current binary log file and position, if binary logging is
+# active on the server
+sub get_binary_log_status
+{
+# The statement name varies between MySQL and MariaDB releases
+foreach my $sql ("show master status", "show binary log status",
+		 "show binlog status") {
+	my $d = eval {
+		local $main::error_must_die = 1;
+		&execute_sql($master_db, $sql);
+		};
+	next if ($@ || !$d);
+	return ( ) if (!@{$d->{'data'}});
+	return ($d->{'data'}->[0]->[0], $d->{'data'}->[0]->[1]);
+	}
+return ( );
+}
+
+# list_binary_logs()
+# Returns a list of binary log files on the server, each as a hash ref with
+# name and size keys
+sub list_binary_logs
+{
+my $d = eval {
+	local $main::error_must_die = 1;
+	&execute_sql($master_db, "show binary logs");
+	};
+return ( ) if ($@ || !$d);
+return map { { 'name' => $_->[0], 'size' => $_->[1] } } @{$d->{'data'}};
+}
+
 # save_mysql_version([number])
 # Update the saved local MySQL version number
 sub save_mysql_version
@@ -911,36 +1023,53 @@ if ($config{'webmin_subs'}) {
 return $rv;
 }
 
-# execute_before(db, handle, escape, path, db-for-config)
+# can_run_backup_commands(cron)
+# Returns true if this request can configure and run backup commands. Cron
+# access already permits root commands, while other Webmin users are limited
+# to commands run as their configured non-root backup user.
+sub can_run_backup_commands
+{
+my ($cron) = @_;
+return !$module_info{'usermin'} &&
+	($cron || $access{'buser'} && $access{'buser'} ne 'root');
+}
+
+# execute_before(db, handle, escape, path, db-for-config, [&as-user])
 # Executes the before-backup command for some DB, and sends output to the
 # given file handle. Returns 1 if the command succeeds, or 0 on failure
 sub execute_before
 {
-local $cmd = $config{'backup_before_'.$_[4]};
+my ($db, $h, $escape, $path, $dbconf, $asuser) = @_;
+my $cmd = $config{'backup_before_'.$dbconf};
 if ($cmd) {
-	$ENV{'BACKUP_FILE'} = $_[3];
-	local $h = $_[1];
-	local $out;
-	local $rv = &execute_command($cmd, undef, \$out, \$out);
+	$ENV{'BACKUP_FILE'} = $path;
+	my $out;
+	$cmd = &command_as_user($asuser, 0, $cmd)
+		if ($asuser && $asuser ne "root");
+	my $rv = &execute_command($cmd, undef, \$out, \$out);
 	if ($h && $out) {
-		print $h $_[2] ? "<pre>".&html_escape($out)."</pre>" : $out;
+		print $h $escape ? "<pre>".&html_escape($out)."</pre>" : $out;
 		}
 	return !$rv;
 	}
 return 1;
 }
 
-# execute_after(db, handle, escape, path, db-for-config)
+# execute_after(db, handle, escape, path, db-for-config, [&as-user])
+# Executes the after-backup command for some DB, and sends output to the
+# given file handle. Returns 1 if the command succeeds, or 0 on failure
 sub execute_after
 {
-local $cmd = $config{'backup_after_'.$_[4]};
+my ($db, $h, $escape, $path, $dbconf, $asuser) = @_;
+my $cmd = $config{'backup_after_'.$dbconf};
 if ($cmd) {
-	$ENV{'BACKUP_FILE'} = $_[3];
-	local $h = $_[1];
-	local $out;
-	local $rv = &execute_command($cmd, undef, \$out, \$out);
+	$ENV{'BACKUP_FILE'} = $path;
+	my $out;
+	$cmd = &command_as_user($asuser, 0, $cmd)
+		if ($asuser && $asuser ne "root");
+	my $rv = &execute_command($cmd, undef, \$out, \$out);
 	if ($h && $out) {
-		print $h $_[2] ? "<pre>".&html_escape($out)."</pre>" : $out;
+		print $h $escape ? "<pre>".&html_escape($out)."</pre>" : $out;
 		}
 	return !$rv;
 	}
@@ -1034,30 +1163,65 @@ if (@auto) {
 return @sql;
 }
 
+# mysql_command_unix_user()
+# Returns the Unix user that mysql/mysqlimport commands will run as.
+sub mysql_command_unix_user
+{
+return $access{'buser'} && $access{'buser'} ne 'root' && $< == 0 ?
+	$access{'buser'} : undef;
+}
+
+# set_mysql_command_file_permissions(file)
+# Makes a temp file readable by the Unix user that will run mysql commands.
+sub set_mysql_command_file_permissions
+{
+my ($file) = @_;
+my $user = &mysql_command_unix_user();
+return 1 if (!$user);
+my @uinfo = getpwnam($user);
+return 0 if (!@uinfo);
+return &set_ownership_permissions($user, undef, 0600, $file);
+}
+
 # execute_sql_file(database, file, [user, pass], [unix-user])
 # Executes some file of SQL commands, and returns the exit status and output
 sub execute_sql_file
 {
+my ($db, $file, $user, $pass, $unixuser) = @_;
 if (&is_readonly_mode()) {
 	return (0, undef);
 	}
-my ($db, $file, $user, $pass) = @_;
 -r $file || return (1, "$file does not exist");
 my $authstr = &make_authstr($user, $pass);
 my $cs = $sql_charset ? "--default-character-set=".quotemeta($sql_charset)
 			 : "";
-my $temp = &transname();
+my $sandbox = &supports_sandbox_flag();
+my $sb = $sandbox ? "--sandbox" : "";
+my $init = $sandbox && $disable_session_binlog ?
+	"--init-command=".&quote_path("set session sql_log_bin = 0") : "";
 $file = &fix_collation($file);
-&open_tempfile(TEMP, ">$temp");
-&print_tempfile(TEMP, "source ".$file.";\n");
-&close_tempfile(TEMP);
-&set_ownership_permissions(undef, undef, 0644, $temp);
+
+if (!$sandbox) {
+	# Keep the more reliable source path on clients without sandbox support.
+	# Sandboxed clients must read the SQL file directly because source is blocked.
+	my $temp = &transname();
+	&open_tempfile(TEMP, ">$temp");
+	if ($disable_session_binlog) {
+		# Keep an imported backup or decoded binary log out of the source log
+		&print_tempfile(TEMP, "set session sql_log_bin = 0;\n");
+		}
+	&print_tempfile(TEMP, "source ".$file.";\n");
+	&close_tempfile(TEMP);
+	&set_ownership_permissions(undef, undef, 0644, $temp);
+	$file = $temp;
+	}
 &set_authstr_env();
-my $cmd = "$config{'mysql'} $authstr -t ".quotemeta($db)." ".$cs.
-	     " <".quotemeta($temp);
-if ($_[4] && $_[4] ne 'root' && $< == 0) {
+my $mysql = &quote_path($config{'mysql'});
+my $cmd = "$mysql $authstr -t ".quotemeta($db)." ".$cs." ".$sb." ".$init.
+	     " <".quotemeta($file);
+if ($unixuser && $unixuser ne 'root' && $< == 0) {
 	# Restoring as a Unix user
-	$cmd = &command_as_user($_[4], 0, $cmd);
+	$cmd = &command_as_user($unixuser, 0, $cmd);
 	}
 my $out = &backquote_logged("$cmd 2>&1");
 my @rv;
@@ -1134,17 +1298,116 @@ return $config{'host'} eq '' || $config{'host'} eq 'localhost' ||
        &to_ipaddress($config{'host'}) eq &to_ipaddress(&get_system_hostname());
 }
 
+# supports_disable_session_binlog()
+# Returns 1 if restore callers can request that their SQL sessions not be
+# written to the server's binary log.
+sub supports_disable_session_binlog
+{
+return 1;
+}
+
+# format_binlog_expire_days(seconds)
+# Converts a seconds-based binary log retention period to a days value with
+# enough decimal places to convert back to the exact same number of seconds
+sub format_binlog_expire_days
+{
+my ($secs) = @_;
+my $days = sprintf("%.6f", $secs / 86400);
+$days =~ s/0+$//;
+$days =~ s/\.$//;
+return $days;
+}
+
+# parse_binlog_expire_days(days)
+# Converts a days-based retention period back to the whole number of seconds
+# stored on the server
+sub parse_binlog_expire_days
+{
+my ($days) = @_;
+return int($days * 86400 + 0.5);
+}
+
+# get_binlog_expire_max([variant])
+# Returns the maximum retention in seconds that this or the given database
+# variant accepts, which is 99 days on MariaDB but the full 32-bit range
+# on MySQL
+sub get_binlog_expire_max
+{
+my ($variant) = @_;
+($variant) = (&get_mysql_variant_cached())[1] if (!$variant);
+return $variant eq "mariadb" ? 8553600 : 4294967295;
+}
+
+# get_mysql_variant_cached()
+# Like get_remote_mysql_variant, but falls back to the version detected at
+# module setup time when the server cannot be queried, such as when it is
+# stopped
+sub get_mysql_variant_cached
+{
+my ($ver, $variant) = &get_remote_mysql_variant();
+if (!$ver || $ver <= 0) {
+	$ver = $mysql_version;
+	$variant = $ver =~ /mariadb/i ? "mariadb" : "mysql";
+	$ver =~ s/[^0-9\.].*$//;
+	}
+return ($ver, $variant);
+}
+
+# get_binlog_default_on()
+# Returns 1 if this database server enables binary logging by default when
+# no directive is present, as MySQL does from version 8.0 onwards
+sub get_binlog_default_on
+{
+my ($ver, $variant) = &get_mysql_variant_cached();
+return $variant eq "mysql" && $ver &&
+       &compare_version_numbers($ver, "8.0") >= 0 ? 1 : 0;
+}
+
+# parse_binlog_max_size(number, units)
+# Converts a maximum log file size input to bytes, returning undef if it is
+# invalid or outside the range from 4 kB to 1 GB that servers support
+sub parse_binlog_max_size
+{
+my ($num, $units) = @_;
+$num =~ /^\d+$/ || return undef;
+my %mult = ( '' => 1, 'K' => 1024, 'M' => 1024*1024,
+	     'G' => 1024*1024*1024 );
+defined($mult{$units}) || return undef;
+my $bytes = $num * $mult{$units};
+return $bytes >= 4096 && $bytes <= 1024*1024*1024 ? $bytes : undef;
+}
+
+# rotate_binary_logs()
+# Closes the binary log currently being written and starts a new one
+sub rotate_binary_logs
+{
+&execute_sql_logged($master_db, "flush binary logs");
+}
+
 # get_mysql_config()
 # Returns the parsed my.cnf file
 sub get_mysql_config
 {
 if (!scalar(@mysql_config_cache)) {
 	if (!-r $config{'my_cnf'}) {
-		return undef;
+		return [];
 		}
 	@mysql_config_cache = &parse_mysql_config($config{'my_cnf'});
 	}
 return \@mysql_config_cache;
+}
+
+# get_mysqld_config_section(&config)
+# Returns the preferred server section from a parsed MySQL configuration,
+# avoiding generic MariaDB sections when a dedicated server section exists
+sub get_mysqld_config_section
+{
+my ($conf) = @_;
+foreach my $name ('mysqld', 'mariadbd', 'mariadb') {
+	my ($section) = grep { $_->{'name'} eq $name } @$conf;
+	return $section if ($section);
+	}
+return undef;
 }
 
 # parse_mysql_config(file)
@@ -1159,9 +1422,12 @@ local $lref = &read_file_lines($file, 1);
 local $_;
 foreach (@$lref) {
 	s/\r|\n//g;
-	s/#.*$//;
 	s/\s+$//;
-	if (/^\s*\[(\S+)\]$/) {
+	if (/^\s*(#|;)/) {
+		$lnum++;
+		next;
+		}
+	elsif (/^\s*\[(\S+)\]$/) {
 		# Start of a section
 		$sect = { 'name' => $1,
 			  'members' => [ ],
@@ -1304,6 +1570,59 @@ return &ui_textbox($name, $value, 8)."\n".
 		    [ "M", "MB" ], [ "G", "GB" ] ]);
 }
 
+# get_table_index_stats(db)
+# Retrieves index stats for all tables in the given database
+sub get_table_index_stats
+{
+my ($db) = @_;
+my @tables = &list_tables($db);
+my $sql_query = "
+    SELECT 
+        TABLE_SCHEMA,
+        TABLE_NAME,
+        INDEX_NAME,
+        NON_UNIQUE,
+        SEQ_IN_INDEX,
+        COLUMN_NAME,
+        COLLATION,
+        CARDINALITY,
+        SUB_PART,
+        PACKED,
+        NULLABLE,
+        INDEX_TYPE,
+        COMMENT,
+        INDEX_COMMENT
+    FROM 
+        INFORMATION_SCHEMA.STATISTICS
+    WHERE 
+        TABLE_SCHEMA = ?
+	AND
+	TABLE_NAME IN (" . join(", ", ("?") x @tables) . ")
+";
+my $rs = &execute_sql_safe($db, $sql_query, $db, @tables);
+return $rs;
+}
+
+# get_all_tables_size(db)
+# Retrieves the size of all tables in the given database
+sub get_all_tables_size
+{
+my ($db) = @_;
+my @tables = list_tables($db);
+my $sql_query = "
+    SELECT
+        TABLE_SCHEMA,
+        TABLE_NAME,
+        ENGINE,
+        DATA_LENGTH + INDEX_LENGTH AS total_size_bytes
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = ?
+      AND TABLE_NAME IN (" . join(", ", ("?") x @tables) . ")
+";
+my $rs = &execute_sql_safe($db, $sql_query, $db, @tables);
+return $rs;
+}
+
 # list_indexes(db)
 # Returns the names of all indexes in some database
 sub list_indexes
@@ -1342,6 +1661,33 @@ foreach my $table (&list_tables($db)) {
 		if ($r->[$tp{'key_name'}] eq $index) {
 			# Found some info
 			$info->{'table'} = $r->[$tp{'table'}];
+			$info->{'name'} = $index;
+			$info->{'type'} = lc($r->[$tp{'index_type'}]) ||
+					  lc($r->[$tp{'comment'}]);
+			push(@{$info->{'cols'}}, $r->[$tp{'column_name'}]);
+			}
+		}
+	}
+return $info;
+}
+
+# parse_index_structure(&db_stats, db, indexname)
+# Returns information on an index based on the database stats hash
+sub parse_index_structure
+{
+my ($db_stats, $db, $index) = @_;
+my ($r, $info);
+foreach my $table (&list_tables($db)) {
+	my $s = { %$db_stats };
+	$s->{'data'} = [grep { $_->[1] eq $table } @{$s->{'data'}}];
+	my (%tp, $i);
+	for($i=0; $i<@{$s->{'titles'}}; $i++) {
+		$tp{lc($s->{'titles'}->[$i])} = $i;
+		}
+	foreach $r (@{$s->{'data'}}) {
+		if ($r->[$tp{'index_name'}] eq $index) {
+			# Found some info
+			$info->{'table'} = $r->[$tp{'table_name'}];
 			$info->{'name'} = $index;
 			$info->{'type'} = lc($r->[$tp{'index_type'}]) ||
 					  lc($r->[$tp{'comment'}]);
@@ -1495,8 +1841,8 @@ if (!$mysqld) {
 		$mysqld =~ s/bin/libexec/g;
 		if (!-x $mysqld) {
 			# Look in Webmin path
-			&error($mysqld);
-			$mysqld = &has_command("mysqld");
+			$mysqld = &has_command("mysqld") ||
+				  &has_command("mariadbd");
 			}
 		}
 	}
@@ -1554,60 +1900,77 @@ return $two eq "\037\213" ? 1 :
        $two eq "BZ" ? 3 : 0;
 }
 
-# backup_database(db, dest-file, compress-mode, drop-flag, where-clause,
-#                 charset, &compatible, &only-tables, run-as-user,
-#                 single-transaction-flag, quick-flag, force-flag, parameters)
-# Backs up a database to the given file, optionally with compression. Returns
-# undef on success, or an error message on failure.
+# backup_database(db, dest-file, compress-mode, drop-flag, [where-clause],
+#                 [charset], &compatible, &only-tables, [run-as-user],
+#                 single-transaction-flag, quick-flag, [force-flag],
+#                 [parameters])
+# Writes a database backup to a file, with optional compression. Returns undef
+# on success, or an error message on failure.
 sub backup_database
 {
 my ($db, $file, $compress, $drop, $where, $charset, $compatible,
        $tables, $user, $single, $quick, $force, $parameters) = @_;
 my $writer;
 if ($compress == 0) {
+	# Write an uncompressed SQL dump.
 	$writer = "cat >".quotemeta($file);
 	}
 elsif ($compress == 1) {
+	# Compress the dump with gzip while writing it.
 	$writer = "gzip -c >".quotemeta($file);
 	}
 elsif ($compress == 2) {
+	# Compress the dump with bzip2 while writing it.
 	$writer = "bzip2 -c >".quotemeta($file);
 	}
+# Build dump-client options for the requested backup behavior.
 my $dropsql = $drop ? "--add-drop-table" : "";
 my $singlesql = $single ? "--single-transaction" : "";
 my $forcesql = $force ? "--force" : "";
 my $quicksql = $quick ? "--quick" : "";
-my $parameterssql = $parameters ? quotemeta($parameters) : "";
+my $parameterssql = $parameters ?
+	join(" ", map { quotemeta($_) } split(/\s+/, $parameters)) : "";
 my $wheresql = $where ? "--where=".quotemeta($in{'where'}) : "";
 my $charsetsql = $charset ?
 	"--default-character-set=".quotemeta($charset) : "";
+# Quote compatibility values and table names as single shell arguments.
 my $compatiblesql = @$compatible ?
-	"--compatible=".join(",", @$compatible) : "";
+	"--compatible=".quotemeta(join(",", @$compatible)) : "";
 my $quotingsql = &supports_quoting() ? "--quote-names" : "";
 my $routinessql = &supports_routines() ? "--routines" : "";
 my $tablessql = join(" ", map { quotemeta($_) } @$tables);
 my $eventssql = &supports_mysqldump_events() ? "--events" : "";
 my $gtidsql = "";
-eval {
-	local $main::error_must_die = 1;
-	my $d = &execute_sql($master_db, "show variables like 'gtid_mode'");
-	if (@{$d->{'data'}} && uc($d->{'data'}->[0]->[1]) eq 'ON' &&
-	    &compare_version_numbers($mysql_version, "5.6") >= 0) {
-		# Add flag to support GTIDs
-		$gtidsql = "--set-gtid-purged=OFF";
-		}
-	};
+# Check whether the client and server need explicit GTID suppression.
+if (&supports_mysqldump_setgtid() &&
+    $config{'mysqldump'} !~ /--set-gtid-purged/) {
+	eval {
+		local $main::error_must_die = 1;
+		my $d = &execute_sql($master_db,
+			"show variables like 'gtid_mode'");
+		my ($ver, $variant) = &get_remote_mysql_variant();
+		if (@{$d->{'data'}} && uc($d->{'data'}->[0]->[1]) eq 'ON' &&
+		    $variant eq 'mysql' &&
+		    &compare_version_numbers($ver, "5.6") >= 0) {
+			# Omit GTID_PURGED statements when backing up a GTID server.
+			$gtidsql = "--set-gtid-purged=OFF";
+			}
+		};
+	}
 if ($user && $user ne "root") {
 	# Actual writing of output is done as another user
 	$writer = &command_as_user($user, 0, $writer);
 	}
 &set_authstr_env();
-my $cmd = "$config{'mysqldump'} $authstr $dropsql $singlesql $forcesql $quicksql $parameterssql $wheresql $charsetsql $compatiblesql $quotingsql $routinessql ".quotemeta($db)." $tablessql $eventssql $gtidsql | $writer";
+# Prevent database and table names from being parsed as dump options.
+my $cmd = "$config{'mysqldump'} $authstr $dropsql $singlesql $forcesql $quicksql $parameterssql $wheresql $charsetsql $compatiblesql $quotingsql $routinessql $eventssql $gtidsql -- ".quotemeta($db)." $tablessql | $writer";
 if (&shell_is_bash()) {
+	# Propagate dump-client failures through the output pipeline.
 	$cmd = "set -o pipefail ; $cmd";
 	}
 my $out = &backquote_logged("($cmd) 2>&1");
 if ($? || !-s $file || $out =~ /Aborted\s+connection|max_allowed_packet/i) {
+	# Return errors for command failures, empty output, or partial dumps.
 	return $out;
 	}
 return undef;
@@ -1637,45 +2000,102 @@ my $conf = &get_mysql_config();
 return &unique(map { $_->{'file'} } @$conf);
 }
 
-# get_change_pass_sql(unescaped_plaintext_password, user, host)
+# get_account_lock_status(user, host)
+# Returns the account lock status of a user
+sub get_account_lock_status
+{
+my ($user, $host) = @_;
+return undef if (!&get_account_lock_support());
+my $rv = &execute_sql_safe($master_db, 'show create user ?@?', $user, $host);
+return undef if (!ref($rv) || !@{$rv->{'data'}});
+return $rv->{'data'}->[0][0] =~ /account\s+lock/i ? 1 : 0;
+}
+
+# get_account_lock_support()
+# Returns 1 if the MySQL/MariaDB server supports account locking
+sub get_account_lock_support
+{
+my ($ver, $variant) = &get_remote_mysql_variant();
+return 
+   $variant eq "mariadb" && &compare_version_numbers($ver, "10.4.2") >= 0 ||
+   $variant eq "mysql" && &compare_version_numbers($ver, "8.0") >= 0;
+}
+
+# get_innodb_file_per_table_default()
+# Returns 1 if the InnoDB file-per-table option is disabled by default
+sub get_innodb_file_per_table_default
+{
+my ($ver, $variant) = &get_remote_mysql_variant();
+return
+      ($variant eq 'mariadb' && &compare_version_numbers($ver, '10.1.0') < 0) ||
+      ($variant eq 'mysql' && &compare_version_numbers($ver, '5.6.6') < 0)
+      	? 1
+	: 0;
+}
+
+# get_plugin_sql(version, variant, plainpass, plugin)
+# Get the right query for setting user password with plugin
+sub get_plugin_sql
+{
+my ($ver, $variant, $plainpass, $plugin) = @_;
+my $pass = &escapestr($plainpass);
+# Has account locking support?
+my $suplock = &get_account_lock_support();
+my $lockcurr;
+if ($suplock) {
+	$lockcurr = !defined($plainpass);
+	if ($lockcurr) {
+		$pass = sprintf("%x", rand 16) for 1..30;
+		}
+	}
+my $is_plugin_socket = $plugin eq "unix_socket";
+my $by = "";
+$by = " by '$pass'" if (!$is_plugin_socket);
+my $sp = "identified with $plugin$by";
+if ($variant eq "mariadb") {
+	$by = " using $password_func('$pass')" if (!$is_plugin_socket);
+	$sp = "identified via $plugin$by";
+	}
+if ($suplock) {
+	$sp = $lockcurr ? "account lock" : "$sp account unlock";
+	}
+return $sp;
+}
+
+# get_change_pass_sql(unescaped_plaintext_password, user, host, plugin)
 # Get the right query for changing user password
 sub get_change_pass_sql
 {
-my ($unescaped_plainpass, $user, $host) = @_;
-my $plugin = &get_mysql_plugin(1);
-my $escaped_pass = &escapestr($unescaped_plainpass);
+my ($unescaped_plainpass, $user, $host, $plugin) = @_;
+$plugin ||= &get_mysql_plugin();
 my $sql;
 my ($ver, $variant) = &get_remote_mysql_variant();
-my $mysql_mariadb_with_auth_string = 
+my $supauth = 
    $variant eq "mariadb" && &compare_version_numbers($ver, "10.2") >= 0 ||
    $variant eq "mysql" && &compare_version_numbers($ver, "5.7.6") >= 0;
-if ($mysql_mariadb_with_auth_string && $unescaped_plainpass) {
-	$sql = "alter user '$user'\@'$host' identified $plugin by '$escaped_pass'";
+if ($plugin && $supauth) {
+	my $sp = &get_plugin_sql($ver, $variant, $unescaped_plainpass, $plugin);
+	$sql = "alter user '$user'\@'$host' $sp";
 	}
 else {
+	my $escaped_pass = &escapestr($unescaped_plainpass);
 	$sql = "set password for '".$user."'\@'".$host."' = ".
 	       "$password_func('$escaped_pass')";
 	}
 return $sql;
 }
 
-# get_mysql_plugin(query_ready)
+# get_mysql_plugin()
 # Returns the name of the default plugin used by MySQL/MariaDB
 sub get_mysql_plugin
 {
-my ($query) = @_;
 if ($config{'auth_plugin'}) {
-	return " with $config{'auth_plugin'}";
+	return $config{'auth_plugin'};
 	}
-else {
-	my @plugin = &execute_sql($master_db, 
-	    "show variables LIKE '%default_authentication_plugin%'");
-	my $plugin = $plugin[0]->{'data'}->[0]->[1];
-	if ($plugin && $query) {
-		$plugin = " with $plugin ";
-		}
-	return $plugin;
-	}
+my $rv = &execute_sql($master_db, 
+    "show variables LIKE '%default_authentication_plugin%'");
+return undef if (!ref($rv) || !@{$rv->{'data'}});
+return $rv->{'data'}->[0]->[1];
 }
 
 # perms_column_to_privilege_map(col)
@@ -1805,11 +2225,13 @@ my $other_field_names = $sc->{'other_field_names'};
 my $other_field_values = $sc->{'other_field_values'};
 
 my ($ver, $variant) = &get_remote_mysql_variant();
-my $plugin = &get_mysql_plugin(1);
+my $plugin = $sc->{'plugin'} || &get_mysql_plugin();
 
 if ($variant eq "mariadb" && &compare_version_numbers($ver, "10.4") >= 0) {
-	my $sql = "create user '$user'\@'$host' identified $plugin by ".
-		"'".&escapestr($pass)."'";
+	my $auth = $plugin ?
+		&get_plugin_sql($ver, $variant, $pass, $plugin) :
+		"identified by '".&escapestr($pass)."'";
+	my $sql = "create user '$user'\@'$host' $auth";
 	&execute_sql_logged($master_db, $sql);
 	&execute_sql_logged($master_db, 'flush privileges');
 
@@ -1835,6 +2257,7 @@ else {
 	&execute_sql_logged($master_db, 'flush privileges');
 
 	if ($variant eq "mysql" && &compare_version_numbers($ver, "5.7.6") >= 0) {
+		$plugin = $plugin ? "with $plugin" : "";
 		&execute_sql_logged($master_db,
 		    "alter user '$user'\@'$host' identified $plugin by ".
 		        "'".&escapestr($pass)."'");
@@ -1843,38 +2266,17 @@ else {
 	}
 }
 
-# change_user_password(plainpass, user, host)
+# change_user_password(plainpass, user, host, plugin)
 # Change user password
 sub change_user_password
 {
-my ($plainpass, $user, $host) = @_;
-
-my ($ver, $variant) = &get_remote_mysql_variant();
-my $plugin = &get_mysql_plugin(1);
-my $lock_supported = $variant eq "mysql" && &compare_version_numbers($ver, "8.0.19");
-my $mysql_mariadb_with_auth_string = 
-	$variant eq "mariadb" && &compare_version_numbers($ver, "10.4") >= 0 ||
-	$variant eq "mysql" && &compare_version_numbers($ver, "5.7.6") >= 0;
-
+my ($plainpass, $user, $host, $plugin) = @_;
+$plugin ||= &get_mysql_plugin();
+$plugin ||= "";
 my $sql;
-my $pass = &escapestr($plainpass);
 $host ||= '%';
-my $lock = !defined($plainpass);
-if ($lock) {
-	$pass = sprintf("%x", rand 16) for 1..30;
-	}
-if ($mysql_mariadb_with_auth_string) {
-	my $sp = "identified $plugin by '".$pass."'";
-	if ($lock_supported) {
-		$sp = $lock ? "account lock" : "$sp account unlock";
-		}
-	$sql = "alter user '$user'\@'$host' $sp";
-	&execute_sql_logged($master_db, $sql);
-	}
-else {
-	$sql = &get_change_pass_sql($plainpass, $user, $host);
-	&execute_sql_logged($master_db, $sql);
-	}
+$sql = &get_change_pass_sql($plainpass, $user, $host, $plugin);
+&execute_sql_logged($master_db, $sql);
 
 # Update module password when needed
 &update_config_credentials({
@@ -1916,9 +2318,11 @@ my ($user, $pass) = @_;
 &foreign_require("proc");
 
 # Find the mysqld_safe command
-my $safe = &has_command("mysqld_safe");
+my $safe = &has_command("mysqld_safe") ||
+	   &has_command("mariadbd-safe");
 if (!$safe) {
-	&error(&text('mysqlpass_esafecmd', "<tt>mysqld_safe</tt>"));
+	&error(&text('mysqlpass_esafecmd',
+		     "<tt>mysqld_safe</tt> or <tt>mariadbd-safe</tt>"));
 	}
 
 # Shut down server if running
@@ -1968,7 +2372,7 @@ if (!$pid || !kill(0, $pid)) {
 	}
 
 # Update password by running command directly
-my $cmd = $config{'mysql'} || 'mysql';
+$cmd = $config{'mysql'} || 'mysql';
 my $sql = &get_change_pass_sql($pass, $user, 'localhost');
 my $out = &backquote_command("$cmd -D $master_db -e ".
 		quotemeta("flush privileges; $sql")." 2>&1 </dev/null");
@@ -2061,6 +2465,101 @@ eval {
 	};
 return 'password' if ($@);	# Old version without plugins
 return $rv->{'data'}->[0]->[0] =~ /unix_socket/i ? 'socket' : 'password';
+}
+
+# list_authentication_plugins()
+# Returns a list ref of supported authentication plugins for setting passwords
+sub list_authentication_plugins
+{
+my ($ver, $variant) = &get_remote_mysql_variant();
+if ($variant eq "mariadb" && &compare_version_numbers($ver, "10.3") >= 0 ||
+    $variant eq "mysql" && &compare_version_numbers($ver, "5.7.6") >= 0) {
+	my $rv = &execute_sql($master_db, "show plugins");
+	my @plugins = map { $_->[0] } grep { $_->[1] eq 'ACTIVE' &&
+		$_->[2] eq 'AUTHENTICATION' } @{ $rv->{data} };
+	return @plugins ? \@plugins : ['mysql_native_password'];
+	}
+return ();
+}
+
+# format_privs(&privs, &privs_fields)
+# Returns best formatted string for a set of privileges
+sub format_privs
+{
+my ($privs, $privs_fields) = @_;
+my @privs_all = map { lc($_->[1]) } @{$privs_fields};
+my @privs_cur = map { lc($_) } @{$privs};
+my $simplify_privs = sub {
+	my @privs = @_;
+	my %groups = (
+		'table_data' => [],
+		'tables' => [],
+		'view' => [],
+		'routine' => [],
+		'replication' => [],
+	);
+	my @others = ();
+	foreach my $priv (@privs) {
+		if ($priv =~ /^(select|insert|update|delete) table data$/) {
+			push(@{$groups{'table_data'}}, $1);
+			}
+		elsif ($priv =~ /^(create|drop|alter|create temp|create temporary|lock) tables$/) {
+			push(@{$groups{'tables'}}, $1);
+			}
+		elsif ($priv =~ /^(create|show) view$/) {
+			push(@{$groups{'view'}}, $1);
+			}
+		elsif ($priv =~ /^(create|alter) routine$/) {
+			push(@{$groups{'routine'}}, $1);
+			}
+		elsif ($priv =~ /^(slave|client) replication$/) {
+			push(@{$groups{'replication'}}, $1);
+			}
+		else {
+			push(@others, $priv);
+			}
+		}
+	# Simplify groups
+	my @simplified = ();
+	# Helper function to format group
+	my $format_group = sub {
+		my ($group, $suffix) = @_;
+		my $str = join(', ', @$group);
+		$str =~ s/(.*),/$1 $text{'dbs_except_and'}/ if (@$group > 1);
+		return $str . ($suffix ? " $suffix" : '');
+		};
+	# Handle each group
+	push(@simplified, $format_group->($groups{'table_data'}, 'table data'))
+		if (@{$groups{'table_data'}});
+	push(@simplified, $format_group->($groups{'tables'}, 'tables'))
+		if (@{$groups{'tables'}});
+	push(@simplified, $format_group->($groups{'view'}, 'view'))
+		if (@{$groups{'view'}});
+	push(@simplified, $format_group->($groups{'routine'}, 'routine'))
+		if (@{$groups{'routine'}});
+	push(@simplified, $format_group->($groups{'replication'}, 'replication'))	
+		if (@{$groups{'replication'}});
+	# Add other privileges
+	push(@simplified, @others);
+	return join('; ', @simplified);
+	};
+
+if (@privs_cur >= int(0.7 * @privs_all)) {
+	my %missing = map { $_ => 1 } @privs_all;
+	delete(@missing{@privs_cur});
+	my @missing_privs = keys %missing;
+	my $missing_formatted = $simplify_privs->(@missing_privs);
+	if (@missing_privs > 1) {
+		$privs_formatted = "$text{'dbs_except'} ($missing_formatted)";
+		}
+	else {
+		$privs_formatted = "$text{'dbs_except'} $missing_formatted";
+		}
+	}
+else {
+	$privs_formatted = $simplify_privs->(@privs_cur);
+	}
+return ucfirst($privs_formatted);
 }
 
 1;

@@ -35,10 +35,13 @@ my $rootfile = $_[4] ? $file : &make_chroot($file);
 my $FILE;
 if (&is_raw_format_records($rootfile)) {
 	# Convert from raw format first
-	&has_command("named-compilezone") ||
+	my $compilezone = &has_command("named-compilezone");
+	$compilezone ||
 		&error("Zone file $rootfile is in raw format, but the ".
 		       "named-compilezone command is not installed");
-	open($FILE, "named-compilezone -f raw -F text -o - $origin $rootfile |");
+	open($FILE, "-|", $compilezone,
+	     "-f", "raw", "-F", "text", "-o", "-",
+	     $origin, $rootfile);
 	}
 else {
 	# Can read text format records directly
@@ -510,6 +513,7 @@ foreach my $r (@$recs) {
 			   "\t\t\t$v->[4]\n\t\t\t$v->[5]\n\t\t\t$v->[6] )";
 		&modify_record($r->{'file'}, $r, $r->{'realname'}, $r->{'ttl'},
 				$r->{'class'}, $r->{'type'}, $vals);
+		$v->[2] = $serial;
 		}
 	}
 }
@@ -722,31 +726,45 @@ return $addr;
 our $uscore = $config{'allow_underscore'} ? "_" : "";
 our $star = $config{'allow_wild'} ? "\\*" : "";
 
-# valdnsname(name, wild, origin)
+# Record types whose owner names must follow hostname rules. Other types
+# (TXT, CNAME, SRV, PTR, TLSA, CAA, ...) may legitimately use underscores
+# in their owner names (e.g. _domainkey, _dmarc, _acme-challenge), so the
+# allow_underscore config is ignored for them, matching BIND's check-names.
+our %hostname_owner_types = map { $_ => 1 } qw(A AAAA MX NS DS DNAME);
+
+# valdnsname(name, wild, [origin], [type])
+# Returns 1 if a DNS record has a valid name. If a type is supplied and
+# isn't one of the hostname-bearing types, underscores are accepted in
+# the name regardless of the allow_underscore config.
 sub valdnsname
 {
-my($fqdn);
-$fqdn = $_[0] !~ /\.$/ ? "$_[0].$_[2]." : $_[0];
+my ($name, $wild, $origin, $type) = @_;
+my $root = !defined($origin) || $origin eq "" || $origin eq ".";
+my $fqdn = $name =~ /\.$/    ? $name
+	 : $root              ? "$name."
+	 :                      "$name.$origin.";
 if (length($fqdn) > 255) {
 	&error(&text('edit_efqdn', $fqdn));
 	}
-if ($_[0] =~ /[^\.]{64}/) {
+if ($name =~ /[^\.]{64}/) {
 	# no label longer than 63 chars
-	&error(&text('edit_elabel', $_[0]));
+	&error(&text('edit_elabel', $name));
 	}
-return ((($_[1] && $config{'allow_wild'})
-	 ? (($_[0] =~ /^[\*A-Za-z0-9\-\.$uscore]+$/)
-	   && ($_[0] !~ /.\*/ || $bind_version >= 9) # "*" can be only the first
+my $u = ($config{'allow_underscore'} ||
+	 ($type && !$hostname_owner_types{uc($type)})) ? "_" : "";
+return ((($wild && $config{'allow_wild'})
+	 ? (($name =~ /^[\*A-Za-z0-9\-\.$u]+$/)
+	   && ($name !~ /.\*/ || $bind_version >= 9) # "*" can be only the first
 						    # char, for bind 8
-	   && ($_[0] !~ /\*[^\.]/))	# a "." must always follow "*"
-	 : ($_[0] =~ /^[\A-Za-z0-9\-\.$uscore]+$/))
-	&& ($_[0] !~ /\.\./)		# no ".." inside
-	&& ($_[0] !~ /^\../)		# no "." at the beginning
-	&& ($_[0] !~ /^\-/)		# no "-" at the beginning
-	&& ($_[0] !~ /\-$/)		# no "-" at the end
-	&& ($_[0] !~ /\.\-/)		# no ".-" inside
-	&& ($_[0] !~ /\-\./)		# no "-." inside
-	&& ($_[0] !~ /\.[0-9]+\.$/));	# last label in FQDN may not be
+	   && ($name !~ /\*[^\.]/))	# a "." must always follow "*"
+	 : ($name =~ /^[A-Za-z0-9\-\.$u]+$/))
+	&& ($name !~ /\.\./)		# no ".." inside
+	&& ($name !~ /^\../)		# no "." at the beginning
+	&& ($name !~ /^\-/)		# no "-" at the beginning
+	&& ($name !~ /\-$/)		# no "-" at the end
+	&& ($name !~ /\.\-/)		# no ".-" inside
+	&& ($name !~ /\-\./)		# no "-." inside
+	&& ($name !~ /\.[0-9]+\.$/));	# last label in FQDN may not be
 					# purely numeric
 }
 
@@ -775,7 +793,7 @@ return &base_directory()."/".$path;
 # If some text looks like an SPF TXT record, return a parsed hash ref
 sub parse_spf
 {
-my $txt = join(" ", @_);
+my $txt = join("", @_);
 if ($txt =~ /^v=spf1/) {
 	my @w = split(/\s+/, $txt);
 	my $spf = { };
@@ -812,7 +830,7 @@ if ($txt =~ /^v=spf1/) {
 		}
 	return $spf;
 	}
-return undef;
+return;
 }
 
 # join_spf(&spf)
@@ -880,7 +898,7 @@ if ($txt =~ /^v=dmarc1/i) {
 		}
 	return $dmarc;
 	}
-return undef;
+return;
 }
 
 # join_dmarc(&dmarc)
@@ -942,7 +960,7 @@ else {
 sub compute_serial
 {
 my ($old) = @_;
-if ($config{'soa_style'} == 1 && $old =~ /^(\d{8})(\d\d)$/) {
+if ($config{'soa_style'} == 1 && $old =~ /^(\d{8})(\d+)$/) {
 	if ($1 >= &date_serial()) {
 		if ($2 >= 99) {
 			# Have to roll over to next day
@@ -1000,13 +1018,13 @@ $abs ||= 0;
 my $fn;
 if ($z->{'members'}) {
 	my $file = &find("file", $z->{'members'});
-	return undef if (!$file);
+	return if (!$file);
 	$fn = $file->{'values'}->[0];
 	}
 else {
 	$fn = $z->{'file'};
 	}
-return undef if (!$fn);
+return if (!$fn);
 if ($abs) {
 	$fn = &absolute_path($fn);
 	}
@@ -1057,7 +1075,7 @@ sub find_record_by_id
 my ($recs, $id, $num) = @_;
 my @rv = grep { &record_id($_) eq $id } @$recs;
 if (!@rv) {
-	return undef;
+	return;
 	}
 elsif (@rv == 1) {
 	return $rv[0];

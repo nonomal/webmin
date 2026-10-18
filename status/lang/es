@@ -5,13 +5,12 @@ index_desc=Monitorizando
 index_up=Estado
 index_last=Último chequeo
 index_local=Local
-index_add=Añadir monitor de tipo:
 index_sched=Monitorización Planificada
 index_scheddesc=Activar o desactivar el chequeo planificado de los monitores, e introducir la dirección a la cual se enviarán automáticamente los fallos por email.
 index_return=lista de servicios
 index_none=No hay monitores definidos actualmente.
 index_oldtime=Estado en la última revisión planificada a las $1
-index_esnmp=El módulo está configurado para mandar tramas SNMP en la página  <a href='$3'>Configuración de módulo</a>, pero el módulo Perl $1 no está instalado. <a href='$2'>Pulse aquí</a> para descargarlo e instalarlo ahora.
+index_esnmp=El módulo está configurado para mandar tramas SNMP en la página <a href='$3'>Configuración de módulo</a>, pero el módulo Perl $1 no está instalado. <a href='$2'>Pulse aquí</a> para descargarlo e instalarlo ahora.
 index_refresh=Refrescar Estado
 index_refreshdesc=Realizar un refresco inmediato del estado de todos los monitores, en lugar de esperar el refresco programado.
 index_delete=Borrar Seleccionados

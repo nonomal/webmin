@@ -11,7 +11,6 @@ index_refresh=Odśwież moduły
 index_refreshmsg=Szukaj zainstalowanych modułów serwerów i aktualizuj te, które znajdują się w kategorii 'Nie-używane moduły'.
 
 access_title=Kontrola dostępu IP
-access_desc=Za pomocą tej strony Webmin może być skonfigurowany tak, by zakazać lub zezwolić na dostęp spod określonych adresów IP. Można wprowadzać nazwy komputerów (jak foo.bar.com) i sieci IP (jak 10.254.3.0 czy 10.254.1.0/255.255.255.128 czy 2001:DB8::A0BC:0001 czy 2001:DB8::/32). Powinieneś ograniczyć dostęp jedynie do "zaufanych" adresów, szczególnie jeżeli sieć jest dostępna z Internetu. W przeciwnym wypadku ktoś kto zgadnie lub podsłucha hasło będzie w stanie przejąć kontrolę nad komputerem.
 access_ip=Dozwolone adresy IP
 access_local=Dołącz sieć lokalną do listy
 access_header=Kontrola dostępu
@@ -30,7 +29,6 @@ access_ecidr6='$1' nie jest poprawną wielkością sieci IPv6
 access_ehost=Nie udało sie znaleźć addresu IP '$1'
 access_eself=Twój aktualny adres IP ($1) zostałby zabroniony
 access_always=Nazwy hosta na każde żądanie?
-access_trust=Ufaj zdalnemu adresowi IP dostarczonemu przez proxy?
 
 bind_title=Porty i adresy
 bind_desc2=Ten formularz może być użyty do zmiany portu, na którym nasłuchuje Webmin albo ustawienia go tak, aby nasłuchiwał tylko na jednym adresie IP. Możesz także skonfigurować go tak, aby akceptował połączenia na wielu portach lub nasłuchiwał na wybranych adresach IP.
@@ -261,7 +259,7 @@ delete_desc1=$1 (Kopia $2)
 delete_desc2=$1 z $2 ($3 kB)
 delete_title=Usuń moduły
 delete_msg=Następujące moduły zostały z powodzeniem usunięte z Twojej instalacji Webmina :
-delete_rusure=Czy jesteś pewien, że chcesz usunąć moduł(-y) $2 ?  $1 kB plików zostanie nieodwracalnie skasowanych.
+delete_rusure=Czy jesteś pewien, że chcesz usunąć moduł(-y) $2 ? $1 kB plików zostanie nieodwracalnie skasowanych.
 delete_rusure2=Czy jesteś pewien, że chcesz usunąć skórkę $2 ? $1 kB plików zostanie usunięte na zawsze.
 delete_rusure3=Czy jesteś pewien, że chcesz usunąć klony modułu $2 ?
 delete_acls=Usunąć z użytkowników i zresetować ustawienia kontroli dostępu?
@@ -286,7 +284,6 @@ os_name=Nazwa zmiennej
 os_value=Wartość
 os_eversion=Brakująca wersja systemu operacyjnego
 os_eiversion=Brakująca wersja wewnętrznego systemu operacyjnego
-os_fix=Aktualizuj wykryty system operacyjny
 os_usermin=Aktualizuj także OS Usermina
 
 lang_intro=Ta strona umożliwia Ci wybór języka w którym Webmin będzie wypisywał komunikaty
@@ -303,7 +300,6 @@ ssl_essl=Moduł Perla Net:SSLeay nie jest zainstalowany w Twoim systemie.Aby zai
 ssl_cpan=Możesz użyć Webmina aby <a href='$1'>pobrać i zainstalować</a> wymagany moduł Perla Net::SSLeay
 ssl_emessage=Błąd Perla : $1
 ssl_desc1=Komputer, na którym działa Webmin posiada zainstalowany moduł SSLeay Perl-a. Webmin potrafi przy jego pomocy ustanowić zaszyfrowane SSL połączenia pomiędzy Twoją przeglądarką a serwerem. Jeśli łączysz się z serwerem Webmina poprzez Internet, zdecydowanie powinieneś rozważyć użycie SSL, aby zapobiec przechwyceniu przez napastnika Twojego hasła do Webmina.
-ssl_desc2=Uwaga - włącz obsługę SSL tylko jeśli Twoja przeglądarka ma obsługę SSL (jak np. Netscape czy IE) i nie ma pomiędzy Twoją przeglądarką a komputerem z Webminem firewalla blokującego zapytania <b>https</b>
 ssl_header=Obsługa SSL
 ssl_on=Używać SSL jeśli dostępne?
 ssl_key=Plik klucza prywatnego
@@ -413,23 +409,23 @@ startpage_webminup=Pokazywać aktualizacje Webmina na stronie Informacje o syste
 startpage_moduleup=Pokazywać aktualizacje modułów na stronie Informacje o systemie?
 
 upgrade_title=Aktualizuj Webmina
-upgrade_desc=Nie udało się zaktualizować całej instalacji Webmina do nowej wersji. Możesz zainstalować z pliku lokalnego, z pliku dołączonego lub najnowszą wersję z <a href=http://www.webmin.com/>www.webmin.com</a>. Podobnie jak przy ręcznej aktualizacji, wszystkie Twoje ustawienia i obce moduły zostaną zachowane.
-upgrade_descrpm=Za pomocą tego formularza możesz wykonać aktualizację całej Twojej instalacji Webmina do nowej wersji z wykorzystaniem opcji "upgrade" RPM-a. Możesz zainstalować z lokalnego pliku RPM, z pliku dołączonego lub najnowszą wersję z <a href=http://www.webmin.com/>www.webmin.com</a>. Podobnie jak przy ręcznej aktualizacji, wszystkie Twoje ustawienia i obce moduły zostaną zachowane.
-upgrade_descdeb=Ten formularz pozwala na aktualizację całej instalacji Webmina do nowej wersji przez aktualizowanie jego pakietów Debiana. Możesz instalować aktualizacje ręcznie z lokalnego lub wysłanego pliku .deb albo z najnowszej wersji na <a href=http://www.webmin.com/>www.webmin.com</a>. Tak jak w przypadku ręcznej aktualizacji, wszystkie pliki konfiguracyjne i moduły osób trzecich zostaną zachowane.
-upgrade_descsolaris-pkg=Za pomocą tego formularza możesz wykonać aktualizację całej Twojej instalacji Webmina do nowej wersji poprzez usunięcie bieżącego pakietu Solarisa i instalację nowego. Możesz zainstalować z pliku lokalnego, z pliku dołączonego lub najnowszą wersję z <a href=http://www.webmin.com/>www.webmin.com</a>. Podobnie jak przy ręcznej aktualizacji, wszystkie Twoje ustawienia i obce moduły zostaną zachowane.
+upgrade_desc=Nie udało się zaktualizować całej instalacji Webmina do nowej wersji. Możesz zainstalować z pliku lokalnego, z pliku dołączonego lub najnowszą wersję z <a href=https://webmin.com>webmin.com</a>. Podobnie jak przy ręcznej aktualizacji, wszystkie Twoje ustawienia i obce moduły zostaną zachowane.
+upgrade_descrpm=Za pomocą tego formularza możesz wykonać aktualizację całej Twojej instalacji Webmina do nowej wersji z wykorzystaniem opcji "upgrade" RPM-a. Możesz zainstalować z lokalnego pliku RPM, z pliku dołączonego lub najnowszą wersję z <a href=https://webmin.com>webmin.com</a>. Podobnie jak przy ręcznej aktualizacji, wszystkie Twoje ustawienia i obce moduły zostaną zachowane.
+upgrade_descdeb=Ten formularz pozwala na aktualizację całej instalacji Webmina do nowej wersji przez aktualizowanie jego pakietów Debiana. Możesz instalować aktualizacje ręcznie z lokalnego lub wysłanego pliku .deb albo z najnowszej wersji na <a href=https://webmin.com>webmin.com</a>. Tak jak w przypadku ręcznej aktualizacji, wszystkie pliki konfiguracyjne i moduły osób trzecich zostaną zachowane.
+upgrade_descsolaris-pkg=Za pomocą tego formularza możesz wykonać aktualizację całej Twojej instalacji Webmina do nowej wersji poprzez usunięcie bieżącego pakietu Solarisa i instalację nowego. Możesz zainstalować z pliku lokalnego, z pliku dołączonego lub najnowszą wersję z <a href=https://webmin.com>webmin.com</a>. Podobnie jak przy ręcznej aktualizacji, wszystkie Twoje ustawienia i obce moduły zostaną zachowane.
 upgrade_descsun-pkg=Ten formularz pozwala na aktualizację całej instalacji Webmina do nowej wersji z pakietu Solarisa dostarczonego przez Sun. Można instalować z lokalnego lub wysłanego pakietu Solarisa. Tak, jak w przypadku ręcznej aktualizacji, wszystkie pliki konfiguracyjne i moduły osób trzecich zostaną zachowane.
 upgrade_descgentoo=Ten formularz pozwala na aktualizację całej instalacji Webmina do nowej wersji poprzez usunięcie obecnego pakietu Emerge i instalację nowego. Można instalować z lokalnego lub wysłanego pakietu Gentoo albo z repozytorium Emerge. Tak, jak w przypadku ręcznej aktualizacji, wszystkie pliki konfiguracyjne i moduły osób trzecich zostaną zachowane.
 upgrade_local=Z pliku lokalnego
 upgrade_uploaded=Z pliku dołączonego
 upgrade_url=Z ftp lub http
-upgrade_ftp=Najnowszą wersję z www.webmin.com
+upgrade_ftp=Najnowszą wersję z webmin.com
 upgrade_cup=Najnowszą wersję z serwisu <tt>cupdate</tt> Caldery
 upgrade_emerge=Najnowsza wersja z repozytorium Emerge
 upgrade_delete=Usuwać stare wersje katalogów po aktualizacji?
 upgrade_ok=Aktualizuj Webmina
 upgrade_err1=Nie udało się wykonać aktualizacji z $1
 upgrade_err2=Nie udało się wykonać aktualizacji z dołączonego pliku
-upgrade_err3=Nie udało się wykonać aktualizacji z www.webmin.com
+upgrade_err3=Nie udało się wykonać aktualizacji z webmin.com
 upgrade_err4=Aktualizacja z repozytorium Emerge nie powiodła się
 upgrade_err5=Aktualizacja z URL $1 nie powiodła się
 upgrade_eurl=Nie podano lub nieprawidłowy URL
@@ -454,7 +450,7 @@ upgrade_ewpackage=Nieprawidłowy pakiet Solaris dla Webmina
 upgrade_egentoo=Nie jest to plik Webmina dla Gentoo
 upgrade_eupdates=Pobieranie listy aktualizacji : $1 nie powiodło się
 upgrade_echecksig=Weryfikacja sygnatury RPM nie powiodła się : $1
-upgrade_nosig=Nie przeprowadzono weryfikacji sygnatury pakietu - sprawdzanie pakietów tar.gz jest możliwe tylko przy aktualizacjach z www.webmin.com.
+upgrade_nosig=Nie przeprowadzono weryfikacji sygnatury pakietu - sprawdzanie pakietów tar.gz jest możliwe tylko przy aktualizacjach z webmin.com.
 upgrade_sig=Sprawdzać sygnaturę GnuPG pakietu?
 upgrade_force=Aktualizować nawet jeśli nowa wersja jest taka sama lub starsza?
 upgrade_disc=Rozłączać wszystkich pozostałych użytkowników?
@@ -478,10 +474,10 @@ newmod_header=Przydziały nowych modułów
 newmod_def=Zachowanie domyślne - przydziel nowe moduły do <tt>roota</tt> lub <tt>admina</tt>
 newmod_users=Przydziel nowe moduły do :
 
-update_desc1=Za pomocą tego formularza możesz zaktualizować ze strony <a href=http://www.webmin.com/updates.html>Webmin Updates</a> lub z innego źródła te moduły Webmina, o których wiadomo, że zawierają błędy lub dziury związane z bezpieczeństwem. Wykonane zostanie porównanie obecnie zainstalowanych modułów z dostępnymi dla aktualizacji oraz, opcjonalnie, automatyczne pobranie i instalacja wszelkich nieaktualnych modułów.
+update_desc1=Za pomocą tego formularza możesz zaktualizować ze strony <a href=https://webmin.com/updates.html>Webmin Updates</a> lub z innego źródła te moduły Webmina, o których wiadomo, że zawierają błędy lub dziury związane z bezpieczeństwem. Wykonane zostanie porównanie obecnie zainstalowanych modułów z dostępnymi dla aktualizacji oraz, opcjonalnie, automatyczne pobranie i instalacja wszelkich nieaktualnych modułów.
 update_header1=Aktualizuj moduły teraz
 update_header2=Aktualizuj moduły regularnie
-update_webmin=Aktualizuj z www.webmin.com
+update_webmin=Aktualizuj z webmin.com
 update_other=Aktualizuj z innego źródła
 update_show=Tylko wskaż moduły, które zostałyby zaktualizowane
 update_missing=Zainstaluj moduły obecnie niezainstalowane
@@ -497,7 +493,7 @@ update_apply=Zapisz i zastosuj
 update_sched2=Aktualizuj moduły o $1:$1 co $3 dni
 update_none=Brak aktualizacji Webmina dla tej wersji.
 update_failed=Instalacja modułu : $1 nie powiodła się
-update_desc2=Ten formularz służy do konfiguracji regularnej, automatycznej aktualizacji modułów Webmina zawierających błędy lub dziury związane z bezpieczeństwem ze strony <a href=http://www.webmin.com/updates.html>Webmin Updates</a> lub z innego źródła. O ile ta usługa jest wygodna, należy zachować ostrożność, gdyż może ona umożliwić napastnikom przejęcie Twojego systemu, jeśli serwer aktualizacji zostanie kiedykolwiek narażony na szwank.
+update_desc2=Ten formularz służy do konfiguracji regularnej, automatycznej aktualizacji modułów Webmina zawierających błędy lub dziury związane z bezpieczeństwem ze strony <a href=https://webmin.com/updates.html>Webmin Updates</a> lub z innego źródła. O ile ta usługa jest wygodna, należy zachować ostrożność, gdyż może ona umożliwić napastnikom przejęcie Twojego systemu, jeśli serwer aktualizacji zostanie kiedykolwiek narażony na szwank.
 update_enosig=Nie można pobrać pliku sygnatury dla aktualizacji : $1
 update_ebadsig=Sprawdzanie sygnatury aktualizacji nie powiodło się : $1
 update_enomodsig=Nie można pobrać pliku sygnatury dla modułu : $1
@@ -543,9 +539,8 @@ session_ptimeout=Przekroczony czas (timeout) hasła
 session_pdisable=Nie ograniczać czasu na wprowadzenie hasła
 session_penable=Ograniczyć czas na wprowadzenie hasła
 session_pblock=Zablokowane nieprawidłowe logowania
-session_blockhost=Blokować dostęp z hostów, z których wystąpiło więcej niż $1 nieudanych logowań na $2 sekund.
 session_blockuser=Blokuj przez $2 sekund użytkowników, którzy mają więcej niż $1 nieudanych prób logowania.
-session_syslog3=Rejestrować błędy w  <tt>syslog</tt>?
+session_syslog3=Rejestrować błędy w <tt>syslog</tt>?
 session_stype=Typ uwierzytelniania
 session_sopts=Opcje uwierzytelniania
 session_disable=Wyłączyć autoryzację sesji
@@ -563,7 +558,6 @@ session_eblockuser_time=Nie podano lub nieprawidłowy czas blokowania użytkowni
 session_eblockuser_failures=Nie podano lub nieprawidłowa liczba nieudanych logowań użytkownika
 session_ecookie=Twoja przeglądarka nie obsługuje <tt>cookies</tt>, które są niezbędne dla autoryzacji sesji
 session_elsof=Autoryzacja lokalna wymaga programu <tt>lsof</tt>
-session_remember=Proponować trwałe zapamiętanie hasła?
 session_ip=Ograniczyć sesje dla tego samego adresu IP klienta?
 session_hostname=Pokazywać nazwę komputera na ekranie logowania?
 session_realname=Pokazywać rzeczywistą nazwę komputera zamiast nazwy z URL?
@@ -689,8 +683,6 @@ themes_egzip=Plik jest spakowany gzipem lecz nie znaleziono w systemie poleceni
 themes_egzip2=Nie udało się rozpakować pliku gzip : $1
 themes_erpm=To nie jest RPM z motywem Webmina
 themes_eirpm=Instalacja RPM nie powiodła się : $1
-themes_ok=Motyw pomyślnie zmieniony .. przekierowuję na główną stronę indeksową Webmina.
-themes_ok2=Nakładka motywu zmieniona .. przekierowuję do strony głównej Webmina.
 themes_delete=Ta strona może być użyta do usunięcia jednego z motywów zainstalowanych w Twoim systemie. Aktualnie używany motyw nie może zostać usunięty.
 themes_delok=Motyw do usunięcia :
 themes_return=lista motywów
@@ -790,7 +782,7 @@ export_title=Eksportuj moduły
 advanced_title=Opcje zaawansowane
 advanced_header=Opcje zaawansowane i eksperymentalne
 advanced_temp=Katalog plików tymczasowych
-advanced_tempdef=Domyślnie (<tt>/tmp/.webmin</tt>)
+advanced_tempdef=Domyślnie (<tt>$1</tt>)
 advanced_tdd=Czyścić pliki tymczasowe w katalogu niestandardowym?
 advanced_tempdelete=Maksymalny wiem plików tymczasowych
 advanced_nodelete=Bez limitu
@@ -890,7 +882,7 @@ debug_what=Zdarzenia do logowania
 debug_what_start=Uruchamianie i zatrzymywanie skryptów
 debug_what_write=Pliki otwarte do zapisu
 debug_what_read=Pliki otwarte do odczytu
-debug_what_ops=Inne operacje  plikowe
+debug_what_ops=Inne operacje plikowe
 debug_what_procs=Operacje na procesach
 debug_what_diff=Różnice w plikach konfiguracyjnych
 debug_what_cmd=Wykonane polecenia
@@ -1040,10 +1032,7 @@ twofactor_eauthyotp=Token Authy jest nieprawidłowy
 twofactor_enrolllink=Teraz możesz się zapisać do dwuskładnikowego uwierzytelniania w module <a href='$1'>Użytkownicy Webmina</a>
 twofactor_url=Więcej informacji o $1, znajdziesz na stronie <a href='$2' target=_blank>$2</a>.
 twofactor_etotpmodule=Moduł Perl <tt>$1</tt> jest wymagany do dwustopniowego uwierzytelniania, ale nie jest zainstalowany. Użyj w Webminie strony <a href='$2'>Moduły Perl'a</a>, aby go zainstalować.
-twofactor_qrcode=Wprowadź tajny kod $1 w aplikacji Google Authenticator lub zeskanuj poniższy kod QR.
 twofactor_etotpid=Błędny tajny TOTP base32-encoded
-twofactor_etotptoken=Token Google Authenticator musi być liczbą
-twofactor_etotpmodule2=Brakujący moduł Perl $1
 twofactor_etotpmatch=Błędny kod OTP
 twofactor_secret=Prywatny tajny klucz
 twofactor_secret1=Generowane losowo

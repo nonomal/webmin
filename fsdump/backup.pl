@@ -116,21 +116,28 @@ if ($out && $dump->{'email'} && &foreign_check("mailboxes")) {
 		}
 
 	# Send the email
+	my $email = $dump->{'email'};
+	if ($email eq '*') {
+		$email = $gconfig{'webmin_email_to'};
+		if ($email && $gconfig{'webmin_email_to_name'}) {
+			$email = "$gconfig{'webmin_email_to_name'} <$email>";
+			}
+		}
 	if (!$ok || !$config{'error_email'}) {
 		# Only send email upon failure, or it requested always
-		&mailboxes::send_text_mail(&mailboxes::get_from_address(),
-					   $dump->{'email'},
-					   undef,
-					   $subject,
-					   $data,
-					   $config{'smtp_server'});
+		&mailboxes::send_text_mail(
+			&mailboxes::get_from_address(),
+			$email,
+			undef,
+			$subject,
+			$data,
+			$config{'smtp_server'});
 		}
 	}
 
 # Check for any dumps scheduled to run after this one
 foreach $follow (&list_dumps()) {
 	if ($follow->{'follow'} eq $dump->{'id'} && $follow->{'enabled'} == 2) {
-		system("$cron_cmd $follow->{'id'}");
+		system("$cron_cmd ".quotemeta($follow->{'id'}));
 		}
 	}
-

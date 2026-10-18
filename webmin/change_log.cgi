@@ -9,11 +9,29 @@ require './webmin-lib.pl';
 &lock_file($ENV{'MINISERV_CONFIG'});
 &get_miniserv_config(\%miniserv);
 my ($miniserv_log, $in_log) = ($miniserv{'log'}, $in{'log'});
+
+# Only a change of error destination on a systemd-managed service needs the
+# drop-in and a full restart; otherwise the option is ignored.
+my $journal_changed = defined($in{'error_journal'}) &&
+	&miniserv_systemd_journal_available("webmin.service") &&
+	($miniserv{'errorlog'} eq '-' ? 1 : 0) != ($in{'error_journal'} ? 1 : 0);
+
 $miniserv{'log'} = $in{'log'};
 $miniserv{'loghost'} = $in{'loghost'};
+$miniserv{'logtrust'} = $in{'logtrust'};
 $miniserv{'logclf'} = $in{'logclf'};
-$miniserv{'logclear'} = $in{'logclear'};
-!$in{'logclear'} || $in{'logtime'} =~ /^[1-9][0-9]*$/ ||
+
+# Either Miniserv clears the logs itself, or logrotate takes them over. There
+# is no setting for the latter, so it is on when clearing is off and a section
+# already rotates the logs.
+my $logrotate = $in{'logclear'} == 2 ? 1 : 0;
+!$logrotate || &miniserv_logrotate_available() ||
+	&error($text{'log_elogrotate'});
+my $was_logrotate = !int($miniserv{'logclear'}) &&
+		    &miniserv_logrotate_available() &&
+		    &get_miniserv_logrotate_section(\%miniserv) ? 1 : 0;
+$miniserv{'logclear'} = $logrotate ? 0 : $in{'logclear'};
+!$miniserv{'logclear'} || $in{'logtime'} =~ /^[1-9][0-9]*$/ ||
 	&error(&text('log_ehours', $in{'logtime'}));
 $miniserv{'logtime'} = $in{'logtime'};
 if ($in{'perms_def'}) {
@@ -41,12 +59,29 @@ if (defined($in{'login'})) {
 		delete($miniserv{'failed_script'});
 		}
 	}
-&put_miniserv_config(\%miniserv);
+# Save the error destination and matching systemd drop-in when supported.
+if ($journal_changed) {
+	&set_miniserv_error_destination(\%miniserv,
+		$ENV{'MINISERV_CONFIG'}, "webmin.service",
+		$in{'error_journal'});
+	}
+else {
+	&put_miniserv_config(\%miniserv);
+	}
 &unlock_file($ENV{'MINISERV_CONFIG'});
+
+# Hand the Miniserv and actions logs to logrotate, or take them back from it
+if ($logrotate) {
+	&setup_miniserv_logrotate(\%miniserv, "webmin", [ $webmin_logfile ]);
+	}
+elsif ($was_logrotate) {
+	&remove_miniserv_logrotate(\%miniserv, [ $webmin_logfile ]);
+	}
 
 $gconfig{'log'} = $in{'log'};
 $gconfig{'logtime'} = $in{'logtime'};
-$gconfig{'logclear'} = $in{'logclear'};
+$gconfig{'logclear'} = $miniserv{'logclear'};
+$gconfig{'logrotate'} = $logrotate;
 $gconfig{'logusers'} =
 	$in{'uall'} ? '' : join(" ", split(/\0/, $in{'users'}));
 $gconfig{'logmodules'} =
@@ -70,6 +105,12 @@ if ($miniserv_log != $in_log) {
 		}
 	}
 
-&show_restart_page();
+# Restart through systemd when stderr needs to be re-attached.
+if ($journal_changed) {
+	&restart_miniserv_systemd_service("webmin.service", 2);
+	&redirect("");
+	}
+else {
+	&show_restart_page();
+	}
 &webmin_log("log", undef, undef, \%in);
-

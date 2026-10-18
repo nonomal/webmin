@@ -18,7 +18,12 @@ if (&get_config_type() == 1) {
 	}
 
 # Show a table of all known schema files, with checkboxes
-print $text{'schema_pagedesc'},"<p>\n";
+if (&get_config_type() == 1) {
+	print $text{'schema_pagedesc'},"<p>\n";
+	}
+else {
+	print $text{'schema_pagedesc2'},"<p>\n";
+	}
 @tds = ( $editable ? ( "width=5" ) : ( ),
 	 "width=20%", "width=65%", "width=10%", "width=5% nowrap" );
 print &ui_form_start("save_schema.cgi", "post");
@@ -31,8 +36,8 @@ print &ui_columns_start([ $editable ? ( "" ) : ( ),
 @files = sort { &schema_sorter } &list_schema_files();
 for($i=0; $i<@files; $i++) {
 	$s = $files[$i];
-	@acts = ( &ui_link("view_sfile.cgi?file=".&urlize($s->{'file'})."",$text{'schema_view'}),
-		  &ui_link("edit_sfile.cgi?file=".&urlize($s->{'file'})."",$text{'schema_edit'}) );
+	@acts = ( &ui_link("view_sfile.cgi?file=".&urlize($s->{'file'}), $text{'schema_view'}),
+		  &ui_link("edit_sfile.cgi?file=".&urlize($s->{'file'}), $text{'schema_edit'}) );
 	if ($incs{$s->{'file'}}) {
 		$mover = &ui_up_down_arrows(
 			"up_schema.cgi?file=".&urlize($s->{'file'}),
@@ -56,6 +61,8 @@ for($i=0; $i<@files; $i++) {
 		}
 	else {
 		# View files only
+		push(@acts, &ui_link("import_sfile.cgi?file=".&urlize($s->{'file'}),
+				     $text{'schema_import'}));
 		print &ui_columns_row(
 			[ $s->{'name'},
                           $s->{'desc'} || $s->{'file'},
